@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: trademind-postgres
+    environment:
+      POSTGRES_DB: trademind_db
+      POSTGRES_USER: trademind_user
+      POSTGRES_PASSWORD: trademind_secure_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    container_name: trademind-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: trademind-api-gateway
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=postgresql://trademind_user:trademind_secure_pass@postgres:5432/trademind_db
+      - REDIS_URL=redis://redis:6379
+      - PORT=4000
+      - NODE_ENV=development
+      - AI_SERVICE_URL=http://ai-service:8000
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: services/ai-service/Dockerfile
+    container_name: trademind-ai-service
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - AI_SERVICE_API_KEY=internal-secret-key
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,17 @@
+{
+  "name": "trademind-ai",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "db:migrate": "npm run db:migrate --workspace=packages/db",
+    "db:generate": "npm run db:generate --workspace=packages/db",
+    "db:studio": "npm run db:studio --workspace=packages/db"
+  }
+}
