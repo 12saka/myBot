@@ -155,10 +155,13 @@ export function Sidebar() {
 
         {/* Bottom: User + Collapse */}
         <div className="border-t border-white/5 p-3 space-y-2">
-          <div className={cn(
-            'flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 cursor-pointer transition-colors',
-            sidebarCollapsed && 'justify-center'
-          )}>
+          <Link
+            href="/settings"
+            className={cn(
+              'flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 cursor-pointer transition-colors',
+              sidebarCollapsed && 'justify-center'
+            )}
+          >
             <div className="h-8 w-8 flex-shrink-0 rounded-full bg-gradient-to-br from-purple-500/50 to-indigo-600/50 border border-purple-500/30 flex items-center justify-center">
               <User size={14} className="text-purple-300" />
             </div>
@@ -170,7 +173,7 @@ export function Sidebar() {
                 </motion.div>
               )}
             </AnimatePresence>
-          </div>
+          </Link>
           <button
             onClick={toggleSidebarCollapsed}
             className="hidden md:flex w-full items-center justify-center gap-2 p-2 rounded-xl btn-ghost text-xs font-medium"

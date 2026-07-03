@@ -494,18 +494,18 @@ export default function LandingPage() {
 
           {/* CTA */}
           <div className="hidden md:flex items-center gap-3">
-            <Link href="/dashboard"
+            <Link href="/login"
               className="text-sm text-slate-400 hover:text-white transition-colors px-4 py-2 rounded-xl border border-white/10 hover:border-white/25 hover:bg-white/5">
               Sign In
             </Link>
-            <Link href="/dashboard"
+            <Link href="/register"
               className="text-sm font-bold px-5 py-2.5 rounded-xl text-white transition-all duration-300 hover:scale-105 hover:shadow-2xl inline-flex items-center gap-2"
               style={{
                 background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.purpleL})`,
                 boxShadow: `0 0 20px ${BRAND.purple}50`,
               }}>
               <Rocket size={15} />
-              Launch App
+              Get Started
             </Link>
           </div>
 
@@ -533,11 +533,11 @@ export default function LandingPage() {
                   </a>
                 ))}
                 <div className="pt-3 flex flex-col gap-2 border-t border-white/8">
-                  <Link href="/dashboard" className="py-2.5 px-4 rounded-xl border border-white/15 text-center text-sm font-semibold text-slate-300">Sign In</Link>
-                  <Link href="/dashboard"
+                  <Link href="/login" className="py-2.5 px-4 rounded-xl border border-white/15 text-center text-sm font-semibold text-slate-300">Sign In</Link>
+                  <Link href="/register"
                     className="py-2.5 px-4 rounded-xl text-center text-sm font-bold text-white"
                     style={{ background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.purpleL})` }}>
-                    🚀 Launch App
+                    🚀 Get Started
                   </Link>
                 </div>
               </div>
@@ -616,7 +616,7 @@ export default function LandingPage() {
               initial={{ opacity: 0, y: 22 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55, duration: 0.6 }}
               className="flex flex-col sm:flex-row gap-4"
             >
-              <Link href="/dashboard"
+              <Link href="/register"
                 className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl text-base font-bold text-white transition-all duration-300 hover:scale-105 group"
                 style={{
                   background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.purpleL})`,
@@ -1304,7 +1304,7 @@ export default function LandingPage() {
                   </ul>
 
                   <Link
-                    href="/dashboard"
+                    href="/register"
                     className="block w-full text-center py-3.5 rounded-2xl text-sm font-bold transition-all duration-300 hover:scale-105"
                     style={highlight
                       ? { background: `linear-gradient(135deg, ${color}, ${BRAND.purpleL})`, color: '#fff', boxShadow: `0 0 20px ${color}40` }
@@ -1464,7 +1464,7 @@ export default function LandingPage() {
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Link href="/dashboard"
+                  <Link href="/register"
                     className="inline-flex items-center justify-center gap-2.5 px-10 py-4 rounded-2xl font-black text-base text-white transition-all duration-300 hover:scale-105 group"
                     style={{
                       background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.purpleL})`,

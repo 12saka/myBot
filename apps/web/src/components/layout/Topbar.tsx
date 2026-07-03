@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, Bell, Search, Zap, TrendingUp, TrendingDown, ChevronUp, ChevronDown } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
@@ -84,10 +85,10 @@ export function Topbar() {
             <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-purple-500 border border-surface-0" />
           </button>
 
-          {/* Avatar */}
-          <div className="h-8 w-8 rounded-full bg-gradient-to-br from-purple-500/60 to-indigo-600/60 border border-purple-500/30 flex items-center justify-center text-xs font-bold text-white cursor-pointer">
-            A
-          </div>
+          {/* Avatar Link to Settings */}
+          <Link href="/settings" className="h-8 w-8 rounded-full bg-gradient-to-br from-purple-500/60 to-indigo-600/60 border border-purple-500/30 flex items-center justify-center text-xs font-bold text-white hover:scale-105 transition-all cursor-pointer">
+            AT
+          </Link>
         </div>
       </div>
     </header>
