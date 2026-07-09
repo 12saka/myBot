@@ -41,6 +41,7 @@ export class WalletService {
       const transaction = await tx.transaction.create({
         data: {
           walletId: wallet.id,
+          userId,
           type: 'DEPOSIT',
           amount: amount,
           status: 'COMPLETED'
@@ -113,6 +114,7 @@ export class WalletService {
       const transaction = await tx.transaction.create({
         data: {
           walletId: wallet.id,
+          userId,
           type: 'WITHDRAWAL',
           amount: amount,
           status: status

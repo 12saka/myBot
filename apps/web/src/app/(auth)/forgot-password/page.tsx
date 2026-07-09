@@ -10,7 +10,7 @@ import {
   RefreshCw, Smartphone, Check, HelpCircle
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import axios from 'axios';
+import { apiFetch } from '@/lib/api';
 
 type RecoveryStep = 'method' | 'input' | 'otp' | 'reset' | 'success';
 type RecoveryMethod = 'email' | 'phone';
@@ -26,6 +26,8 @@ export default function ForgotPasswordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [countdown, setCountdown] = useState(300); // 5 minutes (300s)
   const [resendCooldown, setResendCooldown] = useState(60); // 1 minute cooldown
+  const [statusMessage, setStatusMessage] = useState('');
+  const [devOtp, setDevOtp] = useState('');
 
   // Countdown timer for OTP
   useEffect(() => {
@@ -54,22 +56,26 @@ export default function ForgotPasswordPage() {
       return;
     }
     setIsSubmitting(true);
+    setStatusMessage(`Sending OTP to your ${method === 'email' ? 'email address' : 'phone number'}...`);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      await axios.post(`${apiUrl}/auth/forgot-password`, {
+      const data = await apiFetch<{ deliveryMode?: string; devOtp?: string }>('/api/v2/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({
         method,
         inputValue
+        })
       });
       setStep('otp');
       setCountdown(300);
       setResendCooldown(60);
+      setDevOtp(data.devOtp || '');
+      setStatusMessage(data.deliveryMode === 'mock'
+        ? 'Local delivery is in mock mode. Use the development OTP below.'
+        : 'OTP sent. Check the selected recovery channel.');
       toast.success(`Secure OTP delivered to your ${method === 'email' ? 'email address' : 'mobile phone'}`);
     } catch (err: any) {
-      console.warn('API Gateway offline. Falling back to sandbox/mock mode...', err.message);
-      setStep('otp');
-      setCountdown(300);
-      setResendCooldown(60);
-      toast.success(`[SANDBOX] Secure OTP dispatched.`);
+      setStatusMessage(err.message || 'Unable to send OTP.');
+      toast.error(err.message || 'Unable to send OTP. Please verify the account details.');
     } finally {
       setIsSubmitting(false);
     }
@@ -82,18 +88,21 @@ export default function ForgotPasswordPage() {
       return;
     }
     setIsSubmitting(true);
+    setStatusMessage('Verifying OTP with the API gateway...');
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      await axios.post(`${apiUrl}/auth/verify-otp`, {
+      await apiFetch('/api/v2/auth/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({
         key: inputValue,
         otp
+        })
       });
       setStep('reset');
+      setStatusMessage('Identity verified. Create a new secure password.');
       toast.success('Identity verified. Please define a new secure password.');
     } catch (err: any) {
-      console.warn('API Gateway offline. Falling back to sandbox/mock mode...', err.message);
-      setStep('reset');
-      toast.success('[SANDBOX] Identity verified.');
+      setStatusMessage(err.message || 'OTP verification failed.');
+      toast.error(err.message || 'OTP verification failed. Please enter the latest code.');
     } finally {
       setIsSubmitting(false);
     }
@@ -110,27 +119,51 @@ export default function ForgotPasswordPage() {
       return;
     }
     setIsSubmitting(true);
+    setStatusMessage('Resetting password and revoking active sessions...');
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      await axios.post(`${apiUrl}/auth/reset-password`, {
+      await apiFetch('/api/v2/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({
         key: inputValue,
         newPassword: password
+        })
       });
       setStep('success');
       toast.success('Password successfully reset! All active sessions revoked.');
     } catch (err: any) {
-      console.warn('API Gateway offline. Falling back to sandbox/mock mode...', err.message);
-      setStep('success');
-      toast.success('[SANDBOX] Password reset success.');
+      setStatusMessage(err.message || 'Unable to reset password.');
+      toast.error(err.message || 'Unable to reset password.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleResendOtp = () => {
+  const handleResendOtp = async () => {
     if (resendCooldown > 0) return;
-    setResendCooldown(60);
-    toast.success('A new 6-digit verification code has been dispatched.');
+    setIsSubmitting(true);
+    setStatusMessage('Requesting a fresh recovery OTP...');
+    try {
+      const data = await apiFetch<{ deliveryMode?: string; devOtp?: string }>('/api/v2/auth/resend-otp', {
+        method: 'POST',
+        body: JSON.stringify({
+          key: inputValue,
+          purpose: 'password-reset',
+          channel: method,
+        }),
+      });
+      setResendCooldown(60);
+      setCountdown(300);
+      setDevOtp(data.devOtp || '');
+      setStatusMessage(data.deliveryMode === 'mock'
+        ? 'A new development OTP is available below.'
+        : 'A fresh recovery OTP has been sent.');
+      toast.success('A new 6-digit verification code has been dispatched.');
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Unable to resend OTP.');
+      toast.error(err.message || 'Unable to resend OTP.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getMaskedValue = () => {
@@ -307,6 +340,12 @@ export default function ForgotPasswordPage() {
                     Enter the 6-digit verification code sent to <strong className="text-white">{getMaskedValue()}</strong>.
                   </p>
                 </div>
+                {statusMessage && (
+                  <div className="rounded-xl border border-purple-500/20 bg-purple-500/10 p-3 text-[11px] text-purple-200">
+                    {statusMessage}
+                    {devOtp && <div className="mt-2 font-mono text-sm font-bold text-white">Dev OTP: {devOtp}</div>}
+                  </div>
+                )}
 
                 <form onSubmit={handleVerifyOtp} className="space-y-4 text-xs">
                   <div>

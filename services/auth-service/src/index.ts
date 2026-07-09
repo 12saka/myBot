@@ -1,10 +1,11 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
 import { handleRegister, handleLogin, handleGetMe } from './modules/auth/auth.controller.js';
 import { authMiddleware } from './middleware/auth.middleware.js';
 
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 4001;

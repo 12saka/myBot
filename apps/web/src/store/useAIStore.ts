@@ -11,7 +11,7 @@ export interface ChatMessage {
 export interface AISignal {
   id: string;
   symbol: string;
-  type: 'crypto' | 'forex' | 'stocks';
+  type: 'crypto' | 'forex' | 'stocks' | 'indices' | 'commodities';
   direction: 'BUY' | 'SELL';
   confidence: number;
   entry: number;
@@ -39,6 +39,7 @@ interface AIState {
   setTyping: (typing: boolean) => void;
   setAIMode: (mode: AIState['aiMode']) => void;
   setAutonomous: (active: boolean) => void;
+  setSignals: (signals: AISignal[]) => void;
 }
 
 const MOCK_SIGNALS: AISignal[] = [
@@ -97,4 +98,5 @@ export const useAIStore = create<AIState>()((set) => ({
   setTyping: (typing) => set({ isTyping: typing }),
   setAIMode: (mode) => set({ aiMode: mode }),
   setAutonomous: (active) => set({ autonomousActive: active }),
+  setSignals: (signals) => set({ signals }),
 }));

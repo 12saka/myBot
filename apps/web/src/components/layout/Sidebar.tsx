@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
+import { toast } from 'react-hot-toast';
+
 
 const NAV_GROUPS = [
   {
@@ -48,7 +50,52 @@ const NAV_GROUPS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { sidebarCollapsed, toggleSidebarCollapsed, sidebarOpen, setSidebarOpen } = useUIStore();
+
+  const handleLogout = () => {
+    const confirmLogout = window.confirm('Are you sure you want to log out of your session?');
+    if (!confirmLogout) return;
+
+    localStorage.removeItem('trademind_token');
+    localStorage.removeItem('trademind_profile');
+    toast.success('Successfully logged out.');
+    router.push('/login');
+  };
+
+  const [profile, setProfile] = useState({
+    firstName: '',
+    lastName: '',
+    photo: ''
+  });
+
+  // Read profile changes from localStorage
+  useEffect(() => {
+    const loadProfile = () => {
+      const saved = localStorage.getItem('trademind_profile');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setProfile({
+            firstName: parsed.profileData?.firstName || '',
+            lastName: parsed.profileData?.lastName || '',
+            photo: parsed.profilePhoto || ''
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    };
+
+    loadProfile();
+    window.addEventListener('storage', loadProfile);
+    const interval = setInterval(loadProfile, 2000);
+
+    return () => {
+      window.removeEventListener('storage', loadProfile);
+      clearInterval(interval);
+    };
+  }, []);
 
   return (
     <>
@@ -162,18 +209,45 @@ export function Sidebar() {
               sidebarCollapsed && 'justify-center'
             )}
           >
-            <div className="h-8 w-8 flex-shrink-0 rounded-full bg-gradient-to-br from-purple-500/50 to-indigo-600/50 border border-purple-500/30 flex items-center justify-center">
-              <User size={14} className="text-purple-300" />
+            <div className="h-8 w-8 flex-shrink-0 rounded-full overflow-hidden bg-gradient-to-br from-purple-500/20 to-indigo-600/20 border border-purple-500/30 flex items-center justify-center font-bold text-xs text-purple-300">
+              {profile.photo ? (
+                <img src={profile.photo} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                `${profile.firstName?.charAt(0) || ''}${profile.lastName?.charAt(0) || ''}`.toUpperCase() || <User size={14} className="text-purple-300" />
+              )}
             </div>
             <AnimatePresence>
               {!sidebarCollapsed && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                  <div className="text-xs font-semibold text-slate-200 whitespace-nowrap">Alex Trader</div>
-                  <div className="text-[10px] text-slate-500">Pro Plan</div>
+                  <div className="text-xs font-semibold text-slate-200 whitespace-nowrap min-h-[16px]">
+                    {profile.firstName ? `${profile.firstName} ${profile.lastName}` : <span className="h-3.5 w-20 bg-white/5 animate-pulse rounded block" />}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Premium Account</div>
                 </motion.div>
               )}
             </AnimatePresence>
           </Link>
+          <button
+            onClick={handleLogout}
+            className={cn(
+              'w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-400 cursor-pointer transition-colors',
+              sidebarCollapsed && 'justify-center'
+            )}
+          >
+            <LogOut size={18} className="flex-shrink-0" />
+            <AnimatePresence>
+              {!sidebarCollapsed && (
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="text-xs font-semibold whitespace-nowrap"
+                >
+                  Log Out
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </button>
           <button
             onClick={toggleSidebarCollapsed}
             className="hidden md:flex w-full items-center justify-center gap-2 p-2 rounded-xl btn-ghost text-xs font-medium"

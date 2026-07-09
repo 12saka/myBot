@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   User, Key, Bell, Shield, Save, Plus, Trash2, HelpCircle,
@@ -8,11 +9,19 @@ import {
   Wallet, RefreshCw, LogOut, CheckCircle2, AlertCircle,
   FileText, Share2, UploadCloud, Edit3, Settings2, Download,
   Printer, Check, X, ShieldAlert, Cpu, Layers, DollarSign,
-  History, GraduationCap, BarChart2
+  History, GraduationCap, BarChart2, UserCheck
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from 'react-hot-toast';
+import { cn } from '@/lib/utils';
+import {
+  apiFetch,
+  DEFAULT_PROFILE_DATA,
+  normalizeProfile,
+  saveProfileSnapshot,
+  type ProfileData,
+} from '@/lib/api';
 
 type TabType = 'overview' | 'kyc' | 'security' | 'ai' | 'billing' | 'activity';
 
@@ -24,50 +33,209 @@ interface ApiKey {
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [isEditMode, setIsEditMode] = useState(false);
-  const printRef = useRef<HTMLDivElement>(null);
+  const [isClient, setIsClient] = useState(false);
 
-  // --- Profile Fields ---
-  const [profileData, setProfileData] = useState({
-    firstName: 'Alex',
-    middleName: 'G.',
-    lastName: 'Trader',
-    username: 'alextrader_ai',
-    dob: '1992-04-18',
-    gender: 'Male',
-    nationality: 'American',
-    nationalId: '••••-••••-9821',
-    occupation: 'Commodity Swing Strategist',
-    email: 'alex@trademind.ai',
-    phone: '+254 700 123 456',
-    secondaryEmail: 'backup_alex@gmail.com',
-    communicationPref: 'WhatsApp',
-    country: 'Kenya',
-    state: 'Nairobi',
-    county: 'Nairobi County',
-    city: 'Nairobi',
-    postalCode: '00100',
-    address: 'Vantage Heights, Suite 12B, Westlands',
-    timezone: 'EAT (UTC+3)',
-    experience: 'Intermediate (4 Years)',
-    primaryMarket: 'Forex & Commodities',
-    preferredAssets: 'EUR/USD, XAU/USD, Brent Crude',
-    tradingStyle: 'Swing Trading',
-    riskAppetite: 'Balanced',
-    tradingSession: 'London / New York Overlap',
-    baseCurrency: 'USD',
-    leverage: '1:50',
-    avatarUrl: '', // Default state is empty for styled avatar representation
+  useEffect(() => {
+    setIsClient(true);
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab');
+      if (tab && ['overview', 'kyc', 'security', 'ai', 'billing', 'activity'].includes(tab)) {
+        setActiveTab(tab as TabType);
+      }
+    }
+  }, []);
+
+  // Billing modals states
+  const [isUpgradeOpen, setIsUpgradeOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isUpgrading, setIsUpgrading] = useState(false);
+  const [upgradeStep, setUpgradeStep] = useState('');
+  const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
+  const [paymentMode, setPaymentMode] = useState<'mpesa' | 'visa' | null>(null);
+  const [billingPhone, setBillingPhone] = useState('');
+
+  const handlePlanUpgrade = async (plan: string) => {
+    if (!paymentMode) {
+      toast.error('Please select a payment method.');
+      return;
+    }
+    if (paymentMode === 'mpesa' && (!billingPhone || billingPhone.length < 10)) {
+      toast.error('Please enter a valid mobile number.');
+      return;
+    }
+    
+    setIsUpgrading(true);
+    setUpgradeStep('Connecting to billing gateway...');
+    await new Promise(r => setTimeout(r, 1200));
+    
+    if (paymentMode === 'mpesa') {
+      setUpgradeStep('Sending STK Push prompt to phone...');
+      await new Promise(r => setTimeout(r, 1800));
+      setUpgradeStep('Awaiting Safaricom confirmation...');
+      await new Promise(r => setTimeout(r, 2200));
+    } else {
+      setUpgradeStep('Authorizing credit card charge...');
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    
+    setUpgradeStep('Synchronizing subscription credentials...');
+    await new Promise(r => setTimeout(r, 1000));
+    
+    setIsUpgrading(false);
+    setIsUpgradeOpen(false);
+    setSelectedPlan(null);
+    setPaymentMode(null);
+    setBillingPhone('');
+    toast.success(`Successfully upgraded to the TradeMind ${plan} Plan!`);
+  };
+
+  // Hidden File Input Refs
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const idInputRef = useRef<HTMLInputElement>(null);
+  const selfieInputRef = useRef<HTMLInputElement>(null);
+  const addressInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Dynamic Profile Data State ---
+  const [profileData, setProfileData] = useState<ProfileData>(DEFAULT_PROFILE_DATA);
+
+  const [profilePhoto, setProfilePhoto] = useState<string>(''); // Base64 profile image string
+  const [idCardFile, setIdCardFile] = useState<string>(''); // Filename indicator
+  const [selfieFile, setSelfieFile] = useState<string>('');
+  const [addressFile, setAddressFile] = useState<string>('');
+
+  const [kycDocs, setKycDocs] = useState({
+    idVerified: 'verified', // verified, pending, rejected
+    selfieVerified: 'verified',
+    addressVerified: 'pending',
+    taxInfo: 'verified'
   });
 
-  // Edited local state (copied when entering edit mode)
-  const [editedData, setEditedData] = useState({ ...profileData });
+  // Local state for editing fields
+  const [editedData, setEditedData] = useState<ProfileData>(DEFAULT_PROFILE_DATA);
 
-  // --- Security States ---
+  // Load cached profile immediately, then refresh from the API.
+  useEffect(() => {
+    setIsClient(true);
+    const savedProfile = localStorage.getItem('trademind_profile');
+    if (savedProfile) {
+      try {
+        const parsed = JSON.parse(savedProfile);
+        if (parsed.profileData) {
+          const cachedProfile = { ...DEFAULT_PROFILE_DATA, ...parsed.profileData };
+          setProfileData(cachedProfile);
+          setEditedData(cachedProfile);
+        }
+        if (parsed.profilePhoto) setProfilePhoto(parsed.profilePhoto);
+        if (parsed.idCardFile) setIdCardFile(parsed.idCardFile);
+        if (parsed.selfieFile) setSelfieFile(parsed.selfieFile);
+        if (parsed.addressFile) setAddressFile(parsed.addressFile);
+        if (parsed.kycDocs) setKycDocs(parsed.kycDocs);
+      } catch (e) {
+        console.error('Failed to parse saved profile:', e);
+      }
+    }
+
+    const refreshProfile = async () => {
+      try {
+        const user = await apiFetch<any>('/api/v2/users/me');
+        const freshProfile = normalizeProfile(user);
+        setProfileData(freshProfile);
+        setEditedData(freshProfile);
+        setProfilePhoto(user.profile?.avatarUrl || '');
+        saveProfileSnapshot(freshProfile, { profilePhoto: user.profile?.avatarUrl || '' });
+      } catch (e: any) {
+        console.error('Failed to refresh profile:', e);
+        if (e?.message?.toLowerCase().includes('unauthorized')) {
+          router.push('/login');
+        }
+      }
+    };
+
+    refreshProfile();
+  }, []);
+
+  // Save profile helper
+  const saveToLocalStorage = (updatedProfileData = profileData, updatedPhoto = profilePhoto, updatedId = idCardFile, updatedSelfie = selfieFile, updatedAddress = addressFile, updatedKyc = kycDocs) => {
+    saveProfileSnapshot(updatedProfileData, {
+      profilePhoto: updatedPhoto,
+      idCardFile: updatedId,
+      selfieFile: updatedSelfie,
+      addressFile: updatedAddress,
+      kycDocs: updatedKyc
+    });
+  };
+
+  // Calculate dynamic completion score
+  const calculateCompletion = () => {
+    let score = 50;
+    if (profileData.firstName && profileData.lastName && profileData.dob) score += 10;
+    if (profileData.email && profileData.phone) score += 10;
+    if (profilePhoto) score += 10; // 10% for profile photo upload
+    if (idCardFile) score += 10; // 10% for ID card ID upload
+    if (selfieFile) score += 5; // 5% for selfie upload
+    if (addressFile) score += 5; // 5% for address proof upload
+    return Math.min(100, score);
+  };
+
+  // --- Image Upload Handlers ---
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        toast.error('Avatar file size must be less than 2MB.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setProfilePhoto(base64String);
+        saveToLocalStorage(profileData, base64String);
+        toast.success('Responsive profile photo updated!');
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleIdUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setIdCardFile(file.name);
+      const updatedKyc = { ...kycDocs, idVerified: 'verified' };
+      setKycDocs(updatedKyc);
+      saveToLocalStorage(profileData, profilePhoto, file.name, selfieFile, addressFile, updatedKyc);
+      toast.success('Identity card ID uploaded and verified!');
+    }
+  };
+
+  const handleSelfieUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelfieFile(file.name);
+      const updatedKyc = { ...kycDocs, selfieVerified: 'verified' };
+      setKycDocs(updatedKyc);
+      saveToLocalStorage(profileData, profilePhoto, idCardFile, file.name, addressFile, updatedKyc);
+      toast.success('Selfie verification photo uploaded!');
+    }
+  };
+
+  const handleAddressUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAddressFile(file.name);
+      const updatedKyc = { ...kycDocs, addressVerified: 'verified' };
+      setKycDocs(updatedKyc);
+      saveToLocalStorage(profileData, profilePhoto, idCardFile, selfieFile, file.name, updatedKyc);
+      toast.success('Residential address proof uploaded and verified!');
+    }
+  };
+
+  // --- Security & API Keys ---
   const [twoFactor, setTwoFactor] = useState(true);
   const [biometric, setBiometric] = useState(false);
-  const [passkeyActive, setPasskeyActive] = useState(true);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([
     { id: 'key1', name: 'Alpaca Live Link', key: 'alp_live_••••••••••••••••3a9b', created: '2026-06-28' },
     { id: 'key2', name: 'Binance Spot Key', key: 'bin_spot_••••••••••••••••e82d', created: '2026-06-25' },
@@ -96,13 +264,7 @@ export default function SettingsPage() {
     frequency: 'Hourly Highlights'
   });
 
-  // --- KYC Documents ---
-  const [kycDocs, setKycDocs] = useState({
-    idVerified: 'verified', // verified, pending, rejected
-    selfieVerified: 'verified',
-    addressVerified: 'pending',
-    taxInfo: 'verified'
-  });
+  const displayValue = (value?: string | null) => value?.trim() || 'Not set';
 
   const handleEditToggle = () => {
     if (!isEditMode) {
@@ -111,10 +273,21 @@ export default function SettingsPage() {
     setIsEditMode(!isEditMode);
   };
 
-  const handleSaveChanges = () => {
-    setProfileData({ ...editedData });
-    setIsEditMode(false);
-    toast.success('Changes applied to profile successfully!');
+  const handleSaveChanges = async () => {
+    try {
+      const { email, phone, ...profilePayload } = editedData;
+      await apiFetch('/api/v2/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify(profilePayload),
+      });
+
+      setProfileData({ ...editedData });
+      saveToLocalStorage(editedData, editedData.avatarUrl || profilePhoto);
+      setIsEditMode(false);
+      toast.success('Changes applied to profile successfully!');
+    } catch (e: any) {
+      toast.error(e?.message || 'Unable to save profile changes.');
+    }
   };
 
   const handleCreateKey = (e: React.FormEvent) => {
@@ -143,14 +316,23 @@ export default function SettingsPage() {
     window.print();
   };
 
+  if (!isClient) return null; // Avoid hydration mismatch
+
+  const completionPercent = calculateCompletion();
+
   return (
     <motion.div
       className="space-y-6 print:bg-white print:text-black"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.4 }}
-      ref={printRef}
     >
+      {/* Hidden File Inputs */}
+      <input type="file" ref={avatarInputRef} onChange={handleAvatarUpload} accept="image/*" className="hidden" />
+      <input type="file" ref={idInputRef} onChange={handleIdUpload} accept="image/*,application/pdf" className="hidden" />
+      <input type="file" ref={selfieInputRef} onChange={handleSelfieUpload} accept="image/*" className="hidden" />
+      <input type="file" ref={addressInputRef} onChange={handleAddressUpload} accept="image/*,application/pdf" className="hidden" />
+
       <div className="print:hidden">
         <PageHeader
           title="Account Hub"
@@ -163,24 +345,40 @@ export default function SettingsPage() {
       <div className="glass-card rounded-2xl p-6 border border-white/5 bg-slate-950/40 relative overflow-hidden flex flex-col md:flex-row gap-6 items-center justify-between">
         <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-purple-500/5 rounded-full filter blur-[80px]" />
         
-        <div className="flex flex-col sm:flex-row gap-6 items-center relative z-10">
-          {/* Avatar Area */}
-          <div className="relative group">
-            <div className="w-24 h-24 rounded-2xl bg-gradient-to-tr from-purple-500 to-indigo-600 border-2 border-purple-400/30 flex items-center justify-center text-4xl font-black text-white shadow-2xl relative">
-              {profileData.firstName[0]}{profileData.lastName[0]}
+        <div className="flex flex-col sm:flex-row gap-6 items-center relative z-10 w-full md:w-auto">
+          {/* Avatar Area - Responsive and Uploadable */}
+          <div className="relative group flex-shrink-0">
+            <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden bg-gradient-to-tr from-purple-500 to-indigo-600 border-2 border-purple-400/30 flex items-center justify-center shadow-2xl relative">
+              {profilePhoto ? (
+                <img src={profilePhoto} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-4xl font-black text-white">
+                  {profileData.firstName?.charAt(0) || ''}{profileData.lastName?.charAt(0) || ''}
+                </span>
+              )}
             </div>
-            <button className="absolute -bottom-2 -right-2 bg-purple-600 hover:bg-purple-500 text-white p-2 rounded-xl border border-white/10 shadow-lg cursor-pointer transition-all print:hidden">
+            <button
+              onClick={() => avatarInputRef.current?.click()}
+              className="absolute -bottom-2 -right-2 bg-purple-600 hover:bg-purple-500 text-white p-2.5 rounded-xl border border-white/10 shadow-lg cursor-pointer transition-all print:hidden"
+              title="Upload New Profile Photo"
+            >
               <UploadCloud size={14} />
             </button>
           </div>
 
           <div className="text-center sm:text-left space-y-1">
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
-              <h2 className="text-2xl font-display font-black text-white">{profileData.firstName} {profileData.lastName}</h2>
+              <h2 className="text-xl sm:text-2xl font-display font-black text-white">{profileData.firstName} {profileData.lastName}</h2>
               <Badge className="bg-purple-500/20 text-purple-300 border border-purple-500/30">Pro Member</Badge>
-              <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                <CheckCircle2 size={10} /> Verified
-              </Badge>
+              {completionPercent === 100 ? (
+                <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                  <CheckCircle2 size={10} /> Complete Profile
+                </Badge>
+              ) : (
+                <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <AlertCircle size={10} /> Pending Uploads
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-slate-400 font-mono">ID: TM-2026-000124 • Joined Jun 2026</p>
             <p className="text-xs text-slate-500">Last login: Today, 09:21 AM ({profileData.timezone})</p>
@@ -191,12 +389,14 @@ export default function SettingsPage() {
         <div className="w-full md:w-auto min-w-[240px] space-y-2 relative z-10">
           <div className="flex justify-between items-center text-[10px] uppercase font-bold text-slate-400">
             <span>Profile Completion</span>
-            <span className="text-purple-400 font-black">92%</span>
+            <span className="text-purple-400 font-black">{completionPercent}%</span>
           </div>
           <div className="w-full h-2 rounded-full bg-white/5 border border-white/5 overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-purple-500 to-cyan-400 rounded-full" style={{ width: '92%' }} />
+            <div className="h-full bg-gradient-to-r from-purple-500 to-cyan-400 rounded-full transition-all duration-500" style={{ width: `${completionPercent}%` }} />
           </div>
-          <p className="text-[10px] text-slate-500 text-right">Complete selfie KYC to reach 100%</p>
+          <p className="text-[10px] text-slate-500 text-right">
+            {completionPercent === 100 ? '✅ All KYC requirements verified!' : 'Upload ID & Selfie to reach 100%'}
+          </p>
         </div>
       </div>
 
@@ -258,7 +458,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.firstName}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.firstName)}</span>
                       )}
                     </div>
 
@@ -272,7 +472,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.middleName}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.middleName)}</span>
                       )}
                     </div>
 
@@ -286,7 +486,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.lastName}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.lastName)}</span>
                       )}
                     </div>
 
@@ -300,7 +500,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">@{profileData.username}</span>
+                        <span className="text-slate-200 font-semibold">{profileData.username ? `@${profileData.username}` : 'Not set'}</span>
                       )}
                     </div>
 
@@ -314,7 +514,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.dob}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.dob)}</span>
                       )}
                     </div>
 
@@ -331,7 +531,7 @@ export default function SettingsPage() {
                           <option value="Other">Other</option>
                         </select>
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.gender}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.gender)}</span>
                       )}
                     </div>
 
@@ -345,13 +545,13 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.nationality}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.nationality)}</span>
                       )}
                     </div>
 
                     <div>
                       <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">National ID/Passport</span>
-                      <span className="text-slate-300 font-mono font-bold">{profileData.nationalId}</span>
+                      <span className="text-slate-300 font-mono font-bold">{displayValue(profileData.nationalId)}</span>
                     </div>
 
                     <div>
@@ -364,7 +564,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.occupation}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.occupation)}</span>
                       )}
                     </div>
                   </div>
@@ -383,7 +583,7 @@ export default function SettingsPage() {
                     <div>
                       <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Email Address</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-200 font-semibold">{profileData.email}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.email)}</span>
                         <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full font-bold">Verified</span>
                       </div>
                     </div>
@@ -391,7 +591,7 @@ export default function SettingsPage() {
                     <div>
                       <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Phone Number</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-200 font-semibold">{profileData.phone}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.phone)}</span>
                         <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full font-bold">Verified</span>
                       </div>
                     </div>
@@ -406,7 +606,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.secondaryEmail}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.secondaryEmail)}</span>
                       )}
                     </div>
 
@@ -423,7 +623,7 @@ export default function SettingsPage() {
                           <option value="SMS">SMS</option>
                         </select>
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.communicationPref}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.communicationPref)}</span>
                       )}
                     </div>
                   </div>
@@ -449,7 +649,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.country}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.country)}</span>
                       )}
                     </div>
 
@@ -463,7 +663,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.state}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.state)}</span>
                       )}
                     </div>
 
@@ -477,7 +677,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.county}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.county)}</span>
                       )}
                     </div>
 
@@ -491,7 +691,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.city}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.city)}</span>
                       )}
                     </div>
 
@@ -505,7 +705,7 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.postalCode}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.postalCode)}</span>
                       )}
                     </div>
 
@@ -519,120 +719,13 @@ export default function SettingsPage() {
                           className="w-full input-glass rounded-xl px-3 py-2"
                         />
                       ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.address}</span>
+                        <span className="text-slate-200 font-semibold">{displayValue(profileData.address)}</span>
                       )}
                     </div>
 
                     <div>
                       <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Timezone</span>
-                      <span className="text-slate-200 font-semibold">{profileData.timezone}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Trading Profile */}
-                <div className="glass-card rounded-2xl p-6 border border-white/5">
-                  <h3 className="font-display font-bold text-white text-sm flex items-center gap-2 mb-4 border-b border-white/5 pb-3">
-                    <TrendingUp size={16} className="text-purple-400" />
-                    Trading Preferences
-                  </h3>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Trading Experience</span>
-                      {isEditMode ? (
-                        <input
-                          type="text"
-                          value={editedData.experience}
-                          onChange={e => setEditedData({ ...editedData, experience: e.target.value })}
-                          className="w-full input-glass rounded-xl px-3 py-2"
-                        />
-                      ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.experience}</span>
-                      )}
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Primary Market</span>
-                      {isEditMode ? (
-                        <input
-                          type="text"
-                          value={editedData.primaryMarket}
-                          onChange={e => setEditedData({ ...editedData, primaryMarket: e.target.value })}
-                          className="w-full input-glass rounded-xl px-3 py-2"
-                        />
-                      ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.primaryMarket}</span>
-                      )}
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Preferred Assets</span>
-                      {isEditMode ? (
-                        <input
-                          type="text"
-                          value={editedData.preferredAssets}
-                          onChange={e => setEditedData({ ...editedData, preferredAssets: e.target.value })}
-                          className="w-full input-glass rounded-xl px-3 py-2"
-                        />
-                      ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.preferredAssets}</span>
-                      )}
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Trading Style</span>
-                      {isEditMode ? (
-                        <input
-                          type="text"
-                          value={editedData.tradingStyle}
-                          onChange={e => setEditedData({ ...editedData, tradingStyle: e.target.value })}
-                          className="w-full input-glass rounded-xl px-3 py-2"
-                        />
-                      ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.tradingStyle}</span>
-                      )}
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Risk Appetite</span>
-                      {isEditMode ? (
-                        <select
-                          value={editedData.riskAppetite}
-                          onChange={e => setEditedData({ ...editedData, riskAppetite: e.target.value })}
-                          className="w-full input-glass rounded-xl px-3 py-2 bg-slate-900"
-                        >
-                          <option value="Conservative">Conservative</option>
-                          <option value="Balanced">Balanced</option>
-                          <option value="Aggressive">Aggressive</option>
-                        </select>
-                      ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.riskAppetite}</span>
-                      )}
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Default Leverage</span>
-                      {isEditMode ? (
-                        <input
-                          type="text"
-                          value={editedData.leverage}
-                          onChange={e => setEditedData({ ...editedData, leverage: e.target.value })}
-                          className="w-full input-glass rounded-xl px-3 py-2"
-                        />
-                      ) : (
-                        <span className="text-slate-200 font-semibold">{profileData.leverage}</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="mt-5 p-3.5 rounded-xl border border-purple-500/10 bg-purple-500/5 flex items-start gap-2.5 text-xs text-purple-300">
-                    <BrainCircuit size={16} className="mt-0.5 flex-shrink-0" />
-                    <div>
-                      <span className="font-bold">AI Summary Profile Feed:</span>
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        Based on your account history and parameters, your profile indicates a moderate-risk swing trader focused on Forex and Commodities.
-                      </p>
+                      <span className="text-slate-200 font-semibold">{displayValue(profileData.timezone)}</span>
                     </div>
                   </div>
                 </div>
@@ -657,35 +750,88 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {[
-                    { label: 'Identity Verification', status: kycDocs.idVerified, desc: 'Government-issued Passport or National ID.' },
-                    { label: 'Selfie Liveness Verification', status: kycDocs.selfieVerified, desc: '3D biometric facial scanning check.' },
-                    { label: 'Address Verification', status: kycDocs.addressVerified, desc: 'Bank statement or utility bill (< 3 months old).' },
-                    { label: 'Tax Information Compliance', status: kycDocs.taxInfo, desc: 'Declaration of international W-8BEN / KRA PIN code.' },
-                  ].map(doc => (
-                    <div key={doc.label} className="p-4 rounded-xl border border-white/5 bg-slate-900/30 flex justify-between items-start gap-4">
-                      <div>
-                        <h4 className="font-semibold text-slate-200 text-xs">{doc.label}</h4>
-                        <p className="text-[10px] text-slate-500 mt-1 leading-normal">{doc.desc}</p>
-                      </div>
-                      <Badge className={
-                        doc.status === 'verified' ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400' :
-                        doc.status === 'pending' ? 'bg-amber-500/15 border border-amber-500/30 text-amber-400' :
-                        'bg-red-500/15 border border-red-500/30 text-red-400'
-                      }>
-                        {doc.status === 'verified' ? '✅ Verified' : doc.status === 'pending' ? '🟡 Pending' : '🔴 Rejected'}
-                      </Badge>
+                  {/* Identity Card ID Verification */}
+                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/30 flex justify-between items-start gap-4">
+                    <div className="space-y-1.5">
+                      <h4 className="font-semibold text-slate-200 text-xs">Identity Verification (ID Card)</h4>
+                      <p className="text-[10px] text-slate-500 leading-normal">Government-issued Passport or National ID Card.</p>
+                      {idCardFile && (
+                        <div className="text-[10px] text-purple-300 font-mono flex items-center gap-1.5 mt-2 bg-purple-500/10 p-1.5 rounded-lg border border-purple-500/20">
+                          <FileText size={12} /> {idCardFile}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => idInputRef.current?.click()}
+                        className="text-[10px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 hover:underline pt-2 cursor-pointer"
+                      >
+                        <UploadCloud size={12} /> {idCardFile ? 'Replace Document' : 'Upload ID Card'}
+                      </button>
                     </div>
-                  ))}
-                </div>
+                    <Badge className={
+                      idCardFile ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+                    }>
+                      {idCardFile ? '✅ Verified' : '🔴 Pending Upload'}
+                    </Badge>
+                  </div>
 
-                <div className="flex flex-wrap gap-3 pt-4 border-t border-white/5">
-                  <button className="btn-primary text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer">
-                    <UploadCloud size={14} /> Upload New Document
-                  </button>
-                  <button className="btn-ghost text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer">
-                    <FileText size={14} /> View Uploaded Files
-                  </button>
+                  {/* Selfie Liveness Verification */}
+                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/30 flex justify-between items-start gap-4">
+                    <div className="space-y-1.5">
+                      <h4 className="font-semibold text-slate-200 text-xs">Selfie Liveness Verification</h4>
+                      <p className="text-[10px] text-slate-500 leading-normal">3D biometric facial scanning check.</p>
+                      {selfieFile && (
+                        <div className="text-[10px] text-purple-300 font-mono flex items-center gap-1.5 mt-2 bg-purple-500/10 p-1.5 rounded-lg border border-purple-500/20">
+                          <FileText size={12} /> {selfieFile}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => selfieInputRef.current?.click()}
+                        className="text-[10px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 hover:underline pt-2 cursor-pointer"
+                      >
+                        <UploadCloud size={12} /> {selfieFile ? 'Replace Selfie' : 'Upload Selfie Photo'}
+                      </button>
+                    </div>
+                    <Badge className={
+                      selfieFile ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+                    }>
+                      {selfieFile ? '✅ Verified' : '🔴 Pending Upload'}
+                    </Badge>
+                  </div>
+
+                  {/* Address Proof Verification */}
+                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/30 flex justify-between items-start gap-4">
+                    <div className="space-y-1.5">
+                      <h4 className="font-semibold text-slate-200 text-xs">Address Verification</h4>
+                      <p className="text-[10px] text-slate-500 leading-normal">Utility bill or bank statement (&lt; 3 months old).</p>
+                      {addressFile && (
+                        <div className="text-[10px] text-purple-300 font-mono flex items-center gap-1.5 mt-2 bg-purple-500/10 p-1.5 rounded-lg border border-purple-500/20">
+                          <FileText size={12} /> {addressFile}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => addressInputRef.current?.click()}
+                        className="text-[10px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 hover:underline pt-2 cursor-pointer"
+                      >
+                        <UploadCloud size={12} /> {addressFile ? 'Replace Proof' : 'Upload Address Proof'}
+                      </button>
+                    </div>
+                    <Badge className={
+                      addressFile ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+                    }>
+                      {addressFile ? '✅ Verified' : '🔴 Pending Upload'}
+                    </Badge>
+                  </div>
+
+                  {/* Tax Compliance Info */}
+                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/30 flex justify-between items-start gap-4">
+                    <div>
+                      <h4 className="font-semibold text-slate-200 text-xs">Tax Compliance Info</h4>
+                      <p className="text-[10px] text-slate-500 leading-normal">W-8BEN / international PIN code registry.</p>
+                    </div>
+                    <Badge className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
+                      ✅ Verified
+                    </Badge>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -920,10 +1066,16 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="flex flex-wrap gap-2.5">
-                    <button className="btn-primary text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer">
+                    <button
+                      onClick={() => router.push('/wallet')}
+                      className="btn-primary text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
                       Manage Wallet
                     </button>
-                    <button className="btn-ghost text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer">
+                    <button
+                      onClick={() => router.push('/wallet#history')}
+                      className="btn-ghost text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
                       View Transactions
                     </button>
                   </div>
@@ -946,20 +1098,223 @@ export default function SettingsPage() {
                       <span className="text-slate-200 font-bold">Jun 28, 2027</span>
                     </div>
                     <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/30">
-                      <span className="text-slate-500 block mb-0.5">API Limits</span>
+                      <span className="text-slate-200 font-bold">API Limits</span>
                       <span className="text-slate-200 font-bold">5,000 / Day (92% free)</span>
                     </div>
                   </div>
 
                   <div className="flex flex-wrap gap-2.5">
-                    <button className="btn-primary text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer">
+                    <button
+                      onClick={() => setIsUpgradeOpen(true)}
+                      className="btn-primary text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
                       Upgrade Plan
                     </button>
-                    <button className="btn-ghost text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer">
+                    <button
+                      onClick={() => setIsHistoryOpen(true)}
+                      className="btn-ghost text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
                       Billing History
                     </button>
                   </div>
                 </div>
+
+                {/* Plan Upgrade Modal Overlay */}
+                <AnimatePresence>
+                  {isUpgradeOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                      <motion.div
+                        className="absolute inset-0 bg-black/70 backdrop-blur-md"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => { if (!isUpgrading) setIsUpgradeOpen(false); }}
+                      />
+
+                      <motion.div
+                        className="relative w-full max-w-md overflow-hidden glass-card rounded-3xl border border-white/10 bg-slate-950/85 p-6 shadow-2xl text-xs"
+                        initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                      >
+                        <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
+                          <h3 className="font-display font-bold text-white text-sm">Choose Your Plan</h3>
+                          {!isUpgrading && (
+                            <button
+                              onClick={() => setIsUpgradeOpen(false)}
+                              className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer"
+                            >
+                              <X size={16} />
+                            </button>
+                          )}
+                        </div>
+
+                        {isUpgrading ? (
+                          <div className="flex flex-col items-center justify-center py-10 space-y-4 text-center">
+                            <RefreshCw size={36} className="text-purple-400 animate-spin" />
+                            <div>
+                              <p className="text-slate-200 font-semibold text-xs">{upgradeStep}</p>
+                              <p className="text-[10px] text-slate-500 mt-1">Completing payment handshake...</p>
+                            </div>
+                          </div>
+                        ) : selectedPlan ? (
+                          <div className="space-y-4">
+                            <div className="p-3.5 rounded-xl border border-white/5 bg-white/2">
+                              <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Selected Plan</span>
+                              <span className="text-sm font-bold text-slate-100">{selectedPlan}</span>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">Billing Method</label>
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setPaymentMode('mpesa')}
+                                  className={cn(
+                                    'p-2.5 rounded-xl border flex flex-col items-center gap-1 cursor-pointer transition-all',
+                                    paymentMode === 'mpesa' ? 'border-purple-500 bg-purple-500/10 text-white' : 'border-white/5 bg-white/2 text-slate-400 hover:text-white'
+                                  )}
+                                >
+                                  💳 M-Pesa STK
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPaymentMode('visa')}
+                                  className={cn(
+                                    'p-2.5 rounded-xl border flex flex-col items-center gap-1 cursor-pointer transition-all',
+                                    paymentMode === 'visa' ? 'border-purple-500 bg-purple-500/10 text-white' : 'border-white/5 bg-white/2 text-slate-400 hover:text-white'
+                                  )}
+                                >
+                                  💳 Credit Card
+                                </button>
+                              </div>
+                            </div>
+
+                            {paymentMode === 'mpesa' && (
+                              <div>
+                                <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1.5">M-Pesa Number</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={billingPhone}
+                                  onChange={(e) => setBillingPhone(e.target.value)}
+                                  placeholder="e.g. 254712345678"
+                                  className="w-full input-glass rounded-xl px-3 py-2.5 text-slate-200 focus:outline-none"
+                                />
+                              </div>
+                            )}
+
+                            <div className="flex gap-2 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPlan(null)}
+                                className="flex-1 btn-ghost py-2.5 rounded-xl font-semibold cursor-pointer text-center text-xs"
+                              >
+                                Back
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePlanUpgrade(selectedPlan)}
+                                className="flex-1 btn-primary py-2.5 rounded-xl font-bold cursor-pointer text-center text-xs"
+                              >
+                                Confirm & Pay
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-3.5">
+                            {[
+                              { name: 'Basic Tier', price: '$20/mo', desc: 'Core signals and entry-level indicators.' },
+                              { name: 'Pro Tier', price: '$49/mo', desc: 'Ensemble models, live Websockets ticks, and custom alerts.' },
+                              { name: 'Enterprise Tier', price: '$199/mo', desc: 'Dedicated copilot endpoints and custom fine-tuned parameters.' },
+                            ].map((plan) => (
+                              <div
+                                key={plan.name}
+                                onClick={() => { setSelectedPlan(plan.name); setPaymentMode('mpesa'); }}
+                                className="p-3.5 rounded-xl border border-white/5 bg-white/2 hover:bg-purple-500/5 hover:border-purple-500/20 transition-all cursor-pointer flex justify-between items-center"
+                              >
+                                <div>
+                                  <div className="font-bold text-slate-200">{plan.name}</div>
+                                  <div className="text-[10px] text-slate-500 mt-1">{plan.desc}</div>
+                                </div>
+                                <div className="text-right">
+                                  <span className="font-black text-purple-400">{plan.price}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                {/* Billing History Modal Overlay */}
+                <AnimatePresence>
+                  {isHistoryOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                      <motion.div
+                        className="absolute inset-0 bg-black/70 backdrop-blur-md"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setIsHistoryOpen(false)}
+                      />
+
+                      <motion.div
+                        className="relative w-full max-w-lg overflow-hidden glass-card rounded-3xl border border-white/10 bg-slate-950/80 p-6 shadow-2xl text-xs"
+                        initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                      >
+                        <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
+                          <h3 className="font-display font-bold text-white text-sm">Billing History</h3>
+                          <button
+                            onClick={() => setIsHistoryOpen(false)}
+                            className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full data-table">
+                            <thead>
+                              <tr>
+                                <th className="text-left">Date</th>
+                                <th className="text-left">Details</th>
+                                <th className="text-right">Amount</th>
+                                <th className="text-center">Receipt</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[
+                                { date: '2026-06-28', label: 'Pro Plan (Annual)', amount: '$480.00' },
+                                { date: '2026-05-28', label: 'Pro Plan (Monthly)', amount: '$49.00' },
+                                { date: '2026-04-28', label: 'Basic Plan (Monthly)', amount: '$20.00' },
+                              ].map((inv) => (
+                                <tr key={inv.date}>
+                                  <td className="text-slate-400 font-mono">{inv.date}</td>
+                                  <td className="text-slate-200 font-bold">{inv.label}</td>
+                                  <td className="text-right text-slate-300 font-semibold">{inv.amount}</td>
+                                  <td className="text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => toast.success('Invoice download initialized...')}
+                                      className="btn-ghost text-[10px] px-2.5 py-1 rounded-lg border border-white/5 cursor-pointer text-purple-400 hover:text-white"
+                                    >
+                                      PDF
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             )}
 

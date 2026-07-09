@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { toast } from 'react-hot-toast';
-import axios from 'axios';
+import { apiFetch } from '@/lib/api';
 
 const HeroCanvas = dynamic(() => import('@/components/3d/HeroCanvas'), { ssr: false });
 
@@ -30,6 +30,15 @@ export default function RegisterPage() {
   const [experience, setExperience] = useState('Intermediate');
   const [riskLevel, setRiskLevel] = useState('Balanced');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [devOtp, setDevOtp] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  React.useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => setResendCooldown((value) => value - 1), 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   const handleDetailsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,21 +50,67 @@ export default function RegisterPage() {
       toast.error('Passwords do not match.');
       return;
     }
+    if (password.length < 8) {
+      toast.error('Password must be at least 8 characters.');
+      return;
+    }
     setIsSubmitting(true);
+    setStatusMessage('Creating your account and preparing verification...');
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      await axios.post(`${apiUrl}/auth/register`, {
-        email,
+      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedPhone = phone.trim();
+      setEmail(normalizedEmail);
+      setPhone(normalizedPhone);
+
+      const data = await apiFetch<{ message: string; accountExists?: boolean; deliveryMode?: string; devOtp?: string }>('/api/v2/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+        email: normalizedEmail,
         password,
-        firstName,
-        lastName
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        phone: normalizedPhone || undefined,
+        })
       });
       setStep('verify');
-      toast.success('Registration details saved. A verification code has been sent to your email.');
+      setDevOtp(data.devOtp || '');
+      setResendCooldown(60);
+      setStatusMessage(data.deliveryMode === 'mock'
+        ? `${data.accountExists ? 'This email is already registered.' : 'Account created.'} Local email/SMS provider is in mock mode. Use the development code shown below.`
+        : `${data.accountExists ? 'This email is already registered.' : 'Account created.'} Verification code sent. Check your email inbox.`);
+      toast.success(data.accountExists
+        ? 'Account found. A fresh verification code was sent.'
+        : 'Registration details saved. A verification code has been sent to your email.');
     } catch (err: any) {
-      console.warn('API Gateway offline. Falling back to sandbox/mock mode...', err.message);
-      setStep('verify');
-      toast.success('[SANDBOX] A verification code has been dispatched.');
+      setStatusMessage(err.message || 'Unable to register account.');
+      toast.error(err.message || 'Unable to register account. Please check the API gateway.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0) return;
+    setIsSubmitting(true);
+    setStatusMessage('Requesting a fresh verification code...');
+    try {
+      const data = await apiFetch<{ message: string; deliveryMode?: string; devOtp?: string }>('/api/v2/auth/resend-otp', {
+        method: 'POST',
+        body: JSON.stringify({
+          key: email,
+          purpose: 'registration',
+          channel: 'email',
+        }),
+      });
+      setDevOtp(data.devOtp || '');
+      setResendCooldown(60);
+      setStatusMessage(data.deliveryMode === 'mock'
+        ? 'A new development OTP is available below.'
+        : 'A fresh verification code was sent to your email.');
+      toast.success('A fresh verification code has been sent.');
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Unable to resend verification code.');
+      toast.error(err.message || 'Unable to resend verification code.');
     } finally {
       setIsSubmitting(false);
     }
@@ -68,16 +123,50 @@ export default function RegisterPage() {
       return;
     }
     setIsSubmitting(true);
+    setStatusMessage('Verifying OTP with the API gateway...');
+    
+    let otpVerified = false;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      await axios.post(`${apiUrl}/auth/verify-otp`, {
-        key: email,
-        otp: verifyCode
+      await apiFetch('/api/v2/auth/verify-otp', {
+        method: 'POST',
+        body: JSON.stringify({
+          key: email,
+          otp: verifyCode
+        })
       });
+      otpVerified = true;
+    } catch (err: any) {
+      setStatusMessage(err.message || 'Verification failed.');
+      toast.error(err.message || 'Verification failed. Please enter the latest 6-digit code.');
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      setStatusMessage('OTP verified. Logging in to your account...');
+      // Auto-authenticate verified user to retrieve session tokens
+      const loginRes = await apiFetch<{ accessToken?: string }>('/api/v2/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email,
+          password
+        })
+      });
+      
+      if (loginRes.accessToken) {
+        localStorage.removeItem('trademind_profile');
+        localStorage.setItem('trademind_token', loginRes.accessToken);
+      }
+      
+      setStatusMessage('Email verified. Tell us a little about your trading style.');
       setStep('experience');
     } catch (err: any) {
-      console.warn('API Gateway offline. Falling back to sandbox/mock mode...', err.message);
-      setStep('experience');
+      toast.success('Identity verified successfully!');
+      toast.error('Auto-login failed: mismatch or invalid credentials. Please log in manually.');
+      setStatusMessage('Verification successful, but auto-login failed. Redirecting to Login page...');
+      setTimeout(() => {
+        router.push('/login');
+      }, 3000);
     } finally {
       setIsSubmitting(false);
     }
@@ -87,15 +176,28 @@ export default function RegisterPage() {
     setStep('risk');
   };
 
-  const handleRiskSubmit = () => {
+  const handleRiskSubmit = async () => {
     setIsSubmitting(true);
-    setTimeout(() => {
+    setStatusMessage('Saving onboarding preferences...');
+    try {
+      await apiFetch('/api/v2/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          experience,
+          riskAppetite: riskLevel,
+          phone,
+        }),
+      });
       setIsSubmitting(false);
-      toast.success('Profile created successfully! Loading your dashboard...');
+      toast.success('Profile created successfully! Let\'s choose your subscription plan...');
       setTimeout(() => {
-        router.push('/dashboard');
+        router.push('/choose-plan');
       }, 1000);
-    }, 1500);
+    } catch (err: any) {
+      setIsSubmitting(false);
+      setStatusMessage(err.message || 'Unable to save onboarding preferences.');
+      toast.error(err.message || 'Unable to save onboarding preferences.');
+    }
   };
 
   return (
@@ -280,6 +382,12 @@ export default function RegisterPage() {
               >
                 <h2 className="text-xl font-display font-bold text-white mb-2">Verify Email</h2>
                 <p className="text-xs text-slate-400 mb-6">Enter the 6-digit confirmation code sent to {email}.</p>
+                {statusMessage && (
+                  <div className="mb-4 rounded-xl border border-purple-500/20 bg-purple-500/10 p-3 text-[11px] text-purple-200">
+                    {statusMessage}
+                    {devOtp && <div className="mt-2 font-mono text-sm font-bold text-white">Dev OTP: {devOtp}</div>}
+                  </div>
+                )}
 
                 <form onSubmit={handleVerifySubmit} className="space-y-5 text-xs">
                   <div>
@@ -297,12 +405,21 @@ export default function RegisterPage() {
 
                   <button
                     type="submit"
+                    disabled={isSubmitting}
                     className="w-full btn-primary py-3 rounded-xl font-bold flex items-center justify-center gap-1.5"
                   >
-                    Verify Code
+                    {isSubmitting ? 'Verifying...' : 'Verify Code'}
                     <ArrowRight size={14} />
                   </button>
                 </form>
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={resendCooldown > 0 || isSubmitting}
+                  className="mt-4 w-full text-[11px] font-bold text-purple-400 disabled:text-slate-600"
+                >
+                  {resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : 'Resend verification code'}
+                </button>
               </motion.div>
             )}
 

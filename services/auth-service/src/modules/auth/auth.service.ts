@@ -50,7 +50,7 @@ export class AuthService {
       const newWallet = await tx.wallet.create({
         data: {
           userId: newUser.id,
-          balance: 0.0,
+          balance: 100000.0, // Starting simulated capital
           currency: 'USD'
         }
       });
@@ -59,7 +59,6 @@ export class AuthService {
         data: {
           userId: newUser.id,
           name: 'Default Paper Portfolio',
-          balance: 100000.0 // Starting simulated capital
         }
       });
 
@@ -123,7 +122,7 @@ export class AuthService {
         profile: true,
         wallet: true,
         portfolios: {
-          select: { id: true, name: true, balance: true }
+          select: { id: true, name: true }
         }
       }
     });

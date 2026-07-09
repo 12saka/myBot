@@ -9,6 +9,7 @@ import {
   Eye, EyeOff, Key, Sparkles, AlertCircle
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { apiFetch } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,6 +20,13 @@ export default function LoginPage() {
   const [code2fa, setCode2fa] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mouseCoords, setMouseCoords] = useState({ x: 0, y: 0 });
+  const [devOtp, setDevOtp] = useState('');
+  type LoginResponse = {
+    accessToken?: string;
+    requires2fa?: boolean;
+    devOtp?: string;
+    deliveryMode?: string;
+  };
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -30,7 +38,7 @@ export default function LoginPage() {
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       toast.error('Please fill in all credentials.');
@@ -38,23 +46,36 @@ export default function LoginPage() {
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      // Mock login progress
-      if (!is2FA) {
+    try {
+      const data: LoginResponse = is2FA
+        ? await apiFetch<LoginResponse>('/api/v2/auth/complete-2fa', {
+            method: 'POST',
+            body: JSON.stringify({ email, otp: code2fa }),
+          })
+        : await apiFetch<LoginResponse>('/api/v2/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email, password })
+          });
+
+      if (data.requires2fa) {
         setIs2FA(true);
+        setDevOtp(data.devOtp || '');
         toast.success('Credentials verified. Please enter your 2FA authentication code.');
       } else {
-        if (code2fa.length !== 6 || isNaN(Number(code2fa))) {
-          toast.error('Invalid 2FA verification code.');
-        } else {
-          toast.success('Successfully authenticated! Redirecting to command center...');
-          setTimeout(() => {
-            router.push('/dashboard');
-          }, 1000);
+        localStorage.removeItem('trademind_profile');
+        if (data.accessToken) {
+          localStorage.setItem('trademind_token', data.accessToken);
         }
+        toast.success('Successfully authenticated! Redirecting to command center...');
+        setTimeout(() => {
+          router.push('/dashboard');
+        }, 1000);
       }
-    }, 1500);
+    } catch (err: any) {
+      toast.error(err.message || 'Authentication failed. Please check your credentials and API gateway.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -157,7 +178,10 @@ export default function LoginPage() {
                 >
                   <div className="p-3.5 rounded-xl border border-purple-500/10 bg-purple-500/5 text-purple-300 flex items-start gap-2.5">
                     <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-                    <span>2-Factor Authentication enabled. Enter the 6-digit code from your authenticator app to authorize entry.</span>
+                    <span>
+                      2-Factor Authentication enabled. Enter the 6-digit code sent to your email to authorize entry.
+                      {devOtp && <strong className="block mt-2 font-mono text-white">Dev OTP: {devOtp}</strong>}
+                    </span>
                   </div>
                   <div>
                     <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">Verification Code</label>

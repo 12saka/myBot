@@ -16,6 +16,7 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 import { MiniSparkline } from '@/components/charts/MiniSparkline';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 import { AnimatePresence } from 'framer-motion';
+import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
 
 const btcData = [61200, 62400, 63100, 62800, 64318];
 const ethData = [3050, 3120, 3090, 3200, 3182];
@@ -35,6 +36,16 @@ export default function DashboardPage() {
   const { tickers } = useMarketStore();
   const [activeTab, setActiveTab] = useState<'all' | 'crypto' | 'stocks' | 'forex'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  const [isTradeOpen, setIsTradeOpen] = useState(false);
+  const [tradeSymbol, setTradeSymbol] = useState('BTC');
+  const [tradeDirection, setTradeDirection] = useState<'BUY' | 'SELL'>('BUY');
+
+  const openTrade = (symbol: string, direction: 'BUY' | 'SELL') => {
+    setTradeSymbol(symbol);
+    setTradeDirection(direction);
+    setIsTradeOpen(true);
+  };
 
   const filteredSignals = activeTab === 'all' ? signals : signals.filter((s) => s.type === activeTab);
   const topTickers = tickers.slice(0, 6);
@@ -58,7 +69,7 @@ export default function DashboardPage() {
             <span className={cn('h-2 w-2 rounded-full', autonomousActive ? 'bg-purple-400 animate-ping' : 'bg-slate-600')} />
             {autonomousActive ? 'Autonomous Active' : 'Manual Mode'}
           </div>
-          <button className="btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs">
+          <button onClick={() => openTrade('BTC', 'BUY')} className="btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs cursor-pointer">
             <Zap size={14} />
             Quick Trade
           </button>
@@ -253,7 +264,7 @@ export default function DashboardPage() {
                 >
                   {expanded === sig.id ? 'Less' : 'Analysis'}
                 </button>
-                <button className="flex-1 btn-primary py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1">
+                <button onClick={() => openTrade(sig.symbol, sig.direction as any)} className="flex-1 btn-primary py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer">
                   <Zap size={12} /> Execute
                 </button>
               </div>
@@ -285,6 +296,13 @@ export default function DashboardPage() {
           ))}
         </div>
       </motion.div>
+
+      <QuickTradeWidget
+        isOpen={isTradeOpen}
+        onClose={() => setIsTradeOpen(false)}
+        defaultSymbol={tradeSymbol}
+        defaultDirection={tradeDirection}
+      />
     </motion.div>
   );
 }

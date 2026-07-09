@@ -21,6 +21,7 @@ import {
 const HeroCanvas = dynamic(() => import('@/components/3d/HeroCanvas'), { ssr: false });
 const ShieldCanvas = dynamic(() => import('@/components/3d/ShieldCanvas'), { ssr: false });
 const RocketCanvas = dynamic(() => import('@/components/3d/RocketCanvas'), { ssr: false });
+import { apiFetch, mapTicker } from '@/lib/api';
 
 // ─────────────────────────────────────────────────────────────
 // BRAND TOKENS (from brand assets image)
@@ -421,28 +422,71 @@ export default function LandingPage() {
   const [navScrolled, setNavScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
+  const [tickers, setTickers] = useState<any[]>([]);
 
   useEffect(() => {
     setMounted(true);
     const handleScroll = () => setNavScrolled(window.scrollY > 40);
     window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+
+    // Fetch live market data
+    const fetchLiveTickers = async () => {
+      try {
+        const raw = await apiFetch<any[]>('/api/v2/markets/tickers');
+        if (Array.isArray(raw) && raw.length > 0) {
+          const mapped = raw.map(item => {
+            const priceVal = Number(item.price ?? item.bidPrice ?? 0);
+            const chgVal = Number(item.changePct24h ?? 0);
+            const symbol = item.symbol.toUpperCase();
+            const displaySymbol = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(symbol) ? `${symbol}/USD` : symbol;
+            
+            const formattedPrice = ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(displaySymbol)
+              ? priceVal.toFixed(4)
+              : priceVal >= 1.0
+              ? `$${priceVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : `$${priceVal.toFixed(4)}`;
+
+            return {
+              sym: displaySymbol,
+              price: formattedPrice,
+              chg: `${chgVal >= 0 ? '+' : ''}${chgVal.toFixed(2)}%`,
+              up: chgVal >= 0
+            };
+          });
+          setTickers(mapped);
+          return;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch live tickers for landing page:', err);
+      }
+      setTickers(LIVE_TICKERS);
+    };
+
+    fetchLiveTickers();
+    const interval = setInterval(fetchLiveTickers, 10000);
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      clearInterval(interval);
+    };
   }, []);
+
+  const activeTickers = tickers.length > 0 ? tickers : LIVE_TICKERS;
 
   return (
     <div
-      className="min-h-screen text-slate-100 overflow-x-hidden"
+      className="min-h-screen text-slate-100 overflow-x-hidden pt-8"
       style={{ background: `linear-gradient(160deg, ${BRAND.darker} 0%, #0a0f1e 40%, ${BRAND.dark} 100%)` }}
     >
       {/* ──────────────────────── TICKER TAPE ──────────────────────── */}
-      <div className="overflow-hidden border-b border-white/5 bg-black/30 py-1.5">
+      <div className="fixed top-0 left-0 right-0 z-50 overflow-hidden border-b border-white/5 bg-slate-950/80 backdrop-blur-md h-8 flex items-center py-1.5">
         <motion.div
           className="flex gap-10 whitespace-nowrap"
           animate={{ x: ['0%', '-50%'] }}
           transition={{ duration: 30, repeat: Infinity, ease: 'linear' }}
           style={{ width: 'max-content' }}
         >
-          {[...LIVE_TICKERS, ...LIVE_TICKERS].map((t, i) => (
+          {[...activeTickers, ...activeTickers].map((t, i) => (
             <div key={i} className="inline-flex items-center gap-2 text-xs">
               <span className="text-slate-400 font-semibold">{t.sym}</span>
               <span className="font-bold text-slate-100">{t.price}</span>
@@ -458,7 +502,7 @@ export default function LandingPage() {
       {/* ──────────────────────── NAVBAR ──────────────────────────── */}
       <motion.header
         className={cn(
-          'fixed top-7 left-0 right-0 z-50 transition-all duration-300',
+          'fixed top-8 left-0 right-0 z-50 transition-all duration-300',
           navScrolled
             ? 'backdrop-blur-2xl border-b border-white/8'
             : 'bg-transparent'

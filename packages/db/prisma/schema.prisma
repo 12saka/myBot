@@ -88,18 +88,54 @@ model User {
   auditLogs       AuditLog[]
   kyc             KycRecord?
   amlAlerts       AmlRecord[]
-  quizResults     QuizResult[]
+  quizAttempts    QuizAttempt[]
+  transactions    Transaction[]
+  otpRequests     OtpRequest[]
+  riskProfile     RiskProfile?
+  supportTickets  SupportTicket[]
+  refreshTokens   RefreshToken[]
+  apiKeys         ApiKey[]
+  certificates    Certificate[]
+  notifications   Notification[]
+  automationRules AutomationRule[]
+  subscription    Subscription?
+  aiConversations AIConversation[]
+
+  @@index([createdAt])
 }
 
 model Profile {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  firstName String
-  lastName  String
-  address   String?
-  avatarUrl String?
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName         String
+  middleName        String?
+  lastName          String
+  username          String?
+  dob               String?
+  gender            String?
+  nationality       String?
+  nationalId        String?
+  occupation        String?
+  secondaryEmail    String?
+  communicationPref String?  @default("Email")
+  country           String?  @default("Kenya")
+  state             String?
+  county            String?
+  city              String?
+  postalCode        String?
+  address           String?
+  timezone          String?  @default("EAT (UTC+3)")
+  experience        String?  @default("Beginner")
+  primaryMarket     String?  @default("Crypto")
+  preferredAssets   String?  @default("BTC/USD")
+  tradingStyle      String?  @default("Day Trading")
+  riskAppetite      String?  @default("Moderate")
+  tradingSession    String?  @default("London")
+  baseCurrency      String?  @default("USD")
+  leverage          String?  @default("1:100")
+  avatarUrl         String?
+  updatedAt         DateTime @updatedAt
 }
 
 model Account {
@@ -130,6 +166,8 @@ model Transaction {
   id          String            @id @default(uuid())
   walletId    String
   wallet      Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   type        TransactionType
   amount      Float
   status      TransactionStatus @default(PENDING)
@@ -137,19 +175,22 @@ model Transaction {
   paymentId   String?           // Payment Processor ID
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status])
 }
 
 model Portfolio {
-  id                   String     @id @default(uuid())
+  id                   String        @id @default(uuid())
   userId               String
-  user                 User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name                 String     @default("Default Portfolio")
-  diversificationScore Float      @default(100.0)
-  riskScore            Float      @default(0.0)
-  sharpeRatio          Float      @default(0.0)
-  maxDrawdown          Float      @default(0.0)
-  createdAt            DateTime   @default(now())
-  updatedAt            DateTime   @updatedAt
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                 String        @default("Default Portfolio")
+  diversificationScore Float         @default(100.0)
+  riskScore            Float         @default(0.0)
+  sharpeRatio          Float         @default(0.0)
+  maxDrawdown          Float         @default(0.0)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   // Relations
   assets               Asset[]
@@ -177,6 +218,21 @@ model MarketData {
   askPrice    Float
   volume24h   Float
   lastUpdated DateTime @default(now())
+}
+
+model HistoricalCandle {
+  id        String   @id @default(uuid())
+  symbol    String
+  interval  String   // "1h" or "1d"
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+  timestamp DateTime
+
+  @@unique([symbol, interval, timestamp])
+  @@index([symbol, timestamp])
 }
 
 model Order {
@@ -213,7 +269,7 @@ model Trade {
   executedAt     DateTime       @default(now())
 }
 
-model TradeSignal {
+model Signal {
   id              String         @id @default(uuid())
   symbol          String
   direction       OrderDirection
@@ -227,9 +283,11 @@ model TradeSignal {
   aiReasoning     Json           // JSON details containing technicals, fundamentals, sentiment
   createdAt       DateTime       @default(now())
   expiresAt       DateTime
+
+  @@index([symbol, expiresAt])
 }
 
-model Strategy {
+model TradingStrategy {
   id               String   @id @default(uuid())
   name             String
   description      String
@@ -260,21 +318,23 @@ model Report {
 }
 
 model Course {
-  id          String   @id @default(uuid())
+  id          String        @id @default(uuid())
   title       String
   description String
   difficulty  String
   lessons     Lesson[]
+  certificates Certificate[]
 }
 
 model Lesson {
-  id         String   @id @default(uuid())
+  id         String        @id @default(uuid())
   courseId   String
-  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  course     Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
   title      String
-  content    String   @db.Text
+  content    String        @db.Text
   orderIndex Int
   quizzes    Quiz[]
+  quizAttempts QuizAttempt[]
 }
 
 model Quiz {
@@ -286,11 +346,12 @@ model Quiz {
   correctOption Int
 }
 
-model QuizResult {
+model QuizAttempt {
   id          String   @id @default(uuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   lessonId    String
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   score       Float
   passed      Boolean
   completedAt DateTime @default(now())
@@ -299,13 +360,16 @@ model QuizResult {
 model Certificate {
   id         String   @id @default(uuid())
   userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   courseId   String
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
   issuedAt   DateTime @default(now())
 }
 
 model Notification {
   id        String   @id @default(uuid())
   userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   message   String
   isRead    Boolean  @default(false)
@@ -335,47 +399,48 @@ model KycRecord {
 }
 
 model AmlRecord {
-  id             String   @id @default(uuid())
-  userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  riskClassification String // e.g. "LOW", "MEDIUM", "HIGH"
-  isSanctioned   Boolean  @default(false)
-  flaggedReason  String?
-  checkedAt      DateTime @default(now())
+  id                 String   @id @default(uuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  riskClassification String   // e.g. "LOW", "MEDIUM", "HIGH"
+  isSanctioned       Boolean  @default(false)
+  flaggedReason      String?
+  checkedAt          DateTime @default(now())
 }
 
 model Device {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ipAddress String
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress  String
   deviceInfo String
-  verified  Boolean  @default(false)
-  createdAt DateTime @default(now())
+  verified   Boolean  @default(false)
+  createdAt  DateTime @default(now())
 }
 
 model Session {
-  id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token        String   @unique
-  ipAddress    String
-  userAgent    String
-  expiresAt    DateTime
-  createdAt    DateTime @default(now())
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  ipAddress String
+  userAgent String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }
 
 model RiskEvent {
-  id          String   @id @default(uuid())
-  title       String   // e.g. "DAILY_LOSS_LIMIT_EXCEEDED"
-  severity    String   // "INFO", "WARNING", "CRITICAL"
-  details     Json
-  timestamp   DateTime @default(now())
+  id        String   @id @default(uuid())
+  title     String   // e.g. "DAILY_LOSS_LIMIT_EXCEEDED"
+  severity  String   // "INFO", "WARNING", "CRITICAL"
+  details   Json
+  timestamp DateTime @default(now())
 }
 
 model AutomationRule {
   id          String   @id @default(uuid())
   userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name        String
   strategy    String
   allocation  Float
@@ -387,32 +452,114 @@ model AutomationRule {
 }
 
 model BacktestResult {
-  id          String   @id @default(uuid())
-  strategy    String
-  symbol      String
-  timeframe   String
-  winRate     Float
+  id           String   @id @default(uuid())
+  strategy     String
+  symbol       String
+  timeframe    String
+  winRate      Float
   profitFactor Float
-  maxDrawdown Float
-  totalTrades Int
-  results     Json
-  createdAt   DateTime @default(now())
+  maxDrawdown  Float
+  totalTrades  Int
+  results      Json
+  createdAt    DateTime @default(now())
 }
 
 model AIConversation {
-  id        String    @id @default(uuid())
+  id        String   @id @default(uuid())
   userId    String
-  messages  Json      // Array of role, content, timestamp
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Json     // Array of role, content, timestamp
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model ApiKey {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  keyHash   String    @unique
+  scopes    String[]  // e.g. ["read", "write"]
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+}
+
+model OtpRequest {
   id        String   @id @default(uuid())
   userId    String
-  name      String
-  keyHash   String   @unique
-  scopes    String[] // e.g. ["read", "write"]
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // e.g. "LOGIN", "PASSWORD_RESET", "CRITICAL_TRADE"
+  channel   String   // e.g. "EMAIL", "WHATSAPP", "SMS"
+  attempts  Int      @default(0)
+  expiresAt DateTime
   createdAt DateTime @default(now())
-  expiresAt DateTime?
+}
+
+model RiskProfile {
+  id             String          @id @default(uuid())
+  userId         String          @unique
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  riskTolerance  AiMode          @default(BALANCED)
+  maxLeverage    Float           @default(1.0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  dailyLossRules DailyLossRule[]
+}
+
+model DailyLossRule {
+  id                  String      @id @default(uuid())
+  riskProfileId       String
+  riskProfile         RiskProfile @relation(fields: [riskProfileId], references: [id], onDelete: Cascade)
+  maxDailyLossPercent Float
+  currentDailyLoss    Float       @default(0.0)
+  isTriggered         Boolean     @default(false)
+  updatedAt           DateTime    @updatedAt
+}
+
+model SupportTicket {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String
+  message   String   @db.Text
+  status    String   @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+enum PlanType {
+  STARTER
+  PRO
+  PREMIUM
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+model Subscription {
+  id        String             @id @default(uuid())
+  userId    String             @unique
+  plan      PlanType
+  status    SubscriptionStatus
+  startDate DateTime           @default(now())
+  endDate   DateTime?
+  autoRenew Boolean            @default(true)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

@@ -1,17 +1,22 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, BrainCircuit, TrendingUp, TrendingDown,
-  Clock, Shield, Filter, ChevronDown, BarChart3
+  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw
 } from 'lucide-react';
 import { useAIStore, AISignal } from '@/store/useAIStore';
+import { useMarketStore } from '@/store/useMarketStore';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { StatCard } from '@/components/ui/StatCard';
 import { cn } from '@/lib/utils';
+import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
+import { TradingViewWidget } from '@/components/charts/TradingViewWidget';
+import { toast } from 'react-hot-toast';
+import { apiFetch, mapSignal } from '@/lib/api';
 
 const CONTAINER = {
   hidden: { opacity: 0 },
@@ -19,26 +24,43 @@ const CONTAINER = {
 };
 const ITEM = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transition: { duration: 0.5 } } };
 
-function SignalCard({ signal, index }: { signal: AISignal; index: number }) {
+interface SignalCardProps {
+  signal: AISignal;
+  index: number;
+  onDelete: (id: string) => void;
+  onViewChart: (signal: AISignal) => void;
+}
+
+function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [isTradeOpen, setIsTradeOpen] = useState(false);
   const isBuy = signal.direction === 'BUY';
 
   return (
     <motion.div
       variants={ITEM}
       className={cn(
-        'glass-card rounded-2xl p-5 flex flex-col gap-4 border',
-        isBuy ? 'border-emerald-500/10 hover:border-emerald-500/25' : 'border-red-500/10 hover:border-red-500/25'
+        'glass-card rounded-2xl p-5 flex flex-col gap-4 border relative group transition-all duration-300',
+        isBuy ? 'border-emerald-500/10 hover:border-emerald-500/25 bg-emerald-950/5' : 'border-red-500/10 hover:border-red-500/25 bg-red-950/5'
       )}
     >
-      {/* Top bar */}
+      {/* Top indicator bar */}
       <div
         className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl"
         style={{ background: isBuy ? 'linear-gradient(90deg, #10b981, transparent)' : 'linear-gradient(90deg, #ef4444, transparent)' }}
       />
 
+      {/* Delete / Dismiss button in top corner */}
+      <button
+        onClick={() => onDelete(signal.id)}
+        className="absolute top-3 right-3 p-1.5 rounded-lg bg-white/0 hover:bg-white/5 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
+        title="Delete Signal"
+      >
+        <Trash2 size={13} />
+      </button>
+
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between pr-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="font-display font-bold text-white text-lg">{signal.symbol}</span>
@@ -49,8 +71,8 @@ function SignalCard({ signal, index }: { signal: AISignal; index: number }) {
         </div>
         <ProgressRing
           value={signal.confidence}
-          size={60}
-          strokeWidth={6}
+          size={54}
+          strokeWidth={5}
           color={isBuy ? '#10b981' : '#ef4444'}
           label={`${signal.confidence}`}
           sublabel="%"
@@ -101,13 +123,23 @@ function SignalCard({ signal, index }: { signal: AISignal; index: number }) {
       <div className="flex gap-2">
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex-1 btn-ghost py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5"
+          className="flex-1 btn-ghost py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
         >
-          AI Analysis
-          <ChevronDown size={14} className={cn('transition-transform', expanded && 'rotate-180')} />
+          AI Reasoning
+          <ChevronDown size={12} className={cn('transition-transform', expanded && 'rotate-180')} />
         </button>
-        <button className="flex-1 btn-primary py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5">
-          <Zap size={14} /> Execute Signal
+        <button
+          onClick={() => onViewChart(signal)}
+          className="btn-ghost py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer text-purple-400 border border-purple-500/10 hover:border-purple-500/30"
+          title="View Chart"
+        >
+          <Eye size={12} /> Chart
+        </button>
+        <button
+          onClick={() => setIsTradeOpen(true)}
+          className="flex-1 btn-primary py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+        >
+          <Zap size={12} /> Execute
         </button>
       </div>
 
@@ -121,7 +153,7 @@ function SignalCard({ signal, index }: { signal: AISignal; index: number }) {
             className="bg-white/2 border border-white/6 rounded-xl p-4 space-y-3 text-xs overflow-hidden"
           >
             <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider border-b border-white/5 pb-2">
-              Multi-Factor AI Reasoning
+              Multi-Factor AI Reasoning & Explanation
             </div>
             {[
               { label: '📈 Technical Analysis', items: signal.technicals, color: 'text-emerald-400' },
@@ -135,33 +167,305 @@ function SignalCard({ signal, index }: { signal: AISignal; index: number }) {
                 </ul>
               </div>
             ))}
+
+            <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider border-t border-white/5 pt-2 mt-2">
+              🧠 AI Strategy & Model Architecture
+            </div>
+            <div className="text-[10px] text-slate-400 leading-normal bg-white/2 p-2.5 rounded-lg border border-white/5">
+              {signal.strategy.toLowerCase().includes('lstm') ? (
+                <span><strong>LSTM (Long Short-Term Memory) Network</strong>: Analyzes multi-temporal price sequence vectors over 60 candles to establish probability paths and project volatility thresholds.</span>
+              ) : signal.strategy.toLowerCase().includes('forest') ? (
+                <span><strong>Random Forest Ensemble</strong>: Evaluates support bounds, volume clusters, and exponential crossovers against historical samples to flag structural trend reversals.</span>
+              ) : (
+                <span><strong>Ensemble Transformer Model</strong>: Maps social sentiment, orderbook order-imbalance ratios, and MACD divergence vectors to identify high-probability momentum entries.</span>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      <QuickTradeWidget
+        isOpen={isTradeOpen}
+        onClose={() => setIsTradeOpen(false)}
+        defaultSymbol={signal.symbol}
+        defaultDirection={signal.direction as any}
+        aiSignal={signal}
+      />
     </motion.div>
   );
 }
 
-export default function SignalsPage() {
-  const { signals } = useAIStore();
-  const [activeTab, setActiveTab] = useState<'all'|'crypto'|'stocks'|'forex'>('all');
-  const filtered = activeTab === 'all' ? signals : signals.filter(s => s.type === activeTab);
+const AVAILABLE_MARKETS = [
+  { name: 'Bitcoin', symbol: 'BTC/USD', type: 'crypto' },
+  { name: 'Ethereum', symbol: 'ETH/USD', type: 'crypto' },
+  { name: 'Solana', symbol: 'SOL/USD', type: 'crypto' },
+  { name: 'Binance Coin', symbol: 'BNB/USD', type: 'crypto' },
+  { name: 'Ripple', symbol: 'XRP/USD', type: 'crypto' },
+  { name: 'Apple Inc.', symbol: 'AAPL', type: 'stocks' },
+  { name: 'Tesla Inc.', symbol: 'TSLA', type: 'stocks' },
+  { name: 'NVIDIA Corp.', symbol: 'NVDA', type: 'stocks' },
+  { name: 'Microsoft Corp.', symbol: 'MSFT', type: 'stocks' },
+  { name: 'Amazon Inc.', symbol: 'AMZN', type: 'stocks' },
+  { name: 'Dow Jones Index', symbol: 'US30', type: 'indices' },
+  { name: 'NASDAQ 100', symbol: 'US100', type: 'indices' },
+  { name: 'S&P 500', symbol: 'SPX500', type: 'indices' },
+  { name: 'DAX 40', symbol: 'DAX40', type: 'indices' },
+  { name: 'Gold Spot', symbol: 'GOLD', type: 'commodities' },
+  { name: 'Crude Oil', symbol: 'OIL', type: 'commodities' },
+  { name: 'Euro / USD', symbol: 'EUR/USD', type: 'forex' },
+  { name: 'Pound / USD', symbol: 'GBP/USD', type: 'forex' },
+  { name: 'USD / Yen', symbol: 'USD/JPY', type: 'forex' },
+];
 
+export default function SignalsPage() {
+  const { signals, setSignals } = useAIStore();
+  const { watchlist } = useMarketStore();
+  const [activeTab, setActiveTab] = useState<'all'|'crypto'|'stocks'|'indices'|'forex'|'commodities'>('all');
+  
+  // Generation & refresh states
+  const [generatingSymbol, setGeneratingSymbol] = useState<string | null>(null);
+  const [autoGenerate, setAutoGenerate] = useState(false);
+  const [showManualModal, setShowManualModal] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Chart drawer states
+  const [selectedChartSignal, setSelectedChartSignal] = useState<AISignal | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Manual Form States
+  const [manualSymbol, setManualSymbol] = useState('BTC/USD');
+  const [manualDirection, setManualDirection] = useState<'BUY' | 'SELL'>('BUY');
+  const [manualEntry, setManualEntry] = useState('');
+  const [manualStopLoss, setManualStopLoss] = useState('');
+  const [manualTp1, setManualTp1] = useState('');
+  const [manualTp2, setManualTp2] = useState('');
+  const [manualConfidence, setManualConfidence] = useState('85');
+  const [manualStrategy, setManualStrategy] = useState('Manual Pivot Strategy');
+  const [manualExplanation, setManualExplanation] = useState('');
+
+  const filtered = activeTab === 'all' ? signals : signals.filter(s => s.type === activeTab);
   const buySignals  = signals.filter(s => s.direction === 'BUY');
   const sellSignals = signals.filter(s => s.direction === 'SELL');
-  const avgConf     = Math.round(signals.reduce((a, s) => a + s.confidence, 0) / signals.length);
+  const avgConf     = signals.length > 0 ? Math.round(signals.reduce((a, s) => a + s.confidence, 0) / signals.length) : 0;
+
+  // Background Auto-Generator loop (priors watchlisted items, triggers custom toast alerts for incoming signals)
+  useEffect(() => {
+    if (!autoGenerate) return;
+
+    const interval = setInterval(() => {
+      // Prioritize symbols from user's watchlist
+      const userWatchlist = watchlist || [];
+      const sourceList = userWatchlist.length > 0
+        ? userWatchlist
+        : AVAILABLE_MARKETS.map(m => m.symbol);
+
+      const randSymbol = sourceList[Math.floor(Math.random() * sourceList.length)];
+      handleGenerateSignalSilent(randSymbol);
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [autoGenerate, signals, watchlist]);
+
+  // Initial load
+  useEffect(() => {
+    fetchActiveSignalsSilent();
+  }, []);
+
+  const fetchActiveSignalsSilent = async () => {
+    try {
+      const raw = await apiFetch<any[]>('/api/v2/signals');
+      if (Array.isArray(raw)) {
+        setSignals(raw.map(mapSignal));
+      }
+    } catch (err) {
+      console.warn('Initial signals fetch skipped:', err);
+    }
+  };
+
+  const fetchActiveSignals = async () => {
+    setIsRefreshing(true);
+    const toastId = toast.loading('Refreshing AI signals from gateway...');
+    try {
+      const raw = await apiFetch<any[]>('/api/v2/signals');
+      if (Array.isArray(raw)) {
+        setSignals(raw.map(mapSignal));
+        toast.success('AI signals list updated successfully!', { id: toastId });
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to sync active signals.', { id: toastId });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleGenerateSignalSilent = async (symbol: string) => {
+    try {
+      const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
+        method: 'POST',
+        body: JSON.stringify({ symbol })
+      });
+      const newSignal = mapSignal(rawSignal);
+      
+      const exists = signals.some(s => s.symbol === newSignal.symbol && s.direction === newSignal.direction);
+      setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+
+      // Display dynamic custom visual notification alert toast for incoming signal
+      if (!exists) {
+        toast.custom((t) => (
+          <div
+            className={cn(
+              "max-w-md w-full bg-slate-950/95 border border-purple-500/25 shadow-2xl rounded-2xl pointer-events-auto flex flex-col p-4 gap-2.5 backdrop-blur-xl border-l-4 transition-all duration-300",
+              newSignal.direction === 'BUY' ? "border-l-emerald-500" : "border-l-red-500",
+              t.visible ? 'animate-enter' : 'animate-leave'
+            )}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                <Zap size={16} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-white">Incoming AI Trade Signal</p>
+                  <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping" />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Ensemble AI models detected a high-probability <span className={cn("font-bold", newSignal.direction === 'BUY' ? "text-emerald-400" : "text-red-400")}>{newSignal.direction}</span> configuration for <span className="text-white font-bold">{newSignal.symbol}</span>.
+                </p>
+              </div>
+              <button
+                onClick={() => toast.dismiss(t.id)}
+                className="text-slate-500 hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            {newSignal.technicals && newSignal.technicals.length > 0 && (
+              <p className="text-[10px] text-slate-500 bg-white/3 p-2 rounded-lg italic">
+                "{newSignal.technicals[0]}"
+              </p>
+            )}
+          </div>
+        ), { duration: 6000 });
+      }
+    } catch (err) {
+      console.warn('Silent signal generate failed:', err);
+    }
+  };
+
+  const handleGenerateSignal = async (symbol: string) => {
+    setGeneratingSymbol(symbol);
+    const toastId = toast.loading(`Ensemble AI analyzing price & technical models for ${symbol}...`);
+    try {
+      const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
+        method: 'POST',
+        body: JSON.stringify({ symbol })
+      });
+      const newSignal = mapSignal(rawSignal);
+      setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+      toast.success(`Generated AI Signal for ${symbol} successfully!`, { id: toastId });
+    } catch (err: any) {
+      toast.error(err.message || `Failed to generate signal for ${symbol}.`, { id: toastId });
+    } finally {
+      setGeneratingSymbol(null);
+    }
+  };
+
+  const handleDeleteSignal = async (id: string) => {
+    const toastId = toast.loading('Dismissing active signal...');
+    try {
+      await apiFetch(`/api/v2/signals/${id}`, {
+        method: 'DELETE'
+      });
+      setSignals(signals.filter(s => s.id !== id));
+      toast.success('Signal deleted successfully!', { id: toastId });
+    } catch (err: any) {
+      setSignals(signals.filter(s => s.id !== id));
+      toast.success('Signal dismissed locally.', { id: toastId });
+    }
+  };
+
+  const handlePublishManualSignal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualEntry || !manualStopLoss || !manualTp1 || !manualTp2) {
+      toast.error('Please fill in entry, stop loss, and target values.');
+      return;
+    }
+
+    const toastId = toast.loading('Publishing manual signal...');
+    try {
+      const rawSignal = await apiFetch<any>('/api/v2/signals', {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol: manualSymbol,
+          direction: manualDirection,
+          entryPrice: Number(manualEntry),
+          stopLoss: Number(manualStopLoss),
+          takeProfit1: Number(manualTp1),
+          takeProfit2: Number(manualTp2),
+          confidence: Number(manualConfidence),
+          strategy: manualStrategy,
+          explanation: manualExplanation || 'Manual pivot structure identified by user technical analysis.'
+        })
+      });
+
+      const newSignal = mapSignal(rawSignal);
+      setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+      toast.success(`Manual signal for ${manualSymbol} published successfully!`, { id: toastId });
+      setShowManualModal(false);
+
+      setManualEntry('');
+      setManualStopLoss('');
+      setManualTp1('');
+      setManualTp2('');
+      setManualExplanation('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to publish manual signal.', { id: toastId });
+    }
+  };
 
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+    <motion.div className="space-y-6 pb-12" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
 
       <PageHeader
         title="AI Signal Intelligence"
-        subtitle="Real-time multi-factor signals generated by ensemble AI models. Updated every 60 seconds."
+        subtitle="Ensemble predictions generated from multi-temporal price sequence vectors and technical crossovers."
         icon={Zap}
       >
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold">
-          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-          {signals.length} Active Signals
+        <div className="flex items-center gap-3">
+          {/* Refresh Button */}
+          <button
+            onClick={fetchActiveSignals}
+            disabled={isRefreshing}
+            className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+            title="Refresh Signals List"
+          >
+            <RefreshCw size={14} className={cn(isRefreshing && "animate-spin")} />
+          </button>
+
+          {/* Automatic Generation Toggle */}
+          <div className="flex items-center gap-2 bg-white/3 border border-white/6 px-3 py-1.5 rounded-xl text-xs">
+            <span className="text-slate-400 font-semibold">Auto-Generator (Watchlist):</span>
+            <button
+              onClick={() => {
+                setAutoGenerate(!autoGenerate);
+                toast.success(autoGenerate ? 'Auto-Generator paused.' : 'Auto-generator targeting watchlist items is running.');
+              }}
+              className={cn(
+                "px-2 py-0.5 rounded-md text-[10px] font-bold uppercase transition-all cursor-pointer",
+                autoGenerate ? 'bg-purple-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+              )}
+            >
+              {autoGenerate ? 'Active' : 'Off'}
+            </button>
+            {autoGenerate && <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping" />}
+          </div>
+
+          <button
+            onClick={() => setShowManualModal(true)}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-600 text-white text-xs font-bold transition-all cursor-pointer shadow-lg shadow-purple-500/10"
+          >
+            <Plus size={14} /> Manual Creator
+          </button>
         </div>
       </PageHeader>
 
@@ -173,15 +477,52 @@ export default function SignalsPage() {
         <StatCard label="Avg Confidence"   value={`${avgConf}%`}                 icon={BrainCircuit} iconColor="#818cf8" accentColor="rgba(99,102,241,0.5)" />
       </div>
 
+      {/* Market Selector Directory */}
+      <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
+        <div className="flex items-center justify-between border-b border-white/5 pb-3">
+          <div>
+            <h3 className="font-display font-bold text-white text-sm mb-0.5">Ensemble AI Market Directory</h3>
+            <p className="text-[11px] text-slate-400">Select any index, commodity, stock, or coin below to execute predictive models.</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1">
+          {AVAILABLE_MARKETS.map(market => {
+            const isGeneratingThis = generatingSymbol === market.symbol;
+            return (
+              <button
+                key={market.symbol}
+                onClick={() => handleGenerateSignal(market.symbol)}
+                disabled={generatingSymbol !== null}
+                className={cn(
+                  "px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50",
+                  market.type === 'crypto'
+                    ? 'border-purple-500/10 hover:border-purple-500/35 bg-purple-500/5 hover:bg-purple-500/10 text-purple-300'
+                    : market.type === 'stocks'
+                    ? 'border-blue-500/10 hover:border-blue-500/35 bg-blue-500/5 hover:bg-blue-500/10 text-blue-300'
+                    : market.type === 'indices'
+                    ? 'border-indigo-500/10 hover:border-indigo-500/35 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-300'
+                    : market.type === 'commodities'
+                    ? 'border-amber-500/10 hover:border-amber-500/35 bg-amber-500/5 hover:bg-amber-500/10 text-amber-300'
+                    : 'border-emerald-500/10 hover:border-emerald-500/35 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-300'
+                )}
+              >
+                {isGeneratingThis ? <Loader2 size={12} className="animate-spin text-purple-400" /> : <BrainCircuit size={12} />}
+                {market.name} ({market.symbol})
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Tab Filter */}
       <div className="flex items-center justify-between">
-        <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 text-xs">
-          {(['all','crypto','stocks','forex'] as const).map(tab => (
+        <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 text-xs overflow-x-auto max-w-full">
+          {(['all', 'crypto', 'stocks', 'indices', 'forex', 'commodities'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
-                'px-3 py-1.5 rounded-lg capitalize font-semibold transition-all',
+                'px-3 py-1.5 rounded-lg capitalize font-semibold transition-all cursor-pointer whitespace-nowrap',
                 activeTab === tab ? 'bg-purple-500 text-white' : 'text-slate-400 hover:text-white'
               )}
             >
@@ -189,9 +530,6 @@ export default function SignalsPage() {
             </button>
           ))}
         </div>
-        <button className="btn-ghost px-3 py-2 rounded-xl text-xs flex items-center gap-1.5">
-          <Filter size={14} /> Filter
-        </button>
       </div>
 
       {/* Signal Cards */}
@@ -202,9 +540,26 @@ export default function SignalsPage() {
         className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4"
       >
         {filtered.map((signal, i) => (
-          <SignalCard key={signal.id} signal={signal} index={i} />
+          <SignalCard
+            key={signal.id}
+            signal={signal}
+            index={i}
+            onDelete={handleDeleteSignal}
+            onViewChart={setSelectedChartSignal}
+          />
         ))}
       </motion.div>
+
+      {/* Empty State */}
+      {filtered.length === 0 && (
+        <div className="glass-card rounded-2xl p-12 text-center border border-white/5">
+          <Zap className="mx-auto text-slate-600 mb-3" size={32} />
+          <h4 className="font-bold text-white mb-1">No Active Signals</h4>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            Select a market from the directory above or toggle Auto-Generator ON to produce AI predictive signals.
+          </p>
+        </div>
+      )}
 
       {/* Disclaimer */}
       <div className="glass-panel rounded-2xl p-4 flex items-start gap-3 text-xs text-slate-500">
@@ -213,6 +568,289 @@ export default function SignalsPage() {
           <strong className="text-slate-400">Risk Disclaimer:</strong> AI signals are generated by algorithmic models analyzing historical patterns and current market data. Past performance does not guarantee future results. All trading carries risk. Always apply your own due diligence and ensure signals align with your risk tolerance and investment objectives.
         </p>
       </div>
+
+      {/* TradingView Chart Side Drawer */}
+      <AnimatePresence>
+        {selectedChartSignal && (
+          <div className={cn("fixed inset-0 flex justify-end", isFullscreen ? "z-[60]" : "z-[55]")}>
+            {/* Backdrop */}
+            <motion.div
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedChartSignal(null)}
+            />
+
+            {/* Sidebar Panel */}
+            <motion.div
+              className={cn(
+                "relative h-full border-l border-white/10 bg-[#080d1a] shadow-2xl overflow-y-auto flex flex-col transition-all duration-300",
+                isFullscreen ? "w-screen max-w-full" : "w-full max-w-3xl"
+              )}
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-300">
+                    <BarChart3 size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-white text-base">{selectedChartSignal.symbol} — Signal Chart & Full Analysis</h3>
+                    <p className="text-[10px] text-slate-500">Live TradingView charting feed annotated with AI indicators</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsFullscreen(!isFullscreen)}
+                    className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer"
+                    title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  >
+                    {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                  </button>
+                  <button
+                    onClick={() => setSelectedChartSignal(null)}
+                    className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Chart */}
+              <div className={cn("flex-shrink-0 px-2 pt-2 relative", isFullscreen ? "h-[60vh]" : "h-[450px]")}>
+                <TradingViewWidget symbol={selectedChartSignal.symbol} height={isFullscreen ? Math.round(window.innerHeight * 0.58) : 450} />
+              </div>
+
+              {/* Target Price Labels Overlay */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 backdrop-blur-md border-y border-white/5 px-6 py-3.5 flex-shrink-0">
+                {[
+                  { label: 'AI Entry Price', value: selectedChartSignal.entry.toLocaleString(), color: 'border-purple-500/20 text-purple-300 bg-purple-500/5' },
+                  { label: 'Stop Loss (Invalidation)', value: selectedChartSignal.stopLoss.toLocaleString(), color: 'border-red-500/20 text-red-400 bg-red-500/5' },
+                  { label: 'Take Profit 1', value: selectedChartSignal.tp1.toLocaleString(), color: 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' },
+                  { label: 'Take Profit 2', value: selectedChartSignal.tp2.toLocaleString(), color: 'border-teal-500/20 text-teal-300 bg-teal-500/5' },
+                ].map(({ label, value, color }) => (
+                  <div key={label} className={cn("p-2 rounded-xl border flex flex-col gap-0.5", color)}>
+                    <span className="text-[9px] uppercase tracking-wider font-semibold opacity-75">{label}</span>
+                    <span className="text-sm font-bold">${value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Detailed Multi-Factor AI Analysis Breakdown */}
+              <div className="flex-1 p-6 space-y-4 overflow-y-auto">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Technical Indicators Overlay</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    {selectedChartSignal.technicals.map((item, idx) => (
+                      <div key={idx} className="p-2.5 rounded-lg bg-white/2 border border-white/5 text-slate-400 flex items-start gap-2">
+                        <TrendingUp size={12} className="text-emerald-400 mt-0.5 flex-shrink-0" />
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Model Analysis & Outlook</h4>
+                  <div className="p-3.5 rounded-xl bg-purple-500/5 border border-purple-500/10 text-xs text-purple-300 leading-relaxed">
+                    <strong>{selectedChartSignal.strategy}</strong>: Model confidence running at <strong>{selectedChartSignal.confidence}%</strong>. Projected win probability is <strong>{selectedChartSignal.probability}</strong> with an estimated target duration of <strong>{selectedChartSignal.duration}</strong>. Risk-to-reward ratio is optimized at <strong>{selectedChartSignal.riskReward}</strong>.
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="flex gap-3 border-t border-white/5 px-6 py-4 mt-auto">
+                <button
+                  onClick={() => setSelectedChartSignal(null)}
+                  className="px-5 py-2.5 rounded-xl border border-white/8 text-slate-400 hover:text-white hover:bg-white/5 transition-colors text-xs font-semibold cursor-pointer w-full text-center"
+                >
+                  Close Analysis
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Manual Signal Creator Modal */}
+      <AnimatePresence>
+        {showManualModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              className="absolute inset-0 bg-black/70 backdrop-blur-md"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowManualModal(false)}
+            />
+
+            <motion.div
+              className="relative w-full max-w-lg glass-panel bg-slate-950/90 rounded-2xl border border-white/10 p-6 shadow-2xl overflow-y-auto max-h-[90vh]"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+            >
+              <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4">
+                <h3 className="font-display font-bold text-white text-base">Manual Signal Creator</h3>
+                <button
+                  onClick={() => setShowManualModal(false)}
+                  className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handlePublishManualSignal} className="space-y-4 text-xs">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Market Symbol</label>
+                    <select
+                      value={manualSymbol}
+                      onChange={(e) => setManualSymbol(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
+                    >
+                      {AVAILABLE_MARKETS.map(m => (
+                        <option key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Direction</label>
+                    <div className="flex gap-2 h-10">
+                      <button
+                        type="button"
+                        onClick={() => setManualDirection('BUY')}
+                        className={cn(
+                          "flex-1 rounded-xl font-bold uppercase transition-all cursor-pointer",
+                          manualDirection === 'BUY' ? 'bg-emerald-500 text-white' : 'bg-slate-900 text-slate-400 border border-white/10'
+                        )}
+                      >
+                        Buy
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setManualDirection('SELL')}
+                        className={cn(
+                          "flex-1 rounded-xl font-bold uppercase transition-all cursor-pointer",
+                          manualDirection === 'SELL' ? 'bg-red-500 text-white' : 'bg-slate-900 text-slate-400 border border-white/10'
+                        )}
+                      >
+                        Sell
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Entry Price</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 64200"
+                      value={manualEntry}
+                      onChange={(e) => setManualEntry(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Stop Loss</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 63500"
+                      value={manualStopLoss}
+                      onChange={(e) => setManualStopLoss(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Take Profit 1</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 66000"
+                      value={manualTp1}
+                      onChange={(e) => setManualTp1(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Take Profit 2</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="e.g. 68500"
+                      value={manualTp2}
+                      onChange={(e) => setManualTp2(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Confidence (%)</label>
+                    <input
+                      type="number"
+                      placeholder="e.g. 85"
+                      value={manualConfidence}
+                      onChange={(e) => setManualConfidence(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Strategy Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Fibonacci Pivot"
+                      value={manualStrategy}
+                      onChange={(e) => setManualStrategy(e.target.value)}
+                      className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Explanation</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Provide technical support reasonings..."
+                    value={manualExplanation}
+                    onChange={(e) => setManualExplanation(e.target.value)}
+                    className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-3 border-t border-white/5">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualModal(false)}
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-white/8 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 btn-primary py-2.5 rounded-xl font-bold cursor-pointer"
+                  >
+                    Publish Signal
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </motion.div>
   );
 }

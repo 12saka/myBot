@@ -17,105 +17,7 @@ const QUICK_PROMPTS = [
   { icon: Zap,        text: 'Explain the Smart Money AI strategy' },
 ];
 
-const AI_RESPONSES: Record<string, string> = {
-  'btc': `**BTC/USD Analysis — Real-Time Assessment**
 
-📈 **Technical Picture**: Bitcoin is trading at $64,318 showing a strong breakout above the EMA-200 on the 4H chart. RSI is at 62 — bullish momentum without being overbought. MACD has crossed bullish.
-
-🏦 **Macro Context**: BTC ETF net inflows accelerated this week (+$420M). The DXY (dollar index) is softening, historically a strong tailwind for BTC.
-
-🎯 **Key Levels**:
-- Support: $62,800 (EMA-50) | $61,200 (major)
-- Resistance: $65,500 | $68,000 (ATH zone)
-
-⚡ **AI Signal**: **BUY** with 91% confidence. Entry zone: $63,800–$64,400. Stop-loss: $63,200. Target 1: $66,000. Target 2: $68,500.
-
-⚠️ **Risk**: Watch for resistance at $65,500. Position size maximum 2% of portfolio.`,
-  
-  'portfolio': `**Portfolio Risk Assessment — Current State**
-
-✅ **Diversification Score**: 78/100 — Good but can improve.
-
-📊 **Current Allocation**:
-- Crypto: 68% (slightly overweight — consider reducing to 55%)
-- Equities: 17% (underweight — target 25%)
-- Forex: 0% (consider adding 10-15% hedge positions)
-
-⚠️ **Risk Alerts**:
-1. **High Crypto Concentration**: 68% crypto exposure creates high volatility risk
-2. **Missing Hedges**: No inverse positions or options hedging active
-3. **Sharpe Ratio**: 1.42 — Good, but can be optimized
-
-🔧 **Recommendations**:
-1. Reduce BTC allocation from 55% → 40%
-2. Add NVDA/AAPL positions to strengthen equity exposure
-3. Consider EUR/USD long position as macro hedge
-4. Set trailing stop-losses on all crypto positions at -8%`,
-
-  'signals': `**Top AI Signals — Active Right Now**
-
-🚀 **1. BTC/USD — BUY** | Confidence: 91%
-   Entry: $64,200 | SL: $63,500 | TP: $66,000 → $68,500
-   Strategy: Trend Following AI | Duration: 4–8 hours
-
-📈 **2. SOL/USD — BUY** | Confidence: 88%  
-   Entry: $182 | SL: $174 | TP: $196 → $212
-   Strategy: Breakout AI | Duration: 2–3 days
-
-💹 **3. EUR/USD — BUY** | Confidence: 84%
-   Entry: 1.0850 | SL: 1.0810 | TP: 1.0920 → 1.0970
-   Strategy: Smart Money AI | Duration: 1 day
-
-🔻 **4. AAPL — SELL** | Confidence: 76%
-   Entry: $197.34 | SL: $200.50 | TP: $191 → $185
-   Strategy: Swing Trading AI | Duration: 3 days
-
-📌 **Market Sentiment**: 84% Bullish overall. Crypto markets leading. Risk-on environment active.`,
-
-  'strategy': `**Smart Money AI Strategy — Deep Dive**
-
-🧠 **How It Works**: Smart Money AI tracks institutional order flow by analyzing large block trades, dark pool prints, options positioning, and liquidity zone accumulation patterns.
-
-📊 **Signal Generation Process**:
-1. Detect institutional accumulation in price range (order blocks)
-2. Identify liquidity sweeps (stop hunts by large players)
-3. Confirm fair value gap (FVG) presence on 15M–1H charts
-4. Wait for market structure shift (MSS) to confirm direction
-5. Generate entry signal with predefined SL/TP levels
-
-📈 **Historical Performance** (2023–2026):
-- Win Rate: 72%
-- Average R:R: 1:2.8
-- Max Drawdown: 12.4%
-- Annual Return: 31.2%
-- Sharpe Ratio: 1.89
-
-⚙️ **Best Market Conditions**: Low VIX (12–20), trending markets, high institutional volume. Avoid during major news events.`,
-};
-
-function getAIResponse(message: string): string {
-  const lower = message.toLowerCase();
-  if (lower.includes('btc') || lower.includes('bitcoin')) return AI_RESPONSES['btc'];
-  if (lower.includes('portfolio') || lower.includes('risk')) return AI_RESPONSES['portfolio'];
-  if (lower.includes('signal')) return AI_RESPONSES['signals'];
-  if (lower.includes('strategy') || lower.includes('smart money')) return AI_RESPONSES['strategy'];
-  return `I've analyzed your query about "${message}".
-
-📊 Based on current market conditions and your portfolio composition, here's my assessment:
-
-The AI engine has processed 2,847 data points across technical indicators, fundamental metrics, and market sentiment signals. Current market conditions show a **risk-on** environment with 84% bullish sentiment aggregate.
-
-**Key Insights**:
-- Global liquidity is expanding, supporting risk assets
-- Institutional positioning is net-long across major asset classes
-- AI prediction confidence is running at 92% — above 6-month average
-
-For more specific analysis, try asking about:
-- A specific asset (e.g., "Analyze ETH/USD")
-- Your portfolio risk ("Review my portfolio")
-- Active signals ("What signals are active?")
-- Trading strategies ("Explain Trend Following AI")`;
-}
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
@@ -170,11 +72,49 @@ export default function CopilotPage() {
     addMessage(userMsg);
     setTyping(true);
 
-    await new Promise(r => setTimeout(r, 1400 + Math.random() * 800));
-    const response = getAIResponse(text);
-    const aiMsg: ChatMessage = { id: (Date.now() + 1).toString(), role: 'assistant', content: response, timestamp: new Date() };
-    setTyping(false);
-    addMessage(aiMsg);
+    try {
+      const token = localStorage.getItem('trademind_token');
+      // Format history matching python expectations
+      const history = copilotMessages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+      const response = await fetch(`${apiUrl}/api/v2/copilot/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ message: text, history })
+      });
+
+      if (!response.ok) {
+        const errBody = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errBody}`);
+      }
+      const data = await response.json();
+      
+      const aiMsg: ChatMessage = { 
+        id: (Date.now() + 1).toString(), 
+        role: 'assistant', 
+        content: data.reply, 
+        timestamp: new Date(data.timestamp || Date.now()) 
+      };
+      addMessage(aiMsg);
+    } catch (err: any) {
+      console.error('[Copilot] Backend chat failed:', err.message);
+      const errMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `I'm unable to reach the AI backend right now. Please check that all services are running and try again.\n\nError: ${err.message}`,
+        timestamp: new Date()
+      };
+      addMessage(errMsg);
+    } finally {
+      setTyping(false);
+    }
   };
 
   return (

@@ -11,10 +11,13 @@ import {
   Tooltip, PieChart as RePieChart, Pie, Cell, Sector
 } from 'recharts';
 import { usePortfolioStore } from '@/store/usePortfolioStore';
+import { useMarketStore } from '@/store/useMarketStore';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
 import { Badge } from '@/components/ui/Badge';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
+import { toast } from 'react-hot-toast';
+import { apiFetch, mapPositionsToPortfolio, mapTicker } from '@/lib/api';
 
 const COLORS = ['#8b5cf6','#06b6d4','#10b981','#f59e0b','#f43f5e'];
 
@@ -29,9 +32,56 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function PortfolioPage() {
-  const { totalValue, totalPnl, totalPnlPct, positions, performanceHistory } = usePortfolioStore();
+  const { totalValue, totalPnl, totalPnlPct, positions, performanceHistory, setPortfolio } = usePortfolioStore();
+  const { setTickers } = useMarketStore();
   const [activePie, setActivePie] = useState<number | undefined>();
   const [activeChart, setActiveChart] = useState<'1W'|'1M'|'3M'|'1Y'>('1M');
+  const [closingIds, setClosingIds] = useState<string[]>([]);
+
+  const refreshPortfolio = async () => {
+    try {
+      const [user, rawPositions, rawTickers] = await Promise.all([
+        apiFetch<any>('/api/v2/users/me'),
+        apiFetch<any[]>('/api/v2/portfolio/positions'),
+        apiFetch<any[]>('/api/v2/markets/tickers'),
+      ]);
+      const liveTickers = rawTickers.map(mapTicker);
+      setTickers(liveTickers);
+      setPortfolio(mapPositionsToPortfolio(user, rawPositions, liveTickers));
+    } catch (err) {
+      console.error('[PortfolioPage] Refresh failed:', err);
+    }
+  };
+
+  const handleClosePosition = async (pos: any) => {
+    const confirmClose = window.confirm(`Are you sure you want to close your ${pos.symbol} position (Quantity: ${pos.quantity})?`);
+    if (!confirmClose) return;
+
+    setClosingIds(prev => [...prev, pos.id]);
+    try {
+      let symbolToSend = pos.symbol.trim().toUpperCase();
+      if (['BTC/USD', 'ETH/USD', 'SOL/USD', 'BNB/USD', 'XRP/USD'].includes(symbolToSend)) {
+        symbolToSend = symbolToSend.replace('/USD', '');
+      }
+
+      await apiFetch('/api/v2/portfolio/order', {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol: symbolToSend,
+          direction: 'SELL',
+          type: 'MARKET',
+          quantity: pos.quantity
+        })
+      });
+
+      toast.success(`Closed position for ${pos.symbol} successfully.`);
+      await refreshPortfolio();
+    } catch (err: any) {
+      toast.error(err.message || `Failed to close position for ${pos.symbol}.`);
+    } finally {
+      setClosingIds(prev => prev.filter(id => id !== pos.id));
+    }
+  };
 
   const pieData = positions.map(p => ({ name: p.symbol, value: p.allocation }));
 
@@ -161,6 +211,7 @@ export default function PortfolioPage() {
                 <th className="text-right">Value</th>
                 <th className="text-right">P&L</th>
                 <th className="text-right">Allocation</th>
+                <th className="text-center">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -196,6 +247,15 @@ export default function PortfolioPage() {
                         <div className="h-full rounded-full bg-purple-500" style={{ width: `${pos.allocation}%` }} />
                       </div>
                     </div>
+                  </td>
+                  <td className="text-center">
+                    <button
+                      onClick={() => handleClosePosition(pos)}
+                      disabled={closingIds.includes(pos.id)}
+                      className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/10 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      {closingIds.includes(pos.id) ? 'Closing...' : 'Close'}
+                    </button>
                   </td>
                 </tr>
               ))}
