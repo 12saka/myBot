@@ -35,10 +35,16 @@ interface AIState {
   isTyping: boolean;
   aiMode: 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE' | 'CUSTOM';
   autonomousActive: boolean;
+  allocation: number;
+  riskLimit: number;
+  maxDrawdown: number;
   addMessage: (msg: ChatMessage) => void;
   setTyping: (typing: boolean) => void;
   setAIMode: (mode: AIState['aiMode']) => void;
   setAutonomous: (active: boolean) => void;
+  setAllocation: (pct: number) => void;
+  setRiskLimit: (pct: number) => void;
+  setMaxDrawdown: (pct: number) => void;
   setSignals: (signals: AISignal[]) => void;
 }
 
@@ -94,9 +100,15 @@ export const useAIStore = create<AIState>()((set) => ({
   isTyping: false,
   aiMode: 'BALANCED',
   autonomousActive: false,
+  allocation: 40,
+  riskLimit: 2,
+  maxDrawdown: 10,
   addMessage: (msg) => set((s) => ({ copilotMessages: [...s.copilotMessages, msg] })),
   setTyping: (typing) => set({ isTyping: typing }),
   setAIMode: (mode) => set({ aiMode: mode }),
   setAutonomous: (active) => set({ autonomousActive: active }),
+  setAllocation: (pct) => set({ allocation: pct }),
+  setRiskLimit: (pct) => set({ riskLimit: pct }),
+  setMaxDrawdown: (pct) => set({ maxDrawdown: pct }),
   setSignals: (signals) => set({ signals }),
 }));

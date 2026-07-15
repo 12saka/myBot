@@ -8,7 +8,7 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-  Cpu, LogOut, User
+  Cpu, LogOut, User, Newspaper
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
@@ -37,6 +37,7 @@ const NAV_GROUPS = [
     items: [
       { href: '/copilot',    label: 'AI Copilot',   icon: Bot              },
       { href: '/automation', label: 'Automation',   icon: Cpu              },
+      { href: '/news',       label: 'AI News',      icon: Newspaper        },
       { href: '/academy',    label: 'Academy',      icon: BookOpen         },
     ],
   },

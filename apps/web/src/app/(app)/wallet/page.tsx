@@ -28,6 +28,7 @@ export default function WalletPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
+  const [brokerData, setBrokerData] = useState<any>({ connected: false, balance: 0, equity: 0, broker: 'None' });
 
   // Form selections
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit');
@@ -59,10 +60,21 @@ export default function WalletPage() {
     }
   };
 
+  const fetchBrokerDetails = async () => {
+    try {
+      const data = await apiFetch<any>('/api/v2/portfolio/broker');
+      if (data) setBrokerData(data);
+    } catch (err) {}
+  };
+
   useEffect(() => {
     fetchWalletDetails();
-    // Refresh wallet balance every 10 seconds in background
-    const interval = setInterval(fetchWalletDetails, 10000);
+    fetchBrokerDetails();
+    // Refresh wallet balance and broker data every 10 seconds in background
+    const interval = setInterval(() => {
+      fetchWalletDetails();
+      fetchBrokerDetails();
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -191,13 +203,21 @@ export default function WalletPage() {
         )}
         {/* Wallet balances */}
         <div className="md:col-span-2 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <StatCard
-              label="Total Account Value (USD)"
+              label="Wallet Value (USD)"
               value={formatCurrency(balance)}
               subValue="Ready for immediate trading"
               icon={WalletIcon}
               glowColor="purple"
+            />
+            <StatCard
+              label="Linked Broker Balance"
+              value={brokerData.connected ? formatCurrency(brokerData.balance) : '$0.00'}
+              subValue={brokerData.connected ? `Broker: ${brokerData.broker}` : 'No Broker Connected'}
+              change={brokerData.connected ? { value: `Account: ${brokerData.accountId}`, positive: true } : undefined}
+              icon={TrendingUp}
+              glowColor={brokerData.connected ? "blue" : "slate"}
             />
             <StatCard
               label="Linked Processor"

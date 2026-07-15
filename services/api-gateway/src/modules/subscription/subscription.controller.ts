@@ -20,7 +20,7 @@ export class SubscriptionController {
 
   @Get('status')
   async getStatus(@Request() req: any) {
-    return this.subscriptionService.getSubscriptionStatus(req.user.id);
+    return this.subscriptionService.getSubscriptionStatus(req.user.userId || req.user.id);
   }
 
   @Post('activate')
@@ -29,7 +29,7 @@ export class SubscriptionController {
     @Body() dto: ActivateSubscriptionDto,
   ) {
     return this.subscriptionService.activateSubscription(
-      req.user.id,
+      req.user.userId || req.user.id,
       dto.plan,
       dto.paymentMethod,
       dto.phoneNumber,

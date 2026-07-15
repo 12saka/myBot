@@ -8,6 +8,8 @@ import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCi
 import { useUIStore } from '@/store/useUIStore';
 import { useMarketStore } from '@/store/useMarketStore';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api';
+import { toast } from 'react-hot-toast';
 
 const FEATURED = ['BTC/USD', 'ETH/USD', 'AAPL', 'EUR/USD'];
 
@@ -17,6 +19,8 @@ export function Topbar() {
   const { tickers } = useMarketStore();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const featured = tickers.filter(t => FEATURED.includes(t.symbol));
 
   const [profile, setProfile] = useState({
@@ -90,6 +94,78 @@ export function Topbar() {
     };
   }, []);
 
+  // Load and poll notifications
+  useEffect(() => {
+    let previousIds = new Set<string>();
+
+    const fetchNotifications = async () => {
+      try {
+        const list = await apiFetch<any[]>('/api/v2/notifications');
+        if (Array.isArray(list)) {
+          // If this is not the initial empty load, check for new unread notifications
+          if (previousIds.size > 0) {
+            const newUnread = list.filter(n => !n.isRead && !previousIds.has(n.id));
+            newUnread.forEach(notif => {
+              toast(notif.message || notif.title, {
+                icon: '⚡',
+                style: {
+                  borderRadius: '12px',
+                  background: '#0f172a',
+                  color: '#fff',
+                  border: '1px solid rgba(139, 92, 246, 0.3)',
+                  fontSize: '12px',
+                },
+              });
+            });
+          }
+          // Update the tracked IDs
+          previousIds = new Set(list.map(n => n.id));
+          setNotifications(list);
+        }
+      } catch (err) {
+        // Silently catch auth or network issues
+      }
+    };
+
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.notifications-bell-container')) {
+        setDropdownOpen(false);
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, [dropdownOpen]);
+
+  const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  const handleMarkAllRead = async () => {
+    try {
+      await apiFetch('/api/v2/notifications/read-all', { method: 'PATCH' });
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      toast.success('All notifications marked as read');
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const handleMarkSingleRead = async (id: string) => {
+    try {
+      await apiFetch(`/api/v2/notifications/${id}/read`, { method: 'PATCH' });
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
   const handleSelectAsset = (symbol: string) => {
     setSearchOpen(false);
     setSearchQuery('');
@@ -154,10 +230,69 @@ export function Topbar() {
           </div>
 
           {/* Notifications Bell */}
-          <Link href="/settings?tab=ai" className="relative p-2 rounded-xl btn-ghost flex items-center justify-center">
-            <Bell size={18} />
-            <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-purple-500 border border-surface-0" />
-          </Link>
+          <div className="relative notifications-bell-container">
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="p-2 rounded-xl hover:bg-white/5 flex items-center justify-center relative cursor-pointer"
+            >
+              <Bell size={18} className="text-slate-300 hover:text-white transition-colors" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-purple-500 ring-2 ring-slate-950 animate-pulse" />
+              )}
+            </button>
+
+            {/* Notifications Dropdown */}
+            {dropdownOpen && (
+              <div className="absolute right-0 mt-2 w-80 glass-panel rounded-2xl border border-white/10 shadow-2xl p-4 z-50 space-y-3">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <span className="text-[10px] font-bold text-white uppercase tracking-wider">Recent Notifications</span>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={handleMarkAllRead}
+                      className="text-[10px] text-purple-400 hover:text-purple-300 font-bold transition-colors cursor-pointer"
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-60 overflow-y-auto space-y-2.5 pr-1">
+                  {notifications.filter(n => !n.isRead).length === 0 ? (
+                    <div className="py-6 text-center text-[11px] text-slate-500">
+                      No new notifications
+                    </div>
+                  ) : (
+                    notifications.filter(n => !n.isRead).slice(0, 4).map((notif) => (
+                      <div
+                        key={notif.id}
+                        onClick={() => handleMarkSingleRead(notif.id)}
+                        className="p-2.5 rounded-xl border transition-all text-left cursor-pointer bg-purple-500/5 border-purple-500/10 text-slate-200 hover:bg-purple-500/10"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-0.5">
+                          <span className="font-bold text-[11px] block truncate text-white">{notif.title}</span>
+                          <span className="h-1.5 w-1.5 rounded-full bg-purple-400 shrink-0 animate-pulse" />
+                        </div>
+                        <p className="text-[10px] leading-relaxed text-slate-400 break-words">{notif.message}</p>
+                        <span className="text-[9px] text-slate-500 mt-1 block">
+                          {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="border-t border-white/5 pt-2 flex justify-center">
+                  <Link
+                    href="/settings?tab=notifications"
+                    onClick={() => setDropdownOpen(false)}
+                    className="text-[10px] text-center font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 hover:underline transition-colors"
+                  >
+                    View All Notifications
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Avatar Link to Settings */}
           <Link href="/settings" className="h-8 w-8 rounded-full overflow-hidden bg-gradient-to-br from-purple-500/20 to-indigo-600/20 border border-purple-500/30 flex items-center justify-center text-xs font-bold text-purple-300 hover:scale-105 transition-all cursor-pointer">

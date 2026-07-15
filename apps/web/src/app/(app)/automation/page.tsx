@@ -20,11 +20,19 @@ const MOCK_STRATEGIES = [
 ];
 
 export default function AutomationPage() {
-  const { autonomousActive, setAutonomous, aiMode, setAIMode } = useAIStore();
+  const { 
+    autonomousActive, 
+    setAutonomous, 
+    aiMode, 
+    setAIMode,
+    allocation,
+    setAllocation,
+    riskLimit,
+    setRiskLimit,
+    maxDrawdown,
+    setMaxDrawdown
+  } = useAIStore();
   const [selectedStrat, setSelectedStrat] = useState('strat1');
-  const [allocation, setAllocation] = useState(40); // percent
-  const [riskLimit, setRiskLimit] = useState(2); // percent per trade
-  const [maxDrawdown, setMaxDrawdown] = useState(10); // percent limit
 
   const handleToggleAutonomous = () => {
     const nextState = !autonomousActive;

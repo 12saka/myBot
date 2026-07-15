@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import Link from 'next/link';
 import {
   BrainCircuit, Activity, TrendingUp, TrendingDown, Zap, Shield,
-  BarChart3, RefreshCw
+  BarChart3, RefreshCw, Newspaper
 } from 'lucide-react';
 import { useAIStore } from '@/store/useAIStore';
 import { usePortfolioStore } from '@/store/usePortfolioStore';
@@ -46,6 +47,51 @@ export default function DashboardPage() {
     setTradeDirection(direction);
     setIsTradeOpen(true);
   };
+
+  // Fetch real portfolio stats
+  const [stats, setStats] = useState<any>({ totalTrades: 0, winRate: '0.0%', aiAccuracy: '0.0%', avgConfidence: '0%', portfolioVolatility: '0.0' });
+  const [dashboardNews, setDashboardNews] = useState<any[]>([]);
+  const [newsLoading, setNewsLoading] = useState(true);
+
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('session_token') : null;
+    fetch('/api/v2/portfolio/stats', {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setStats(data); })
+      .catch(() => {});
+
+    // Fetch dashboard news
+    fetch('/api/v2/markets/news')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (Array.isArray(data)) {
+          setDashboardNews(data.slice(0, 5));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setNewsLoading(false));
+  }, []);
+
+  // Compute real Fear & Greed from signal data
+  const avgRsi = signals.length > 0
+    ? signals.reduce((sum, s) => sum + (s.confidence || 50), 0) / signals.length
+    : 50;
+  const fearGreedValue = Math.min(100, Math.max(0, Math.round(avgRsi)));
+  const fearGreedLabel = fearGreedValue > 75 ? 'Extreme Greed' : fearGreedValue > 55 ? 'Greed' : fearGreedValue > 45 ? 'Neutral' : fearGreedValue > 25 ? 'Fear' : 'Extreme Fear';
+  const fearGreedVariant = fearGreedValue > 55 ? 'green' as const : fearGreedValue > 45 ? 'slate' as const : 'red' as const;
+
+  // Parse real AI confidence from stats
+  const aiConfidenceValue = parseInt(stats.avgConfidence) || 0;
+  const aiConfidenceVariant = aiConfidenceValue > 70 ? 'purple' as const : aiConfidenceValue > 50 ? 'blue' as const : 'amber' as const;
+  const aiConfidenceLabel = aiConfidenceValue > 70 ? 'High' : aiConfidenceValue > 50 ? 'Moderate' : 'Low';
+
+  // Parse real portfolio volatility
+  const volValue = parseFloat(stats.portfolioVolatility) || 0;
+  const volPct = Math.min(100, Math.round(volValue * 2));
+  const volVariant = volValue > 30 ? 'red' as const : volValue > 15 ? 'amber' as const : 'green' as const;
+  const volLabel = volValue > 30 ? 'High' : volValue > 15 ? 'Moderate' : 'Low';
 
   const filteredSignals = activeTab === 'all' ? signals : signals.filter((s) => s.type === activeTab);
   const topTickers = tickers.slice(0, 6);
@@ -99,9 +145,9 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Risk Score"
-          value="Low"
-          subValue="Portfolio well-diversified"
-          change={{ value: 'No alerts active', positive: true }}
+          value={stats.totalTrades > 0 ? (parseFloat(stats.winRate) > 50 ? 'Low' : 'Moderate') : 'N/A'}
+          subValue={stats.totalTrades > 0 ? `${stats.totalTrades} trades, ${stats.winRate} win rate` : 'No trades yet'}
+          change={{ value: stats.totalTrades > 0 ? `AI accuracy: ${stats.aiAccuracy}` : 'Start trading to see stats', positive: parseFloat(stats.winRate) > 50 }}
           icon={Shield} iconColor="#34d399" accentColor="rgba(16,185,129,0.5)" glowColor="green"
         />
       </motion.div>
@@ -111,9 +157,9 @@ export default function DashboardPage() {
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
           <div className="flex w-full justify-between items-center">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fear & Greed</span>
-            <Badge variant="green" size="sm">Greed</Badge>
+            <Badge variant={fearGreedVariant} size="sm">{fearGreedLabel}</Badge>
           </div>
-          <ProgressRing value={72} size={140} color="#10b981" label="72" sublabel="/ 100" />
+          <ProgressRing value={fearGreedValue} size={140} color={fearGreedValue > 55 ? '#10b981' : fearGreedValue > 45 ? '#64748b' : '#ef4444'} label={String(fearGreedValue)} sublabel="/ 100" />
           <div className="w-full flex justify-between text-[10px] text-slate-600">
             <span>Fear</span><span>Neutral</span><span>Greed</span><span>Extreme</span>
           </div>
@@ -121,85 +167,133 @@ export default function DashboardPage() {
 
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
           <div className="flex w-full justify-between items-center">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">VIX Volatility</span>
-            <Badge variant="amber" size="sm">Moderate</Badge>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Portfolio Volatility</span>
+            <Badge variant={volVariant} size="sm">{volLabel}</Badge>
           </div>
-          <ProgressRing value={36} size={140} color="#f59e0b" label="18.4" sublabel="VIX" />
-          <p className="text-xs text-slate-500 text-center">Moderate volatility — ideal for trend strategies</p>
+          <ProgressRing value={volPct} size={140} color={volValue > 30 ? '#ef4444' : volValue > 15 ? '#f59e0b' : '#10b981'} label={`${volValue.toFixed(1)}%`} sublabel="ann." />
+          <p className="text-xs text-slate-500 text-center">{volValue > 30 ? 'High volatility — consider hedging' : volValue > 15 ? 'Moderate volatility — ideal for trend strategies' : 'Low volatility — stable portfolio'}</p>
         </div>
 
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
           <div className="flex w-full justify-between items-center">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">AI Confidence</span>
-            <Badge variant="purple" size="sm">High</Badge>
+            <Badge variant={aiConfidenceVariant} size="sm">{aiConfidenceLabel}</Badge>
           </div>
-          <ProgressRing value={92} size={140} color="#8b5cf6" label="92%" sublabel="accuracy" />
-          <p className="text-xs text-slate-500 text-center">Historical accuracy across all signal types</p>
+          <ProgressRing value={aiConfidenceValue} size={140} color={aiConfidenceValue > 70 ? '#8b5cf6' : '#3b82f6'} label={`${aiConfidenceValue}%`} sublabel="avg" />
+          <p className="text-xs text-slate-500 text-center">Average confidence across {signals.length} active signals</p>
         </div>
       </motion.div>
 
-      {/* Market Snapshot */}
-      <motion.div variants={ITEM} className="glass-card rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
-          <h2 className="font-display font-bold text-white flex items-center gap-2">
-            <Activity size={16} className="text-purple-400" />
-            Live Market Snapshot
-          </h2>
-          <button className="text-slate-500 hover:text-white transition-colors"><RefreshCw size={14} /></button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full data-table">
-            <thead>
-              <tr>
-                <th className="text-left">Asset</th>
-                <th className="text-right">Price</th>
-                <th className="text-right">24h Change</th>
-                <th className="text-right hidden md:table-cell">Volume</th>
-                <th className="text-right hidden lg:table-cell">7D Chart</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topTickers.map((ticker) => (
-                <tr key={ticker.symbol}>
-                  <td>
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-500/20 to-indigo-600/20 border border-purple-500/15 flex items-center justify-center text-[10px] font-bold text-purple-300">
-                        {ticker.symbol.replace('/USD', '').slice(0, 3)}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-slate-200 text-sm">{ticker.symbol}</div>
-                        <div className="text-[10px] text-slate-500">{ticker.name}</div>
-                      </div>
+      {/* Split Snapshot & News Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Live Market Snapshot */}
+        <motion.div variants={ITEM} className="lg:col-span-2 glass-card rounded-2xl overflow-hidden flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+              <h2 className="font-display font-bold text-white flex items-center gap-2 text-sm">
+                <Activity size={15} className="text-purple-400" />
+                Live Market Snapshot
+              </h2>
+              <button className="text-slate-500 hover:text-white transition-colors"><RefreshCw size={12} /></button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full data-table">
+                <thead>
+                  <tr>
+                    <th className="text-left text-[10px]">Asset</th>
+                    <th className="text-right text-[10px]">Price</th>
+                    <th className="text-right text-[10px]">24h Change</th>
+                    <th className="text-right text-[10px] hidden md:table-cell">Volume</th>
+                    <th className="text-right text-[10px] hidden lg:table-cell">7D Chart</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topTickers.map((ticker) => (
+                    <tr key={ticker.symbol}>
+                      <td>
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-500/20 to-indigo-600/20 border border-purple-500/15 flex items-center justify-center text-[10px] font-bold text-purple-300">
+                            {ticker.symbol.replace('/USD', '').slice(0, 3)}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-slate-200 text-sm">{ticker.symbol}</div>
+                            <div className="text-[10px] text-slate-500">{ticker.name}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="text-right font-mono font-semibold text-slate-200">
+                        {ticker.type === 'forex' ? ticker.price.toFixed(4) : ticker.price.toLocaleString()}
+                      </td>
+                      <td className="text-right">
+                        <span className={cn(
+                          'text-xs font-bold flex items-center justify-end gap-1',
+                          ticker.changePct24h >= 0 ? 'text-emerald-400' : 'text-red-400'
+                        )}>
+                          {ticker.changePct24h >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                          {Math.abs(ticker.changePct24h).toFixed(2)}%
+                        </span>
+                      </td>
+                      <td className="text-right text-slate-500 text-xs hidden md:table-cell">
+                        {new Intl.NumberFormat('en', { notation: 'compact' }).format(ticker.volume24h)}
+                      </td>
+                      <td className="hidden lg:table-cell" style={{ width: 100 }}>
+                        <MiniSparkline
+                          data={ticker.symbol.startsWith('ETH') ? ethData : btcData}
+                          color={ticker.changePct24h >= 0 ? '#10b981' : '#ef4444'}
+                          height={36}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Real-time Sentiment & News Widget */}
+        <motion.div variants={ITEM} className="glass-panel rounded-2xl border border-white/5 p-5 flex flex-col justify-between gap-4">
+          <div>
+            <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4">
+              <h2 className="font-display font-bold text-white flex items-center gap-2 text-xs uppercase tracking-wider">
+                <Newspaper size={14} className="text-purple-400" />
+                Latest News & Sentiment
+              </h2>
+              <Link href="/news" className="text-[10px] text-purple-400 hover:text-purple-300 font-bold hover:underline cursor-pointer">
+                View All
+              </Link>
+            </div>
+
+            <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
+              {newsLoading ? (
+                <div className="py-12 text-center text-[11px] text-slate-500 font-bold">Syncing market news...</div>
+              ) : dashboardNews.length === 0 ? (
+                <div className="py-12 text-center text-[11px] text-slate-500">No news digests available.</div>
+              ) : (
+                dashboardNews.map((n) => (
+                  <a 
+                    key={n.id}
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block group space-y-1 pb-3 border-b border-white/5 last:border-0 last:pb-0 text-left cursor-pointer"
+                  >
+                    <div className="flex justify-between items-center text-[8px] font-bold text-slate-500 uppercase">
+                      <span>{n.source}</span>
+                      <span>{new Date(n.datetime * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
-                  </td>
-                  <td className="text-right font-mono font-semibold text-slate-200">
-                    {ticker.type === 'forex' ? ticker.price.toFixed(4) : ticker.price.toLocaleString()}
-                  </td>
-                  <td className="text-right">
-                    <span className={cn(
-                      'text-xs font-bold flex items-center justify-end gap-1',
-                      ticker.changePct24h >= 0 ? 'text-emerald-400' : 'text-red-400'
-                    )}>
-                      {ticker.changePct24h >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                      {Math.abs(ticker.changePct24h).toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="text-right text-slate-500 text-xs hidden md:table-cell">
-                    {new Intl.NumberFormat('en', { notation: 'compact' }).format(ticker.volume24h)}
-                  </td>
-                  <td className="hidden lg:table-cell" style={{ width: 100 }}>
-                    <MiniSparkline
-                      data={ticker.symbol.startsWith('ETH') ? ethData : btcData}
-                      color={ticker.changePct24h >= 0 ? '#10b981' : '#ef4444'}
-                      height={36}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </motion.div>
+                    <h5 className="font-bold text-[11px] text-slate-300 group-hover:text-purple-300 transition-colors line-clamp-2 leading-snug">
+                      {n.headline}
+                    </h5>
+                  </a>
+                ))
+              )}
+            </div>
+          </div>
+        </motion.div>
+
+      </div>
 
       {/* AI Signals */}
       <motion.div variants={ITEM} className="space-y-4">

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, BrainCircuit, TrendingUp, TrendingDown,
-  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw
+  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles
 } from 'lucide-react';
 import { useAIStore, AISignal } from '@/store/useAIStore';
 import { useMarketStore } from '@/store/useMarketStore';
@@ -218,9 +218,10 @@ const AVAILABLE_MARKETS = [
 ];
 
 export default function SignalsPage() {
-  const { signals, setSignals } = useAIStore();
+  const { signals, setSignals, autonomousActive } = useAIStore();
   const { watchlist } = useMarketStore();
   const [activeTab, setActiveTab] = useState<'all'|'crypto'|'stocks'|'indices'|'forex'|'commodities'>('all');
+  const [selectedTimeframe, setSelectedTimeframe] = useState<'1m'|'3m'|'5m'|'15m'|'30m'|'1h'>('1h');
   
   // Generation & refresh states
   const [generatingSymbol, setGeneratingSymbol] = useState<string | null>(null);
@@ -302,12 +303,39 @@ export default function SignalsPage() {
     try {
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
-        body: JSON.stringify({ symbol })
+        body: JSON.stringify({ symbol, interval: selectedTimeframe })
       });
       const newSignal = mapSignal(rawSignal);
       
       const exists = signals.some(s => s.symbol === newSignal.symbol && s.direction === newSignal.direction);
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+
+      // Autonomous execution if bot is running
+      if (autonomousActive && newSignal.direction !== 'WAIT' && !exists) {
+        let quantity = 1.0;
+        if (newSignal.entry > 1000) {
+          quantity = parseFloat((100 / newSignal.entry).toFixed(4));
+        } else if (newSignal.entry > 100) {
+          quantity = parseFloat((50 / newSignal.entry).toFixed(2));
+        } else {
+          quantity = 10.0;
+        }
+
+        try {
+          await apiFetch('/api/v2/portfolio/order', {
+            method: 'POST',
+            body: JSON.stringify({
+              symbol: newSignal.symbol,
+              direction: newSignal.direction,
+              type: 'MARKET',
+              quantity
+            })
+          });
+          toast.success(`Autonomous bot automatically executed ${newSignal.direction} order for ${newSignal.symbol}!`);
+        } catch (err: any) {
+          console.error(`[AUTONOMOUS BOT] Auto-order failed: ${err.message}`);
+        }
+      }
 
       // Display dynamic custom visual notification alert toast for incoming signal
       if (!exists) {
@@ -354,15 +382,42 @@ export default function SignalsPage() {
 
   const handleGenerateSignal = async (symbol: string) => {
     setGeneratingSymbol(symbol);
-    const toastId = toast.loading(`Ensemble AI analyzing price & technical models for ${symbol}...`);
+    const toastId = toast.loading(`Ensemble AI analyzing price & technical models for ${symbol} (${selectedTimeframe})...`);
     try {
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
-        body: JSON.stringify({ symbol })
+        body: JSON.stringify({ symbol, interval: selectedTimeframe })
       });
       const newSignal = mapSignal(rawSignal);
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
       toast.success(`Generated AI Signal for ${symbol} successfully!`, { id: toastId });
+
+      // Autonomous execution if bot is running
+      if (autonomousActive && newSignal.direction !== 'WAIT') {
+        let quantity = 1.0;
+        if (newSignal.entry > 1000) {
+          quantity = parseFloat((100 / newSignal.entry).toFixed(4));
+        } else if (newSignal.entry > 100) {
+          quantity = parseFloat((50 / newSignal.entry).toFixed(2));
+        } else {
+          quantity = 10.0;
+        }
+
+        try {
+          await apiFetch('/api/v2/portfolio/order', {
+            method: 'POST',
+            body: JSON.stringify({
+              symbol: newSignal.symbol,
+              direction: newSignal.direction,
+              type: 'MARKET',
+              quantity
+            })
+          });
+          toast.success(`Autonomous bot automatically executed ${newSignal.direction} order for ${newSignal.symbol}!`);
+        } catch (err: any) {
+          toast.error(`Autonomous execution failed: ${err.message}`);
+        }
+      }
     } catch (err: any) {
       toast.error(err.message || `Failed to generate signal for ${symbol}.`, { id: toastId });
     } finally {
@@ -479,10 +534,28 @@ export default function SignalsPage() {
 
       {/* Market Selector Directory */}
       <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
-        <div className="flex items-center justify-between border-b border-white/5 pb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
           <div>
             <h3 className="font-display font-bold text-white text-sm mb-0.5">Ensemble AI Market Directory</h3>
             <p className="text-[11px] text-slate-400">Select any index, commodity, stock, or coin below to execute predictive models.</p>
+          </div>
+          
+          <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-xl border border-white/5 self-start sm:self-auto">
+            {(['1m', '3m', '5m', '15m', '30m', '1h'] as const).map(tf => (
+              <button
+                key={tf}
+                type="button"
+                onClick={() => setSelectedTimeframe(tf)}
+                className={cn(
+                  "px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer",
+                  selectedTimeframe === tf 
+                    ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" 
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                {tf}
+              </button>
+            ))}
           </div>
         </div>
         <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1">
@@ -622,8 +695,15 @@ export default function SignalsPage() {
               </div>
 
               {/* Chart */}
-              <div className={cn("flex-shrink-0 px-2 pt-2 relative", isFullscreen ? "h-[60vh]" : "h-[450px]")}>
-                <TradingViewWidget symbol={selectedChartSignal.symbol} height={isFullscreen ? Math.round(window.innerHeight * 0.58) : 450} />
+              <div className={cn("flex-shrink-0 px-2 pt-2 relative transition-all duration-300", isFullscreen ? "h-[80vh]" : "h-[450px]")}>
+                <TradingViewWidget
+                  symbol={selectedChartSignal.symbol}
+                  height="100%"
+                  entryPrice={selectedChartSignal.entry}
+                  stopLoss={selectedChartSignal.stopLoss}
+                  tp1={selectedChartSignal.tp1}
+                  tp2={selectedChartSignal.tp2}
+                />
               </div>
 
               {/* Target Price Labels Overlay */}
@@ -642,26 +722,191 @@ export default function SignalsPage() {
               </div>
 
               {/* Detailed Multi-Factor AI Analysis Breakdown */}
-              <div className="flex-1 p-6 space-y-4 overflow-y-auto">
-                <div>
-                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Technical Indicators Overlay</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                    {selectedChartSignal.technicals.map((item, idx) => (
-                      <div key={idx} className="p-2.5 rounded-lg bg-white/2 border border-white/5 text-slate-400 flex items-start gap-2">
-                        <TrendingUp size={12} className="text-emerald-400 mt-0.5 flex-shrink-0" />
-                        <span>{item}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              {(() => {
+                const scores = selectedChartSignal.aiReasoning?.scores || {
+                  bullish: selectedChartSignal.direction === 'BUY' ? 82 : (selectedChartSignal.direction === 'SELL' ? 18 : 50),
+                  bearish: selectedChartSignal.direction === 'SELL' ? 82 : (selectedChartSignal.direction === 'BUY' ? 18 : 50),
+                  momentum: 62,
+                  volume: 75,
+                  trend: 80,
+                  volatility: 60,
+                  confidence: selectedChartSignal.confidence
+                };
+                const status = selectedChartSignal.aiReasoning?.status || 'ACTIVE';
+                const technicals = selectedChartSignal.aiReasoning?.technicals || {};
+                const structure = selectedChartSignal.aiReasoning?.structure || {};
 
-                <div>
-                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Model Analysis & Outlook</h4>
-                  <div className="p-3.5 rounded-xl bg-purple-500/5 border border-purple-500/10 text-xs text-purple-300 leading-relaxed">
-                    <strong>{selectedChartSignal.strategy}</strong>: Model confidence running at <strong>{selectedChartSignal.confidence}%</strong>. Projected win probability is <strong>{selectedChartSignal.probability}</strong> with an estimated target duration of <strong>{selectedChartSignal.duration}</strong>. Risk-to-reward ratio is optimized at <strong>{selectedChartSignal.riskReward}</strong>.
+                return (
+                  <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+                    {/* Signal Lifecycle Timeline */}
+                    <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
+                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Signal Lifecycle Timeline</h4>
+                      <div className="flex items-center justify-between relative px-2">
+                        {/* Line connector */}
+                        <div className="absolute top-4 left-6 right-6 h-[2px] bg-slate-800 -z-10" />
+                        
+                        {[
+                          { label: 'Detected', active: true },
+                          { label: 'AI Analyzed', active: true },
+                          { label: 'Active', active: status === 'ACTIVE' || status === 'RUNNING' || status.includes('HIT') },
+                          { label: 'Running', active: status === 'RUNNING' || status.includes('HIT') },
+                          { label: 'Closed', active: status.includes('HIT') || status === 'CLOSED' },
+                        ].map(({ label, active }, idx) => (
+                          <div key={idx} className="flex flex-col items-center gap-2">
+                            <div className={cn(
+                              "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all duration-300",
+                              active 
+                                ? "bg-purple-500/20 text-purple-300 border-purple-500/40 shadow-[0_0_8px_rgba(168,85,247,0.3)]" 
+                                : "bg-slate-900 text-slate-600 border-white/5"
+                            )}>
+                              {idx + 1}
+                            </div>
+                            <span className={cn("text-[9px] font-bold uppercase tracking-wider", active ? "text-purple-300" : "text-slate-600")}>
+                              {label}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* AI Diagram Panel / Market Score */}
+                      <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                          <Sparkles size={14} className="text-purple-400" />
+                          AI Market Score
+                        </h4>
+                        <div className="space-y-3">
+                          {[
+                            { label: 'Bullish Score', val: scores.bullish, color: 'bg-emerald-500' },
+                            { label: 'Bearish Score', val: scores.bearish, color: 'bg-red-500' },
+                            { label: 'Momentum', val: scores.momentum, color: 'bg-blue-500' },
+                            { label: 'Volume', val: scores.volume, color: 'bg-indigo-500' },
+                            { label: 'Trend Strength', val: scores.trend, color: 'bg-purple-500' },
+                            { label: 'Volatility', val: scores.volatility, color: 'bg-amber-500' },
+                            { label: 'Model Confidence', val: scores.confidence, color: 'bg-fuchsia-500' },
+                          ].map(({ label, val, color }) => (
+                            <div key={label} className="space-y-1">
+                              <div className="flex justify-between text-[10px] font-semibold text-slate-400">
+                                <span>{label}</span>
+                                <span className="text-slate-200">{val}%</span>
+                              </div>
+                              <div className="h-1.5 w-full bg-slate-800/85 rounded-full overflow-hidden">
+                                <motion.div 
+                                  className={cn("h-full rounded-full", color)}
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${val}%` }}
+                                  transition={{ duration: 0.8, ease: "easeOut" }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* AI Reasoning Checklist */}
+                      <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">AI Reasoning Checklist</h4>
+                        <div className="space-y-2.5 text-[11px]">
+                          {[
+                            { label: `Trend: ${scores.bullish > 50 ? 'Bullish' : 'Bearish'}`, check: scores.bullish > 50 ? scores.bullish > 55 : scores.bearish > 55 },
+                            { label: `EMA Alignment: EMA20 ${technicals.ema20 && technicals.ema50 ? (technicals.ema20 > technicals.ema50 ? '>' : '<') : '~'} EMA50 ${technicals.ema50 && technicals.ema200 ? (technicals.ema50 > technicals.ema200 ? '> EMA200' : '< EMA200') : ''}`, check: scores.bullish > 50 ? (technicals.ema20 > technicals.ema50) : (technicals.ema20 < technicals.ema50) },
+                            { label: `MACD Crossover ${technicals.macd_hist > 0 ? 'Bullish' : 'Bearish'}`, check: scores.bullish > 50 ? technicals.macd_hist > 0 : technicals.macd_hist < 0 },
+                            { label: `RSI: ${technicals.rsi14 ? Math.round(technicals.rsi14) : '—'}`, check: scores.momentum < 75 && scores.momentum > 35 },
+                            { label: 'Volume Breakout Confirmed', check: scores.volume > 60 },
+                            { label: 'Fair Value Gap Respected', check: !!structure.fvg_detected },
+                            { label: 'Order Block Respected', check: !!structure.order_block_detected },
+                            { label: 'Liquidity Sweep Completed', check: !!structure.liquidity_sweep },
+                          ].map(({ label, check }, idx) => (
+                            <div key={idx} className="flex items-center gap-2.5 text-slate-400 bg-white/2 p-2 rounded-xl border border-white/5">
+                              <span className={cn(
+                                "h-4.5 w-4.5 rounded-full flex items-center justify-center text-[10px] font-bold border transition-colors",
+                                check 
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" 
+                                  : "bg-slate-800 text-slate-600 border-white/5"
+                              )}>
+                                {check ? "✔" : "—"}
+                              </span>
+                              <span className="truncate">{label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Per-Indicator Verdicts */}
+                    {selectedChartSignal.aiReasoning?.indicator_verdicts && Object.keys(selectedChartSignal.aiReasoning.indicator_verdicts).length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">📊 Indicator-by-Indicator Analysis</h4>
+                        <div className="grid grid-cols-1 gap-2">
+                          {Object.entries(selectedChartSignal.aiReasoning.indicator_verdicts).map(([key, verdict]) => {
+                            const icons: Record<string, string> = { ema: '📈', rsi: '⚡', macd: '🔄', bollinger: '📉', vwap: '🏦', atr: '📏', adx: '💪' };
+                            const labels: Record<string, string> = { ema: 'EMA Alignment', rsi: 'RSI Momentum', macd: 'MACD Crossover', bollinger: 'Bollinger Bands', vwap: 'VWAP Analysis', atr: 'ATR Volatility', adx: 'ADX Trend Strength' };
+                            return (
+                              <div key={key} className="p-3 rounded-xl bg-white/2 border border-white/5 text-xs text-slate-300 leading-relaxed">
+                                <div className="font-bold text-white mb-1">{icons[key] || '📌'} {labels[key] || key.toUpperCase()}</div>
+                                <p className="text-slate-400">{verdict as string}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Market Structure Analysis */}
+                    {selectedChartSignal.aiReasoning?.market_structure_analysis && (
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">🏗️ Market Structure Analysis</h4>
+                        <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 text-xs text-blue-300 leading-relaxed">
+                          <p>{selectedChartSignal.aiReasoning.market_structure_analysis}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* TradingView Trade Idea */}
+                    {selectedChartSignal.aiReasoning?.tradingview_idea && (
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">💡 Trade Idea Summary</h4>
+                        <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/10 text-xs text-amber-200 leading-relaxed">
+                          <p className="font-medium">{selectedChartSignal.aiReasoning.tradingview_idea}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Indicators details list */}
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Technical Indicators Overlay</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        {selectedChartSignal.technicals.map((item, idx) => (
+                          <div key={idx} className="p-2.5 rounded-lg bg-white/2 border border-white/5 text-slate-400 flex items-start gap-2">
+                            <TrendingUp size={12} className="text-emerald-400 mt-0.5 flex-shrink-0" />
+                            <span>{item}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Deep AI Analysis & Outlook */}
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">🧠 AI Analysis & Outlook</h4>
+                      <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 text-xs text-purple-300 leading-relaxed space-y-3">
+                        <div className="flex flex-wrap gap-3 text-[10px] border-b border-white/5 pb-3 mb-2">
+                          <span className="bg-purple-500/10 border border-purple-500/20 rounded-lg px-2 py-0.5 font-bold">Strategy: {selectedChartSignal.strategy}</span>
+                          <span className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-2 py-0.5 font-bold">Confidence: {selectedChartSignal.confidence}%</span>
+                          <span className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-2 py-0.5 font-bold">Win Prob: {selectedChartSignal.probability}</span>
+                          <span className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-0.5 font-bold">Duration: {selectedChartSignal.duration}</span>
+                          <span className="bg-fuchsia-500/10 border border-fuchsia-500/20 rounded-lg px-2 py-0.5 font-bold">R:R {selectedChartSignal.riskReward}</span>
+                        </div>
+                        {selectedChartSignal.reasoning && (
+                          <p className="text-slate-300 whitespace-pre-line leading-relaxed">
+                            {selectedChartSignal.reasoning}
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Footer Actions */}
               <div className="flex gap-3 border-t border-white/5 px-6 py-4 mt-auto">

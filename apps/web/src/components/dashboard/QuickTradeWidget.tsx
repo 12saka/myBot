@@ -217,11 +217,53 @@ export function QuickTradeWidget({
                         {aiSignal.direction}
                       </Badge>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 pt-1.5 border-t border-white/5">
-                      <div>Entry price: <span className="font-bold text-white">${aiSignal.entry.toLocaleString()}</span></div>
-                      <div>Stop Loss: <span className="font-bold text-red-400">${aiSignal.stopLoss.toLocaleString()}</span></div>
-                      <div>Target 1: <span className="font-bold text-emerald-400">${aiSignal.tp1.toLocaleString()}</span></div>
-                      <div>Target 2: <span className="font-bold text-emerald-300">${aiSignal.tp2.toLocaleString()}</span></div>
+                    
+                    {/* Order ticket receipt */}
+                    <div className="space-y-1.5 pt-2 border-t border-white/5 text-[10px] text-slate-400">
+                      <div className="flex justify-between">
+                        <span>Entry Price (EP)</span>
+                        <span className="font-mono font-bold text-white">${aiSignal.entry.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Stop Loss (SL)</span>
+                        <span className="font-mono font-bold text-red-400">${aiSignal.stopLoss.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Take Profit 1 (TP1)</span>
+                        <span className="font-mono font-bold text-emerald-400">${aiSignal.tp1.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Take Profit 2 (TP2)</span>
+                        <span className="font-mono font-bold text-teal-300">${aiSignal.tp2.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between border-t border-white/5 pt-1.5">
+                        <span>AI Signal Confidence</span>
+                        <span className="font-bold text-purple-400">{aiSignal.confidence}% Probability</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Leverage Applied</span>
+                        <span className="font-bold text-slate-300">1:100</span>
+                      </div>
+                      {quantity && Number(quantity) > 0 && (
+                        <>
+                          <div className="flex justify-between border-t border-white/5 pt-1.5">
+                            <span>Estimated Position Value</span>
+                            <span className="font-mono font-bold text-white">
+                              ${((Number(quantity) || 0) * aiSignal.entry).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Required Margin (1%)</span>
+                            <span className="font-mono font-bold text-purple-300">
+                              ${(((Number(quantity) || 0) * aiSignal.entry) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Broker Execution Fee</span>
+                            <span className="font-bold text-emerald-400">FREE ($0.00 Commission)</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -235,7 +277,7 @@ export function QuickTradeWidget({
                         required
                         value={quantity}
                         onChange={(e) => setQuantity(e.target.value)}
-                        placeholder="0.00"
+                        placeholder="Enter quantity to calculate margin..."
                         className="w-full input-glass rounded-xl pl-3 pr-10 py-2.5 text-xs text-slate-200 focus:outline-none"
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 font-bold text-[10px] text-slate-500">{symbol}</span>

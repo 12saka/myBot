@@ -10,7 +10,7 @@ import {
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from 'react-hot-toast';
-import { apiFetch, normalizeMarketSymbol } from '@/lib/api';
+import { apiFetch, normalizeMarketSymbol, mapTicker } from '@/lib/api';
 import { useMarketStore } from '@/store/useMarketStore';
 
 interface Order {
@@ -50,7 +50,7 @@ export default function OrdersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const { tickers } = useMarketStore();
+  const { tickers, setTickers } = useMarketStore();
 
   // New Order Form States
   const [newOrder, setNewOrder] = useState({
@@ -62,6 +62,16 @@ export default function OrdersPage() {
   });
 
   const [orders, setOrders] = useState<Order[]>([]);
+
+  const fetchTickers = async () => {
+    try {
+      const rawTickers = await apiFetch<any[]>('/api/v2/markets/tickers');
+      const liveTickers = rawTickers.map(mapTicker);
+      setTickers(liveTickers);
+    } catch (err) {
+      console.error('[OrdersPage] Failed to fetch tickers:', err);
+    }
+  };
 
   const fetchOrders = async () => {
     setIsLoading(true);
@@ -77,7 +87,7 @@ export default function OrdersPage() {
   };
 
   useEffect(() => {
-    fetchOrders();
+    Promise.all([fetchOrders(), fetchTickers()]);
   }, []);
 
   const currentTicker = useMemo(() => {
@@ -139,10 +149,22 @@ export default function OrdersPage() {
     // Search Query Filter
     if (searchQuery && !order.symbol.toLowerCase().includes(searchQuery.toLowerCase()) && !order.id.toLowerCase().includes(searchQuery.toLowerCase())) return false;
 
-    // Asset Type Filter (Mock matching based on symbols)
-    if (selectedAssetType === 'crypto' && !['BTC/USD', 'ETH/USD', 'SOL/USD'].includes(order.symbol)) return false;
-    if (selectedAssetType === 'stocks' && !['AAPL'].includes(order.symbol)) return false;
-    if (selectedAssetType === 'forex' && !['EUR/USD', 'XAU/USD'].includes(order.symbol)) return false;
+    // Find the ticker in market store to check its actual type
+    const cleanSym = order.symbol.replace('/USD', '').toUpperCase();
+    const ticker = tickers.find(t => t.symbol.toUpperCase().replace('/USD', '') === cleanSym);
+    
+    if (selectedAssetType !== 'all') {
+      if (!ticker) {
+        // Fallback checks if ticker list not loaded yet
+        if (selectedAssetType === 'crypto' && !['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(cleanSym)) return false;
+        if (selectedAssetType === 'stocks' && !['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'].includes(cleanSym)) return false;
+        if (selectedAssetType === 'forex' && !['EUR/USD', 'GBP/USD', 'USD/JPY', 'GOLD', 'OIL', 'US30', 'US100', 'SPX500', 'DAX40'].includes(cleanSym)) return false;
+      } else {
+        if (selectedAssetType === 'crypto' && ticker.type !== 'crypto') return false;
+        if (selectedAssetType === 'stocks' && ticker.type !== 'stock') return false;
+        if (selectedAssetType === 'forex' && !['forex', 'commodity', 'index'].includes(ticker.type)) return false;
+      }
+    }
 
     return true;
   });

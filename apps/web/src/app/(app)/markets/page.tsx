@@ -355,8 +355,8 @@ export default function MarketsPage() {
               </div>
 
               {/* Chart */}
-              <div className={cn("flex-shrink-0 px-2 pt-2", isFullscreen ? "h-[60vh]" : "h-[420px]")}>
-                <TradingViewWidget symbol={selectedSymbol} height={isFullscreen ? Math.round(window.innerHeight * 0.58) : 420} />
+              <div className={cn("flex-shrink-0 px-2 pt-2 transition-all duration-300", isFullscreen ? "h-[80vh]" : "h-[420px]")}>
+                <TradingViewWidget symbol={selectedSymbol} height="100%" />
               </div>
 
               {/* AI Analysis Panel */}

@@ -1,4 +1,4 @@
-import { Module, Controller, Get, Patch, Param, UseGuards } from '@nestjs/common';
+import { Module, Controller, Get, Patch, Param, UseGuards, Req } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { NotificationsGateway } from './notifications.gateway';
@@ -44,10 +44,7 @@ export class NotificationsController {
   }
 }
 
-// Inject helper to support Req decorator on controller
-function Req(): (target: any, propertyKey: string, parameterIndex: number) => void {
-  return (target: any, propertyKey: string, parameterIndex: number) => {};
-}
+
 
 @Module({
   imports: [

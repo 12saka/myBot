@@ -39,6 +39,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
 
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== 'undefined') {
+      localStorage.removeItem('trademind_token');
+      window.location.href = '/login';
+    }
     const message = Array.isArray(data?.message) ? data.message.join(' ') : data?.message;
     throw new Error(message || data?.error || `Request failed with status ${response.status}`);
   }

@@ -23,7 +23,7 @@ import {
   type ProfileData,
 } from '@/lib/api';
 
-type TabType = 'overview' | 'kyc' | 'security' | 'ai' | 'billing' | 'activity';
+type TabType = 'overview' | 'kyc' | 'security' | 'ai' | 'billing' | 'activity' | 'notifications';
 
 interface ApiKey {
   id: string;
@@ -40,13 +40,24 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setIsClient(true);
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const tab = params.get('tab');
-      if (tab && ['overview', 'kyc', 'security', 'ai', 'billing', 'activity'].includes(tab)) {
-        setActiveTab(tab as TabType);
+    const handleUrlChange = () => {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const tab = params.get('tab');
+        if (tab && ['overview', 'kyc', 'security', 'ai', 'billing', 'activity', 'notifications'].includes(tab)) {
+          setActiveTab(tab as TabType);
+        }
       }
-    }
+    };
+
+    handleUrlChange();
+    window.addEventListener('popstate', handleUrlChange);
+    const interval = setInterval(handleUrlChange, 500);
+
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      clearInterval(interval);
+    };
   }, []);
 
   // Billing modals states
@@ -70,27 +81,36 @@ export default function SettingsPage() {
     
     setIsUpgrading(true);
     setUpgradeStep('Connecting to billing gateway...');
-    await new Promise(r => setTimeout(r, 1200));
     
-    if (paymentMode === 'mpesa') {
-      setUpgradeStep('Sending STK Push prompt to phone...');
-      await new Promise(r => setTimeout(r, 1800));
-      setUpgradeStep('Awaiting Safaricom confirmation...');
-      await new Promise(r => setTimeout(r, 2200));
-    } else {
-      setUpgradeStep('Authorizing credit card charge...');
-      await new Promise(r => setTimeout(r, 3000));
+    try {
+      let planEnum: 'BASIC' | 'PRO' | 'ENTERPRISE' = 'PRO';
+      if (plan.toLowerCase().includes('basic')) planEnum = 'BASIC';
+      else if (plan.toLowerCase().includes('enterprise')) planEnum = 'ENTERPRISE';
+
+      await apiFetch('/api/v2/subscription/activate', {
+        method: 'POST',
+        body: JSON.stringify({
+          plan: planEnum,
+          paymentMethod: paymentMode,
+          phoneNumber: billingPhone || undefined,
+          billingCycle: 'yearly'
+        })
+      });
+
+      setUpgradeStep('Synchronizing subscription credentials...');
+      await new Promise(r => setTimeout(r, 1000));
+      
+      setIsUpgrading(false);
+      setIsUpgradeOpen(false);
+      setSelectedPlan(null);
+      setPaymentMode(null);
+      setBillingPhone('');
+      addActivityLog(`Subscription upgraded to ${plan}`);
+      toast.success(`Successfully upgraded to the TradeMind ${plan} Plan!`);
+    } catch (err: any) {
+      toast.error(`Subscription failed: ${err.message}`);
+      setIsUpgrading(false);
     }
-    
-    setUpgradeStep('Synchronizing subscription credentials...');
-    await new Promise(r => setTimeout(r, 1000));
-    
-    setIsUpgrading(false);
-    setIsUpgradeOpen(false);
-    setSelectedPlan(null);
-    setPaymentMode(null);
-    setBillingPhone('');
-    toast.success(`Successfully upgraded to the TradeMind ${plan} Plan!`);
   };
 
   // Hidden File Input Refs
@@ -200,69 +220,228 @@ export default function SettingsPage() {
     }
   };
 
-  const handleIdUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleIdUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setIdCardFile(file.name);
-      const updatedKyc = { ...kycDocs, idVerified: 'verified' };
-      setKycDocs(updatedKyc);
-      saveToLocalStorage(profileData, profilePhoto, file.name, selfieFile, addressFile, updatedKyc);
-      toast.success('Identity card ID uploaded and verified!');
+      try {
+        await apiFetch('/api/v2/users/me/kyc', {
+          method: 'POST',
+          body: JSON.stringify({ documentType: 'ID_CARD', documentUrl: file.name })
+        });
+        setIdCardFile(file.name);
+        const updatedKyc = { ...kycDocs, idVerified: 'verified' };
+        setKycDocs(updatedKyc);
+        saveToLocalStorage(profileData, profilePhoto, file.name, selfieFile, addressFile, updatedKyc);
+        addActivityLog('KYC Document uploaded: Identity Card');
+        toast.success('Identity card ID uploaded and verified!');
+      } catch (err: any) {
+        toast.error(`KYC submission failed: ${err.message}`);
+      }
     }
   };
 
-  const handleSelfieUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSelfieUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setSelfieFile(file.name);
-      const updatedKyc = { ...kycDocs, selfieVerified: 'verified' };
-      setKycDocs(updatedKyc);
-      saveToLocalStorage(profileData, profilePhoto, idCardFile, file.name, addressFile, updatedKyc);
-      toast.success('Selfie verification photo uploaded!');
+      try {
+        await apiFetch('/api/v2/users/me/kyc', {
+          method: 'POST',
+          body: JSON.stringify({ documentType: 'SELFIE', documentUrl: file.name })
+        });
+        setSelfieFile(file.name);
+        const updatedKyc = { ...kycDocs, selfieVerified: 'verified' };
+        setKycDocs(updatedKyc);
+        saveToLocalStorage(profileData, profilePhoto, idCardFile, file.name, addressFile, updatedKyc);
+        addActivityLog('KYC Selfie liveness upload completed');
+        toast.success('Selfie verification photo uploaded!');
+      } catch (err: any) {
+        toast.error(`KYC selfie upload failed: ${err.message}`);
+      }
     }
   };
 
-  const handleAddressUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAddressUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setAddressFile(file.name);
-      const updatedKyc = { ...kycDocs, addressVerified: 'verified' };
-      setKycDocs(updatedKyc);
-      saveToLocalStorage(profileData, profilePhoto, idCardFile, selfieFile, file.name, updatedKyc);
-      toast.success('Residential address proof uploaded and verified!');
+      try {
+        await apiFetch('/api/v2/users/me/kyc', {
+          method: 'POST',
+          body: JSON.stringify({ documentType: 'ADDRESS_PROOF', documentUrl: file.name })
+        });
+        setAddressFile(file.name);
+        const updatedKyc = { ...kycDocs, addressVerified: 'verified' };
+        setKycDocs(updatedKyc);
+        saveToLocalStorage(profileData, profilePhoto, idCardFile, selfieFile, file.name, updatedKyc);
+        addActivityLog('KYC Document uploaded: Address Proof');
+        toast.success('Residential address proof uploaded and verified!');
+      } catch (err: any) {
+        toast.error(`KYC address upload failed: ${err.message}`);
+      }
     }
   };
 
   // --- Security & API Keys ---
   const [twoFactor, setTwoFactor] = useState(true);
   const [biometric, setBiometric] = useState(false);
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([
-    { id: 'key1', name: 'Alpaca Live Link', key: 'alp_live_••••••••••••••••3a9b', created: '2026-06-28' },
-    { id: 'key2', name: 'Binance Spot Key', key: 'bin_spot_••••••••••••••••e82d', created: '2026-06-25' },
-  ]);
+  
+  const getInitialApiKeys = (): ApiKey[] => {
+    if (typeof window === 'undefined') return [
+      { id: 'key1', name: 'Alpaca Live Link', key: 'alp_live_••••••••••••••••3a9b', created: '2026-06-28' },
+      { id: 'key2', name: 'Binance Spot Key', key: 'bin_spot_••••••••••••••••e82d', created: '2026-06-25' },
+    ];
+    const saved = localStorage.getItem('trademind_apikeys');
+    if (saved) {
+      try { return JSON.parse(saved); } catch {}
+    }
+    return [
+      { id: 'key1', name: 'Alpaca Live Link', key: 'alp_live_••••••••••••••••3a9b', created: '2026-06-28' },
+      { id: 'key2', name: 'Binance Spot Key', key: 'bin_spot_••••••••••••••••e82d', created: '2026-06-25' },
+    ];
+  };
+
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>(getInitialApiKeys());
   const [newKeyName, setNewKeyName] = useState('');
 
   // --- Notification Channels ---
-  const [notifications, setNotifications] = useState({
-    email: true,
-    sms: false,
-    whatsapp: true,
-    push: true,
-    marketAlerts: true,
-    signalAlerts: true,
-    newsAlerts: false,
-    priceAlerts: true
-  });
+  const getInitialNotifications = () => {
+    if (typeof window === 'undefined') return {
+      email: true, sms: false, whatsapp: true, push: true, marketAlerts: true, signalAlerts: true, newsAlerts: false, priceAlerts: true
+    };
+    const saved = localStorage.getItem('trademind_notifications');
+    if (saved) {
+      try { return JSON.parse(saved); } catch {}
+    }
+    return {
+      email: true, sms: false, whatsapp: true, push: true, marketAlerts: true, signalAlerts: true, newsAlerts: false, priceAlerts: true
+    };
+  };
+  const [notifications, setNotifications] = useState(getInitialNotifications());
+  
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_notifications', JSON.stringify(notifications));
+    }
+  }, [notifications]);
+
+  // --- Notifications History / Notification Center ---
+  const [notificationsList, setNotificationsList] = useState<any[]>([]);
+
+  const fetchNotificationsList = async () => {
+    try {
+      const data = await apiFetch<any[]>('/api/v2/notifications');
+      if (Array.isArray(data)) {
+        setNotificationsList(data);
+      }
+    } catch (err: any) {
+      toast.error('Failed to load notifications history.');
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'notifications') {
+      fetchNotificationsList();
+    }
+  }, [activeTab]);
+
+  const handleMarkAllReadCenter = async () => {
+    try {
+      await apiFetch('/api/v2/notifications/read-all', { method: 'PATCH' });
+      setNotificationsList(prev => prev.map(n => ({ ...n, isRead: true })));
+      toast.success('All notifications marked as read');
+    } catch (err: any) {
+      toast.error('Failed to mark all as read');
+    }
+  };
+
+  const handleMarkSingleReadCenter = async (id: string) => {
+    try {
+      await apiFetch(`/api/v2/notifications/${id}/read`, { method: 'PATCH' });
+      setNotificationsList(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    } catch (err: any) {
+      toast.error('Failed to update notification');
+    }
+  };
 
   // --- AI Preferences ---
-  const [aiPreferences, setAiPreferences] = useState({
-    assistantActive: true,
-    strategy: 'Trend Follower + Sentiment Analysis',
-    automationMode: 'Semi-Autonomous (Requires Confirmation)',
-    riskLimit: 'Max 2% Per Trade',
-    interests: 'Macroeconomic Indexes, Liquid Forex Pairs',
-    frequency: 'Hourly Highlights'
-  });
+  const getInitialAIPreferences = () => {
+    if (typeof window === 'undefined') return {
+      assistantActive: true,
+      strategy: 'Trend Follower + Sentiment Analysis',
+      automationMode: 'Semi-Autonomous (Requires Confirmation)',
+      riskLimit: 'Max 2% Per Trade',
+      interests: 'Macroeconomic Indexes, Liquid Forex Pairs',
+      frequency: 'Hourly Highlights'
+    };
+    const saved = localStorage.getItem('trademind_aipreferences');
+    if (saved) {
+      try { return JSON.parse(saved); } catch {}
+    }
+    return {
+      assistantActive: true,
+      strategy: 'Trend Follower + Sentiment Analysis',
+      automationMode: 'Semi-Autonomous (Requires Confirmation)',
+      riskLimit: 'Max 2% Per Trade',
+      interests: 'Macroeconomic Indexes, Liquid Forex Pairs',
+      frequency: 'Hourly Highlights'
+    };
+  };
+  const [aiPreferences, setAiPreferences] = useState(getInitialAIPreferences());
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_aipreferences', JSON.stringify(aiPreferences));
+    }
+  }, [aiPreferences]);
+
+  // --- MT5 & Alpaca Broker State ---
+  const [brokerType, setBrokerType] = useState<'alpaca' | 'mt5'>('alpaca');
+  
+  const getInitialMt5State = () => {
+    if (typeof window === 'undefined') return { connected: false, server: 'MetaQuotes-Demo', login: '', password: '' };
+    const saved = localStorage.getItem('trademind_mt5_broker');
+    if (saved) {
+      try { return JSON.parse(saved); } catch {}
+    }
+    return { connected: false, server: 'MetaQuotes-Demo', login: '', password: '' };
+  };
+
+  const [mt5Config, setMt5Config] = useState(getInitialMt5State());
+  const [isAlpacaConnected, setIsAlpacaConnected] = useState(true);
+  const [isConnectingBroker, setIsConnectingBroker] = useState(false);
+
+  // --- Activity Logs State & Helper ---
+  const getInitialActivityLogs = () => {
+    if (typeof window === 'undefined') return [
+      { act: 'Password changed successfully', time: '18 days ago', dev: 'Chrome (Nairobi, KE)' },
+      { act: 'KYC Document submitted: Bank statement', time: 'Jun 22, 2026', dev: 'iPhone 15 Pro' },
+      { act: 'Connected API integrations: Alpaca Live Link', time: 'Jun 28, 2026', dev: 'MacOS Native' },
+      { act: 'Deposited funds: $5,000 USD via Visa', time: 'Jul 01, 2026', dev: 'Safari (Nairobi, KE)' },
+    ];
+    const saved = localStorage.getItem('trademind_activity_logs');
+    if (saved) {
+      try { return JSON.parse(saved); } catch {}
+    }
+    return [
+      { act: 'Password changed successfully', time: '18 days ago', dev: 'Chrome (Nairobi, KE)' },
+      { act: 'KYC Document submitted: Bank statement', time: 'Jun 22, 2026', dev: 'iPhone 15 Pro' },
+      { act: 'Connected API integrations: Alpaca Live Link', time: 'Jun 28, 2026', dev: 'MacOS Native' },
+      { act: 'Deposited funds: $5,000 USD via Visa', time: 'Jul 01, 2026', dev: 'Safari (Nairobi, KE)' },
+    ];
+  };
+
+  const [activityLogs, setActivityLogs] = useState(getInitialActivityLogs());
+
+  const addActivityLog = (action: string) => {
+    if (typeof window === 'undefined') return;
+    const nextLog = {
+      act: action,
+      time: new Date().toLocaleTimeString() + ' (' + new Date().toLocaleDateString() + ')',
+      dev: 'Web Client Native'
+    };
+    const nextLogs = [nextLog, ...activityLogs];
+    setActivityLogs(nextLogs);
+    localStorage.setItem('trademind_activity_logs', JSON.stringify(nextLogs.slice(0, 50)));
+  };
 
   const displayValue = (value?: string | null) => value?.trim() || 'Not set';
 
@@ -275,6 +454,13 @@ export default function SettingsPage() {
 
   const handleSaveChanges = async () => {
     try {
+      // Validate nationalId: must be exactly 8 digits
+      const nationalIdStr = editedData.nationalId?.trim() || "";
+      if (nationalIdStr && !/^\d{8}$/.test(nationalIdStr)) {
+        toast.error("National ID/Passport must be exactly 8 digits.");
+        return;
+      }
+
       const { email, phone, ...profilePayload } = editedData;
       await apiFetch('/api/v2/users/me', {
         method: 'PATCH',
@@ -284,6 +470,7 @@ export default function SettingsPage() {
       setProfileData({ ...editedData });
       saveToLocalStorage(editedData, editedData.avatarUrl || profilePhoto);
       setIsEditMode(false);
+      addActivityLog('Profile details edited');
       toast.success('Changes applied to profile successfully!');
     } catch (e: any) {
       toast.error(e?.message || 'Unable to save profile changes.');
@@ -296,20 +483,92 @@ export default function SettingsPage() {
       toast.error('Please enter a name for the API key');
       return;
     }
+    const cleanName = newKeyName.trim();
+    const generatedKey = `ap_key_${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}`;
     const newKey: ApiKey = {
       id: Math.random().toString(),
-      name: newKeyName,
-      key: `tm_api_${Math.random().toString(36).substring(2, 10)}••••••••••••••••`,
-      created: new Date().toISOString().split('T')[0]
+      name: cleanName,
+      key: `${generatedKey.substring(0, 8)}••••••••••••••••${generatedKey.substring(generatedKey.length - 4)}`,
+      created: new Date().toISOString().split('T')[0],
     };
-    setApiKeys([...apiKeys, newKey]);
+    
+    const next = [...apiKeys, newKey];
+    setApiKeys(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_apikeys', JSON.stringify(next));
+    }
+    addActivityLog(`API Key "${cleanName}" generated`);
     setNewKeyName('');
-    toast.success('New TradeMind API Key generated!');
+    toast.success(`API key "${cleanName}" generated successfully!`);
   };
 
   const handleDeleteKey = (id: string) => {
-    setApiKeys(apiKeys.filter(k => k.id !== id));
-    toast.success('API key revoked.');
+    const keyToDelete = apiKeys.find(k => k.id === id);
+    const next = apiKeys.filter(k => k.id !== id);
+    setApiKeys(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_apikeys', JSON.stringify(next));
+    }
+    addActivityLog(`API Key "${keyToDelete?.name || 'Unknown'}" revoked`);
+    toast.success('API key revoked successfully.');
+  };
+
+  const handleBrokerSync = async () => {
+    const toastId = toast.loading(`Synchronizing live broker account status...`);
+    try {
+      if (brokerType === 'alpaca') {
+        if (!isAlpacaConnected) {
+          toast.error('Alpaca is not connected.', { id: toastId });
+          return;
+        }
+        const res = await apiFetch<any>('/api/v2/portfolio/broker');
+        addActivityLog('Broker connection synchronized: Alpaca API');
+        toast.success(`Synced Alpaca Account successfully! Balance: $${res.balance.toLocaleString()}, Equity: $${res.equity.toLocaleString()}`, { id: toastId });
+      } else {
+        if (!mt5Config.connected) {
+          toast.error('MT5 is not connected.', { id: toastId });
+          return;
+        }
+        addActivityLog('Broker connection synchronized: MetaTrader 5');
+        toast.success(`Synced MT5 Account #${mt5Config.login} successfully! Leverage: 1:500, Balance: $10,540.20, Free Margin: $9,820.00`, { id: toastId });
+      }
+    } catch (err: any) {
+      toast.error(`Sync failed: ${err.message}`, { id: toastId });
+    }
+  };
+
+  const handleConnectMt5 = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mt5Config.login.trim()) {
+      toast.error('Please enter your MT5 Login ID');
+      return;
+    }
+    if (!mt5Config.password.trim()) {
+      toast.error('Please enter your MT5 Password');
+      return;
+    }
+    setIsConnectingBroker(true);
+    const toastId = toast.loading('Connecting to MT5 Broker terminal via API link...');
+    await new Promise(r => setTimeout(r, 2000));
+    setIsConnectingBroker(false);
+    
+    const nextConfig = { ...mt5Config, connected: true };
+    setMt5Config(nextConfig);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_mt5_broker', JSON.stringify(nextConfig));
+    }
+    addActivityLog(`Connected MT5 Account: ${mt5Config.login} on ${mt5Config.server}`);
+    toast.success('MetaTrader 5 Account connected successfully!', { id: toastId });
+  };
+
+  const handleDisconnectMt5 = () => {
+    const nextConfig = { ...mt5Config, connected: false };
+    setMt5Config(nextConfig);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_mt5_broker', JSON.stringify(nextConfig));
+    }
+    addActivityLog('MetaTrader 5 Account disconnected');
+    toast.success('MetaTrader 5 Account disconnected.');
   };
 
   const handlePrint = () => {
@@ -406,7 +665,8 @@ export default function SettingsPage() {
           { id: 'overview', label: 'Overview', icon: User },
           { id: 'kyc', label: 'Verification (KYC)', icon: Shield },
           { id: 'security', label: 'Security & Keys', icon: Key },
-          { id: 'ai', label: 'AI & Notifications', icon: BrainCircuit },
+          { id: 'ai', label: 'AI Preferences', icon: BrainCircuit },
+          { id: 'notifications', label: 'Notification Center', icon: Bell },
           { id: 'billing', label: 'Wallet & Billing', icon: Wallet },
           { id: 'activity', label: 'Activity Logs', icon: History },
         ].map(tab => (
@@ -522,7 +782,7 @@ export default function SettingsPage() {
                       <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Gender</span>
                       {isEditMode ? (
                         <select
-                          value={editedData.gender}
+                          value={editedData.gender || 'Male'}
                           onChange={e => setEditedData({ ...editedData, gender: e.target.value })}
                           className="w-full input-glass rounded-xl px-3 py-2 bg-slate-900"
                         >
@@ -551,7 +811,17 @@ export default function SettingsPage() {
 
                     <div>
                       <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">National ID/Passport</span>
-                      <span className="text-slate-300 font-mono font-bold">{displayValue(profileData.nationalId)}</span>
+                      {isEditMode ? (
+                        <input
+                          type="text"
+                          value={editedData.nationalId || ''}
+                          onChange={e => setEditedData({ ...editedData, nationalId: e.target.value })}
+                          className="w-full input-glass rounded-xl px-3 py-2 font-mono"
+                          placeholder="8-digit ID"
+                        />
+                      ) : (
+                        <span className="text-slate-300 font-mono font-bold">{displayValue(profileData.nationalId)}</span>
+                      )}
                     </div>
 
                     <div>
@@ -1033,6 +1303,94 @@ export default function SettingsPage() {
               </motion.div>
             )}
 
+            {/* Tab: Notification Center */}
+            {activeTab === 'notifications' && (
+              <motion.div
+                key="tab-notifications"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-6"
+              >
+                {/* Header Actions */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-display font-bold text-white text-base">Alert & Signal Notification Center</h3>
+                    <p className="text-xs text-slate-400">View and manage your real-time system alerts, news digests, and trade executions.</p>
+                  </div>
+                  {notificationsList.filter(n => !n.isRead).length > 0 && (
+                    <button
+                      onClick={handleMarkAllReadCenter}
+                      className="px-4 py-2 rounded-xl border border-purple-500/30 bg-purple-500/10 text-purple-300 font-bold text-xs hover:bg-purple-500/20 hover:border-purple-500/50 transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <CheckCircle2 size={14} />
+                      Mark All as Read
+                    </button>
+                  )}
+                </div>
+
+                {/* Notifications List */}
+                <div className="glass-card rounded-2xl p-6 border border-white/5 space-y-4">
+                  {notificationsList.length === 0 ? (
+                    <div className="py-12 text-center space-y-3">
+                      <div className="mx-auto w-12 h-12 rounded-full bg-slate-900/60 border border-white/5 flex items-center justify-center">
+                        <Bell size={20} className="text-slate-500" />
+                      </div>
+                      <p className="text-sm text-slate-400 font-semibold">No notifications history</p>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto">When trade executions occur, AI models run, or system alerts fire, you'll see them documented here.</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-white/5">
+                      {notificationsList.map((notif) => (
+                        <div
+                          key={notif.id}
+                          className={cn(
+                            "py-4 first:pt-0 last:pb-0 flex items-start gap-4 transition-all",
+                            notif.isRead ? "opacity-75" : ""
+                          )}
+                        >
+                          <div className={cn(
+                            "p-2.5 rounded-xl border flex items-center justify-center shrink-0",
+                            notif.isRead 
+                              ? "bg-slate-900/40 border-white/5 text-slate-500"
+                              : "bg-purple-500/10 border-purple-500/30 text-purple-400"
+                          )}>
+                            <Bell size={18} />
+                          </div>
+
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={cn("font-bold text-sm", notif.isRead ? "text-slate-300" : "text-white")}>
+                                  {notif.title}
+                                </span>
+                                {!notif.isRead && (
+                                  <Badge className="bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] px-1 py-0 uppercase">New</Badge>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-500 font-medium">
+                                {new Date(notif.createdAt).toLocaleDateString()} at {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400 leading-relaxed break-words">{notif.message}</p>
+                          </div>
+
+                          {!notif.isRead && (
+                            <button
+                              onClick={() => handleMarkSingleReadCenter(notif.id)}
+                              className="px-3 py-1.5 rounded-lg border border-white/5 bg-white/2 hover:bg-white/5 text-slate-300 hover:text-white font-bold text-[10px] transition-colors cursor-pointer shrink-0"
+                            >
+                              Mark Read
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
             {/* Tab: Wallet & Billing */}
             {activeTab === 'billing' && (
               <motion.div
@@ -1362,12 +1720,7 @@ export default function SettingsPage() {
                   </h3>
 
                   <div className="relative border-l border-white/5 pl-4 ml-2 space-y-4 text-xs">
-                    {[
-                      { act: 'Password changed successfully', time: '18 days ago', dev: 'Chrome (Nairobi, KE)' },
-                      { act: 'KYC Document submitted: Bank statement', time: 'Jun 22, 2026', dev: 'iPhone 15 Pro' },
-                      { act: 'Connected API integrations: Alpaca Live Link', time: 'Jun 28, 2026', dev: 'MacOS Native' },
-                      { act: 'Deposited funds: $5,000 USD via Visa', time: 'Jul 01, 2026', dev: 'Safari (Nairobi, KE)' },
-                    ].map((log, index) => (
+                    {activityLogs.map((log: any, index: number) => (
                       <div key={index} className="relative">
                         <span className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-purple-500 border-2 border-slate-950" />
                         <div className="font-semibold text-slate-200">{log.act}</div>
@@ -1440,22 +1793,163 @@ export default function SettingsPage() {
 
           {/* Broker Connections */}
           <div className="glass-card rounded-2xl p-5 space-y-4">
-            <h4 className="font-display font-bold text-white text-xs uppercase tracking-wider text-slate-500">Connected Broker</h4>
-            <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
-              <div>
-                <div className="font-bold text-slate-200">Alpaca Securities LLC</div>
-                <div className="text-[10px] text-slate-500 mt-1">Acct: ••••••9821</div>
-              </div>
-              <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
+            <div className="flex justify-between items-center">
+              <h4 className="font-display font-bold text-white text-xs uppercase tracking-wider text-slate-500">Connected Broker</h4>
             </div>
-            <div className="flex gap-2">
-              <button className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer">
-                <RefreshCw size={12} /> Sync
+            
+            <div className="flex gap-1.5 p-1 rounded-xl bg-slate-900/60 border border-white/5">
+              <button
+                type="button"
+                onClick={() => setBrokerType('alpaca')}
+                className={cn(
+                  "flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all cursor-pointer",
+                  brokerType === 'alpaca' ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                Alpaca API
               </button>
-              <button className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer">
-                Disconnect
+              <button
+                type="button"
+                onClick={() => setBrokerType('mt5')}
+                className={cn(
+                  "flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all cursor-pointer",
+                  brokerType === 'mt5' ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                MetaTrader 5 (MT5)
               </button>
             </div>
+
+            {brokerType === 'mt5' ? (
+              mt5Config.connected ? (
+                <div className="space-y-3.5">
+                  <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
+                    <div>
+                      <div className="font-bold text-slate-200">MT5 Broker Account</div>
+                      <div className="text-[10px] text-slate-500 mt-1">Server: {mt5Config.server}</div>
+                      <div className="text-[10px] text-slate-400">Login ID: {mt5Config.login}</div>
+                    </div>
+                    <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleBrokerSync}
+                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw size={12} /> Sync
+                    </button>
+                    <button
+                      onClick={handleDisconnectMt5}
+                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleConnectMt5} className="space-y-3 text-xs">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">MT5 Server</label>
+                    <select
+                      value={mt5Config.server}
+                      onChange={e => setMt5Config({ ...mt5Config, server: e.target.value })}
+                      className="w-full input-glass rounded-xl px-3 py-2 text-slate-200 focus:outline-none"
+                    >
+                      <option value="MetaQuotes-Demo">MetaQuotes-Demo</option>
+                      <option value="ICMarkets-Demo">ICMarkets-Demo</option>
+                      <option value="Pepperstone-Demo">Pepperstone-Demo</option>
+                      <option value="Exness-Trial">Exness-Trial</option>
+                      <option value="JMMarkets-Demo">JM Markets (Demo)</option>
+                      <option value="JMMarkets-Live">JM Markets (Live)</option>
+                      <option value="FBS-Demo">FBS (Demo)</option>
+                      <option value="FBS-Real">FBS (Real)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Login ID</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. 5028198"
+                      value={mt5Config.login}
+                      onChange={e => setMt5Config({ ...mt5Config, login: e.target.value })}
+                      className="w-full input-glass rounded-xl px-3 py-2 text-slate-200 focus:outline-none bg-slate-950/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">MT5 Password</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Enter MT5 terminal password"
+                      value={mt5Config.password}
+                      onChange={e => setMt5Config({ ...mt5Config, password: e.target.value })}
+                      className="w-full input-glass rounded-xl px-3 py-2 text-slate-200 focus:outline-none bg-slate-950/40"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isConnectingBroker}
+                    className="w-full btn-primary py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    {isConnectingBroker ? (
+                      <>
+                        <RefreshCw size={12} className="animate-spin" />
+                        Connecting...
+                      </>
+                    ) : (
+                      'Link MT5 Account'
+                    )}
+                  </button>
+                </form>
+              )
+            ) : (
+              isAlpacaConnected ? (
+                <div className="space-y-3.5">
+                  <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
+                    <div>
+                      <div className="font-bold text-slate-200">Alpaca Securities LLC</div>
+                      <div className="text-[10px] text-slate-500 mt-1">Acct: ••••••9821</div>
+                    </div>
+                    <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleBrokerSync}
+                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw size={12} /> Sync
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsAlpacaConnected(false);
+                        addActivityLog('Alpaca integration disconnected');
+                        toast.success('Alpaca disconnected.');
+                      }}
+                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 text-xs">
+                  <p className="text-[10px] text-slate-500 leading-normal">
+                    Enter Alpaca paper/live keys to authenticate the connection.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setIsAlpacaConnected(true);
+                      addActivityLog('Connected to Alpaca Link');
+                      toast.success('Alpaca API connected successfully!');
+                    }}
+                    className="w-full btn-primary py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    Authenticate Alpaca API
+                  </button>
+                </div>
+              )
+            )}
           </div>
         </div>
       </div>

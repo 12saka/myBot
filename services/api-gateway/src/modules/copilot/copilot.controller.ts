@@ -45,7 +45,7 @@ export class CopilotController {
     }
 
     return this.copilotService.chatWithCopilot(
-      req.user.id,
+      req.user.userId || req.user.id,
       message || '',
       history,
     );

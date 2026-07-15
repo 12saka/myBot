@@ -89,6 +89,42 @@ export class WalletController {
     if (!wallet) {
       throw new BadRequestException('Wallet not found.');
     }
+
+    // Sync with dedicated Alpaca broker if keys are present
+    const alpacaKey = process.env.ALPACA_API_KEY;
+    const alpacaSecret = process.env.ALPACA_SECRET_KEY;
+    if (alpacaKey && alpacaSecret) {
+      try {
+        let res = await fetch('https://paper-api.alpaca.markets/v2/account', {
+          headers: {
+            'APCA-API-KEY-ID': alpacaKey,
+            'APCA-API-SECRET-KEY': alpacaSecret,
+          },
+        });
+        if (!res.ok) {
+          res = await fetch('https://api.alpaca.markets/v2/account', {
+            headers: {
+              'APCA-API-KEY-ID': alpacaKey,
+              'APCA-API-SECRET-KEY': alpacaSecret,
+            },
+          });
+        }
+        if (res.ok) {
+          const accountData = await res.json();
+          const brokerBalance = parseFloat(accountData.cash || '0');
+          
+          // Update in-memory wallet return object and database state
+          wallet.balance = brokerBalance;
+          await this.prisma.wallet.update({
+            where: { id: wallet.id },
+            data: { balance: brokerBalance },
+          });
+        }
+      } catch (err) {
+        console.error('[WalletService] Failed to fetch and sync balance with Alpaca:', err);
+      }
+    }
+
     return wallet;
   }
 

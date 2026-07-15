@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspaces --if-present",
+    "dev": "npx -y concurrently \"npm run dev --workspace=@trademind/web\" \"npm run dev --workspace=@trademind/api-gateway\"",
     "build": "npm run build --workspaces --if-present",
     "db:migrate": "npm run db:migrate --workspace=packages/db",
     "db:generate": "npm run db:generate --workspace=packages/db",

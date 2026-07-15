@@ -3,6 +3,7 @@ import './globals.css';
 import { Inter, Outfit, JetBrains_Mono } from 'next/font/google';
 import { QueryProvider } from '@/providers/QueryProvider';
 import { Toaster } from 'react-hot-toast';
+import PWAInstallPrompt from '@/components/pwa/PWAInstallPrompt';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -23,6 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  manifest: '/manifest.json',
   title: {
     default: 'TradeMind AI — Intelligent Autonomous Trading Platform',
     template: '%s | TradeMind AI',
@@ -68,6 +70,7 @@ export default function RootLayout({
               },
             }}
           />
+          <PWAInstallPrompt />
         </QueryProvider>
       </body>
     </html>
