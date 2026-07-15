@@ -12,7 +12,7 @@ export interface AISignal {
   id: string;
   symbol: string;
   type: 'crypto' | 'forex' | 'stocks' | 'indices' | 'commodities';
-  direction: 'BUY' | 'SELL';
+  direction: 'BUY' | 'SELL' | 'WAIT';
   confidence: number;
   entry: number;
   stopLoss: number;
@@ -27,6 +27,8 @@ export interface AISignal {
   sentiment: string[];
   createdAt: string;
   expiresAt: string;
+  aiReasoning?: any;
+  reasoning?: string;
 }
 
 interface AIState {

@@ -18,7 +18,7 @@ interface QuickTradeWidgetProps {
     stopLoss: number;
     tp1: number;
     tp2: number;
-    direction: 'BUY' | 'SELL';
+    direction: 'BUY' | 'SELL' | 'WAIT';
     strategy: string;
     confidence: number;
   };

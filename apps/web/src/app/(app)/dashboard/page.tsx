@@ -80,7 +80,7 @@ export default function DashboardPage() {
     : 50;
   const fearGreedValue = Math.min(100, Math.max(0, Math.round(avgRsi)));
   const fearGreedLabel = fearGreedValue > 75 ? 'Extreme Greed' : fearGreedValue > 55 ? 'Greed' : fearGreedValue > 45 ? 'Neutral' : fearGreedValue > 25 ? 'Fear' : 'Extreme Fear';
-  const fearGreedVariant = fearGreedValue > 55 ? 'green' as const : fearGreedValue > 45 ? 'slate' as const : 'red' as const;
+  const fearGreedVariant = fearGreedValue > 55 ? 'green' as const : fearGreedValue > 45 ? 'neutral' as const : 'red' as const;
 
   // Parse real AI confidence from stats
   const aiConfidenceValue = parseInt(stats.avgConfidence) || 0;

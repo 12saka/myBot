@@ -11,7 +11,7 @@ export interface Position {
   pnl: number;
   pnlPct: number;
   allocation: number;
-  type: 'crypto' | 'stock' | 'forex';
+  type: 'crypto' | 'stock' | 'forex' | 'index' | 'commodity';
 }
 
 interface PortfolioState {

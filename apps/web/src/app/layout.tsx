@@ -1,27 +1,12 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { Inter, Outfit, JetBrains_Mono } from 'next/font/google';
 import { QueryProvider } from '@/providers/QueryProvider';
 import { Toaster } from 'react-hot-toast';
 import PWAInstallPrompt from '@/components/pwa/PWAInstallPrompt';
 
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
-
-const outfit = Outfit({
-  subsets: ['latin'],
-  variable: '--font-outfit',
-  display: 'swap',
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-mono',
-  display: 'swap',
-});
+const inter = { variable: 'font-sans' };
+const outfit = { variable: 'font-display' };
+const jetbrainsMono = { variable: 'font-mono' };
 
 export const metadata: Metadata = {
   manifest: '/manifest.json',

@@ -32,7 +32,7 @@ const CONTAINER_ANIMS = {
 
 const ITEM_ANIMS = {
   hidden: { opacity: 0, y: 15 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } }
+  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] as const } }
 };
 
 export default function NewsPage() {
@@ -76,9 +76,9 @@ export default function NewsPage() {
     bullishKeywords.forEach(w => { if (text.includes(w)) score++; });
     bearishKeywords.forEach(w => { if (text.includes(w)) score--; });
 
-    if (score > 0) return { label: 'Bullish', color: 'emerald' as const, icon: TrendingUp };
+    if (score > 0) return { label: 'Bullish', color: 'green' as const, icon: TrendingUp };
     if (score < 0) return { label: 'Bearish', color: 'red' as const, icon: TrendingDown };
-    return { label: 'Neutral', color: 'slate' as const, icon: Minus };
+    return { label: 'Neutral', color: 'neutral' as const, icon: Minus };
   };
 
   // Determine categories dynamically

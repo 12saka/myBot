@@ -38,6 +38,8 @@
   --font-sans:   'Inter', system-ui, -apple-system, sans-serif;
   --font-display: 'Outfit', system-ui, sans-serif;
   --font-mono:   'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --font-inter:   var(--font-sans);
+  --font-outfit:  var(--font-display);
 
   /* ─── Animation Durations ─── */
   --duration-fast:   150ms;

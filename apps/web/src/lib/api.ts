@@ -108,6 +108,8 @@ export function mapSignal(item: any): AISignal {
     sentiment: [reasoning.explanation || 'Sentiment summary unavailable.'],
     createdAt: item.createdAt || new Date().toISOString(),
     expiresAt: item.expiresAt || new Date().toISOString(),
+    aiReasoning: item.aiReasoning,
+    reasoning: reasoning.explanation || reasoning.analysis || reasoning.idea || item.reasoning || '',
   };
 }
 

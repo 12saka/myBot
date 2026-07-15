@@ -217,7 +217,7 @@ export default function WalletPage() {
               subValue={brokerData.connected ? `Broker: ${brokerData.broker}` : 'No Broker Connected'}
               change={brokerData.connected ? { value: `Account: ${brokerData.accountId}`, positive: true } : undefined}
               icon={TrendingUp}
-              glowColor={brokerData.connected ? "blue" : "slate"}
+              glowColor={brokerData.connected ? "cyan" : undefined}
             />
             <StatCard
               label="Linked Processor"
