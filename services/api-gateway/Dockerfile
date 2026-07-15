@@ -1,5 +1,7 @@
-# Base build stage
 FROM node:20-alpine AS builder
+
+# Install OpenSSL for Prisma engine compatibility
+RUN apk add --no-cache openssl
 
 WORKDIR /usr/src/app
 
@@ -28,6 +30,9 @@ RUN npm run build --workspace=@trademind/api-gateway
 
 # Production runner stage
 FROM node:20-alpine
+
+# Install OpenSSL for Prisma engine compatibility
+RUN apk add --no-cache openssl
 
 WORKDIR /usr/src/app
 
