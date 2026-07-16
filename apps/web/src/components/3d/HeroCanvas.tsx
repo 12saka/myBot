@@ -5,6 +5,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Sphere, MeshDistortMaterial, Float, Stars, OrbitControls, Torus } from '@react-three/drei';
 import * as THREE from 'three';
 import { Mesh, Points } from 'three';
+import { useInView } from 'framer-motion';
 
 function BrainSphere() {
   const outerRef = useRef<Mesh>(null);
@@ -78,16 +79,27 @@ function ParticleField() {
 }
 
 export default function HeroCanvas() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(containerRef, { margin: '200px' });
+
   return (
-    <Canvas camera={{ position: [0, 0, 7], fov: 58 }} style={{ background: 'transparent' }} gl={{ antialias: true, alpha: true }}>
-      <ambientLight intensity={0.25} />
-      <pointLight position={[10, 10, 8]} intensity={2} color="#7C3AED" />
-      <pointLight position={[-10, -8, -5]} intensity={1.2} color="#06BBD4" />
-      <pointLight position={[4, 12, 4]} intensity={0.8} color="#10B981" />
-      <Stars radius={90} depth={60} count={5000} factor={4} saturation={0.4} fade speed={0.8} />
-      <BrainSphere />
-      <ParticleField />
-      <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.4} />
-    </Canvas>
+    <div ref={containerRef} className="w-full h-full relative">
+      {inView ? (
+        <Canvas camera={{ position: [0, 0, 7], fov: 58 }} style={{ background: 'transparent' }} gl={{ antialias: true, alpha: true }}>
+          <ambientLight intensity={0.25} />
+          <pointLight position={[10, 10, 8]} intensity={2} color="#7C3AED" />
+          <pointLight position={[-10, -8, -5]} intensity={1.2} color="#06BBD4" />
+          <pointLight position={[4, 12, 4]} intensity={0.8} color="#10B981" />
+          <Stars radius={90} depth={60} count={5000} factor={4} saturation={0.4} fade speed={0.8} />
+          <BrainSphere />
+          <ParticleField />
+          <OrbitControls enableZoom={false} enablePan={false} autoRotate autoRotateSpeed={0.4} />
+        </Canvas>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <div className="w-32 h-32 rounded-full animate-pulse bg-purple-500/10" />
+        </div>
+      )}
+    </div>
   );
 }

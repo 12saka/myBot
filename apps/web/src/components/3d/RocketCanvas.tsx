@@ -4,6 +4,7 @@ import React, { useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Sphere, MeshDistortMaterial, Stars, Float } from '@react-three/drei';
 import { Mesh } from 'three';
+import { useInView } from 'framer-motion';
 
 function RocketMesh() {
   const ref = useRef<Mesh>(null);
@@ -26,13 +27,24 @@ function RocketMesh() {
 }
 
 export default function RocketCanvas() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(containerRef, { margin: '200px' });
+
   return (
-    <Canvas camera={{ position: [0, 0, 6], fov: 60 }} style={{ background: 'transparent' }} gl={{ antialias: true, alpha: true }}>
-      <ambientLight intensity={0.2} />
-      <pointLight position={[5, 8, 5]} intensity={2} color="#F59E08" />
-      <pointLight position={[-5, -3, 0]} intensity={0.8} color="#7C3AED" />
-      <Stars radius={60} depth={30} count={2000} factor={3} saturation={0.3} fade speed={0.6} />
-      <RocketMesh />
-    </Canvas>
+    <div ref={containerRef} className="w-full h-full relative">
+      {inView ? (
+        <Canvas camera={{ position: [0, 0, 6], fov: 60 }} style={{ background: 'transparent' }} gl={{ antialias: true, alpha: true }}>
+          <ambientLight intensity={0.2} />
+          <pointLight position={[5, 8, 5]} intensity={2} color="#F59E08" />
+          <pointLight position={[-5, -3, 0]} intensity={0.8} color="#7C3AED" />
+          <Stars radius={60} depth={30} count={2000} factor={3} saturation={0.3} fade speed={0.6} />
+          <RocketMesh />
+        </Canvas>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <div className="w-32 h-32 rounded-full animate-pulse bg-amber-500/10" />
+        </div>
+      )}
+    </div>
   );
 }

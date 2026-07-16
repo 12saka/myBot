@@ -15,7 +15,22 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    await this.$connect();
+    let retries = 5;
+    while (retries > 0) {
+      try {
+        await this.$connect();
+        console.log('✅ [PRISMA] Database connected successfully.');
+        break;
+      } catch (err) {
+        retries--;
+        console.warn(`⚠️ [PRISMA] Database connection failed. Retries remaining: ${retries}`);
+        if (retries === 0) {
+          console.error('❌ [PRISMA] Could not connect to database. Starting NestJS gateway in degraded state.');
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+      }
+    }
   }
 
   async onModuleDestroy() {

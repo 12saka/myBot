@@ -4,6 +4,7 @@ import React, { useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Sphere, MeshDistortMaterial, Stars } from '@react-three/drei';
 import { Mesh } from 'three';
+import { useInView } from 'framer-motion';
 
 function ShieldMesh() {
   const ref = useRef<Mesh>(null);
@@ -26,13 +27,24 @@ function ShieldMesh() {
 }
 
 export default function ShieldCanvas() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(containerRef, { margin: '200px' });
+
   return (
-    <Canvas camera={{ position: [0, 0, 6], fov: 60 }} style={{ background: 'transparent' }} gl={{ antialias: true, alpha: true }}>
-      <ambientLight intensity={0.3} />
-      <pointLight position={[5, 5, 5]} intensity={1.5} color="#10B981" />
-      <pointLight position={[-5, -5, 0]} intensity={1} color="#06BBD4" />
-      <Stars radius={60} depth={30} count={2000} factor={3} saturation={0.2} fade speed={0.5} />
-      <ShieldMesh />
-    </Canvas>
+    <div ref={containerRef} className="w-full h-full relative">
+      {inView ? (
+        <Canvas camera={{ position: [0, 0, 6], fov: 60 }} style={{ background: 'transparent' }} gl={{ antialias: true, alpha: true }}>
+          <ambientLight intensity={0.3} />
+          <pointLight position={[5, 5, 5]} intensity={1.5} color="#10B981" />
+          <pointLight position={[-5, -5, 0]} intensity={1} color="#06BBD4" />
+          <Stars radius={60} depth={30} count={2000} factor={3} saturation={0.2} fade speed={0.5} />
+          <ShieldMesh />
+        </Canvas>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <div className="w-32 h-32 rounded-full animate-pulse bg-emerald-500/10" />
+        </div>
+      )}
+    </div>
   );
 }
