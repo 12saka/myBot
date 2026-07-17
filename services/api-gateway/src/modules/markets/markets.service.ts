@@ -59,7 +59,12 @@ export class MarketsService implements OnModuleInit {
       'TSLA': 'TSLA',
       'NVDA': 'NVDA',
       'MSFT': 'MSFT',
-      'AMZN': 'AMZN'
+      'AMZN': 'AMZN',
+      'BTC': 'BTC-USD',
+      'ETH': 'ETH-USD',
+      'SOL': 'SOL-USD',
+      'BNB': 'BNB-USD',
+      'XRP': 'XRP-USD'
     };
     return map[symbol] || symbol;
   }
@@ -74,7 +79,12 @@ export class MarketsService implements OnModuleInit {
       'OIL': 'USO',
       'EUR/USD': 'EUR/USD',
       'GBP/USD': 'GBP/USD',
-      'USD/JPY': 'USD/JPY'
+      'USD/JPY': 'USD/JPY',
+      'BTC': 'BTC/USD',
+      'ETH': 'ETH/USD',
+      'SOL': 'SOL/USD',
+      'BNB': 'BNB/USD',
+      'XRP': 'XRP/USD'
     };
     return map[symbol] || symbol;
   }
@@ -108,9 +118,8 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Binance 24h stats API connection failed: ${err.message}`);
       }
 
-      // 2. Fetch Stocks, Indices, Commodities, and Forex from Yahoo Finance chart API in parallel (v8 is open and free)
-      // 2. Fetch Stocks, Indices, Commodities, and Forex
-      const nonCryptoSymbols = this.symbols.filter(s => s.type !== 'crypto');
+      // 2. Fetch Stocks, Indices, Commodities, Forex, and Cryptos as fallback
+      const nonCryptoSymbols = this.symbols;
       let yahooPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
       let fetchedFromTwelveData = false;
@@ -176,13 +185,11 @@ export class MarketsService implements OnModuleInit {
         let changePct24h = 0;
         let volume24h = 1500000;
 
-        if (asset.type === 'crypto' && asset.binanceSymbol) {
+        if (asset.type === 'crypto' && asset.binanceSymbol && cryptoPriceMap[asset.binanceSymbol]) {
           const binanceData = cryptoPriceMap[asset.binanceSymbol];
-          if (binanceData) {
-            currentPrice = binanceData.price;
-            changePct24h = binanceData.changePct;
-            volume24h = binanceData.volume;
-          }
+          currentPrice = binanceData.price;
+          changePct24h = binanceData.changePct;
+          volume24h = binanceData.volume;
         } else {
           const yahooTicker = this.getYahooTicker(asset.name);
           const yahooData = yahooPriceMap[yahooTicker];
