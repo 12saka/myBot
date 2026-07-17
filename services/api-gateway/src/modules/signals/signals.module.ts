@@ -12,6 +12,22 @@ import axios from 'axios';
 export class SignalsController {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 5000): Promise<Response> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      return response;
+    } catch (err) {
+      clearTimeout(id);
+      throw err;
+    }
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get all active AI trading signals' })
   async getSignals() {
@@ -209,6 +225,26 @@ export class SignalsController {
     return { success: true };
   }
 
+  private getTwelveDataSymbol(symbol: string): string {
+    const map: Record<string, string> = {
+      'US30': 'DIA',
+      'US100': 'QQQ',
+      'SPX500': 'SPY',
+      'DAX40': 'EWG',
+      'GOLD': 'GLD',
+      'OIL': 'USO',
+      'EUR/USD': 'EUR/USD',
+      'GBP/USD': 'GBP/USD',
+      'USD/JPY': 'USD/JPY',
+      'BTC': 'BTC/USD',
+      'ETH': 'ETH/USD',
+      'SOL': 'SOL/USD',
+      'BNB': 'BNB/USD',
+      'XRP': 'XRP/USD'
+    };
+    return map[symbol] || symbol;
+  }
+
   private getYahooTicker(symbol: string): string {
     const mappings: Record<string, string> = {
       'US30': '^DJI',
@@ -220,6 +256,11 @@ export class SignalsController {
       'EUR/USD': 'EURUSD=X',
       'GBP/USD': 'GBPUSD=X',
       'USD/JPY': 'USDJPY=X',
+      'BTC': 'BTC-USD',
+      'ETH': 'ETH-USD',
+      'SOL': 'SOL-USD',
+      'BNB': 'BNB-USD',
+      'XRP': 'XRP-USD'
     };
     return mappings[symbol] || symbol;
   }
@@ -260,14 +301,16 @@ export class SignalsController {
       return candles;
     }
     
-    // 3. Otherwise, fetch real-time from Yahoo Finance or Binance
+    // 3. Otherwise, fetch real-time. Try Binance first if crypto.
     const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(cleanSymbol);
+    let fetched = false;
+
     if (isCrypto) {
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
       try {
         const binanceSym = `${cleanSymbol}USDT`;
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`);
+        const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`);
         if (res.ok) {
           const klines = await res.json();
           await this.prisma.historicalCandle.deleteMany({
@@ -290,12 +333,62 @@ export class SignalsController {
             });
             newCandles.push(candle);
           }
+          fetched = true;
           return newCandles;
         }
       } catch (err: any) {
-        console.warn(`[SignalsController] Failed to fetch live Binance candles for ${cleanSymbol}: ${err.message}`);
+        console.warn(`[SignalsController] Failed to fetch live Binance candles for ${cleanSymbol}: ${err.message}. Trying Twelve Data fallback.`);
       }
-    } else {
+    }
+
+    // 4. Try Twelve Data fallback if Binance failed or if it is stocks/indices/forex
+    if (!fetched) {
+      const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
+      if (twelveDataKey) {
+        try {
+          const tdSym = this.getTwelveDataSymbol(cleanSymbol);
+          let tdInterval = interval;
+          if (interval === '1h') tdInterval = '1h';
+          
+          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=100&apikey=${twelveDataKey}`);
+          if (response.ok) {
+            const data = await response.json();
+            const values = data.values || [];
+            if (values.length > 0) {
+              await this.prisma.historicalCandle.deleteMany({
+                where: { symbol: cleanSymbol, interval }
+              });
+              
+              const newCandles = [];
+              const reversedValues = [...values].reverse();
+              for (const v of reversedValues) {
+                const candle = await this.prisma.historicalCandle.create({
+                  data: {
+                    symbol: cleanSymbol,
+                    interval,
+                    timestamp: new Date(v.datetime),
+                    open: parseFloat(v.open),
+                    high: parseFloat(v.high),
+                    low: parseFloat(v.low),
+                    close: parseFloat(v.close),
+                    volume: parseFloat(v.volume || 1000),
+                  }
+                });
+                newCandles.push(candle);
+              }
+              fetched = true;
+              console.log(`[SignalsController] Candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
+              return newCandles;
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[SignalsController] Twelve Data timeseries fetch failed for ${cleanSymbol}: ${err.message}. Falling back to Yahoo Finance.`);
+        }
+      }
+    }
+
+    // 5. Try Yahoo Finance fallback
+    if (!fetched) {
       try {
         const yahooTicker = this.getYahooTicker(cleanSymbol);
         let yahooInterval = interval;
@@ -307,7 +400,7 @@ export class SignalsController {
         else if (interval === '15m' || interval === '30m') range = '5d';
         else if (interval === '1h') range = '7d';
         
-        const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=${yahooInterval}&range=${range}`);
+        const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=${yahooInterval}&range=${range}`);
         if (res.ok) {
           const data = await res.json();
           const chartData = data?.chart?.result?.[0];
@@ -341,6 +434,7 @@ export class SignalsController {
               });
               newCandles.push(candle);
             }
+            fetched = true;
             return newCandles;
           }
         }
