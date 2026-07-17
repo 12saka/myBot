@@ -345,15 +345,27 @@ export class MarketsService implements OnModuleInit {
         },
       });
     }
-  }
-
-  // Pre-seed 100 hourly candles for each symbol
+  }  // Pre-seed 100 hourly candles for each symbol
   private async seedHistoricalCandles() {
     // Force seeding to overwrite any simulated/dummy candles in database with real ones
-
     console.log('[MarketsService] Seeding database with historical price candles...');
     
+    // Purge any old simulated dummy candles from database (which are marked with volume = 5000)
+    try {
+      const purgeRes = await this.prisma.historicalCandle.deleteMany({
+        where: { volume: 5000 }
+      });
+      if (purgeRes.count > 0) {
+        console.log(`[MarketsService] Purged ${purgeRes.count} dummy candles from database.`);
+      }
+    } catch (e: any) {
+      console.warn(`[MarketsService] Failed to purge dummy candles: ${e.message}`);
+    }
+
     for (const asset of this.symbols) {
+      let seeded = false;
+
+      // 1. Try Binance (Crypto only)
       if (asset.type === 'crypto' && asset.binanceSymbol) {
         try {
           const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=1h&limit=100`);
@@ -369,7 +381,13 @@ export class MarketsService implements OnModuleInit {
                     timestamp,
                   },
                 },
-                update: {},
+                update: {
+                  open: parseFloat(item[1]),
+                  high: parseFloat(item[2]),
+                  low: parseFloat(item[3]),
+                  close: parseFloat(item[4]),
+                  volume: parseFloat(item[5]),
+                },
                 create: {
                   symbol: asset.name,
                   interval: '1h',
@@ -382,72 +400,132 @@ export class MarketsService implements OnModuleInit {
                 },
               });
             }
-            continue;
+            seeded = true;
+            console.log(`[MarketsService] Successfully seeded candles for ${asset.name} from Binance.`);
           }
         } catch (err: any) {
-          console.warn(`[MarketsService] Failed to seed ${asset.name} from Binance: ${err.message}`);
+          console.warn(`[MarketsService] Failed to seed ${asset.name} from Binance: ${err.message}. Trying Twelve Data.`);
         }
       }
 
-      // Non-crypto: Fetch from Yahoo Finance chart API
-      let seededFromYahoo = false;
-      try {
-        const yahooTicker = this.getYahooTicker(asset.name);
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1h&range=7d`;
-        const res = await this.fetchWithTimeout(url);
-        if (res.ok) {
-          const data = await res.json();
-          const chartResult = data?.chart?.result?.[0];
-          if (chartResult) {
-            const timestamps = chartResult.timestamp || [];
-            const quotes = chartResult.indicators?.quote?.[0] || {};
-            const opens = quotes.open || [];
-            const highs = quotes.high || [];
-            const lows = quotes.low || [];
-            const closes = quotes.close || [];
-            const volumes = quotes.volume || [];
-            
-            for (let i = 0; i < timestamps.length; i++) {
-              const timestamp = new Date(timestamps[i] * 1000);
-              const open = opens[i];
-              const close = closes[i];
-              const high = highs[i];
-              const low = lows[i];
-              const volume = volumes[i] || 1000;
-              
-              if (open !== null && close !== null && high !== null && low !== null) {
-                await this.prisma.historicalCandle.upsert({
-                  where: {
-                    symbol_interval_timestamp: {
+      // 2. Try Twelve Data (Crypto and Stocks/Indices/Forex)
+      if (!seeded) {
+        const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
+        if (twelveDataKey) {
+          try {
+            const tdSym = this.getTwelveDataSymbol(asset.name);
+            const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=1h&outputsize=100&apikey=${twelveDataKey}`);
+            if (response.ok) {
+              const data = await response.json();
+              const values = data.values || [];
+              if (values.length > 0) {
+                for (const v of values) {
+                  const timestamp = new Date(v.datetime);
+                  await this.prisma.historicalCandle.upsert({
+                    where: {
+                      symbol_interval_timestamp: {
+                        symbol: asset.name,
+                        interval: '1h',
+                        timestamp,
+                      },
+                    },
+                    update: {
+                      open: parseFloat(v.open),
+                      high: parseFloat(v.high),
+                      low: parseFloat(v.low),
+                      close: parseFloat(v.close),
+                      volume: parseFloat(v.volume || 1000),
+                    },
+                    create: {
                       symbol: asset.name,
                       interval: '1h',
+                      open: parseFloat(v.open),
+                      high: parseFloat(v.high),
+                      low: parseFloat(v.low),
+                      close: parseFloat(v.close),
+                      volume: parseFloat(v.volume || 1000),
                       timestamp,
                     },
-                  },
-                  update: {},
-                  create: {
-                    symbol: asset.name,
-                    interval: '1h',
-                    open: parseFloat(open.toFixed(4)),
-                    high: parseFloat(high.toFixed(4)),
-                    low: parseFloat(low.toFixed(4)),
-                    close: parseFloat(close.toFixed(4)),
-                    volume: parseFloat(volume.toFixed(0)),
-                    timestamp,
-                  },
-                });
+                  });
+                }
+                seeded = true;
+                console.log(`[MarketsService] Successfully seeded candles for ${asset.name} from Twelve Data.`);
               }
             }
-            seededFromYahoo = true;
-            console.log(`[MarketsService] Successfully seeded candles for ${asset.name} from Yahoo Finance.`);
+          } catch (err: any) {
+            console.warn(`[MarketsService] Twelve Data candle seed failed for ${asset.name}: ${err.message}. Trying Yahoo Finance.`);
           }
         }
-      } catch (err: any) {
-        console.warn(`[MarketsService] Yahoo Finance candle seed failed for ${asset.name}: ${err.message}`);
       }
 
-      if (!seededFromYahoo) {
+      // 3. Try Yahoo Finance (Crypto and Stocks/Indices/Forex)
+      if (!seeded) {
+        try {
+          const yahooTicker = this.getYahooTicker(asset.name);
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1h&range=7d`;
+          const res = await this.fetchWithTimeout(url);
+          if (res.ok) {
+            const data = await res.json();
+            const chartResult = data?.chart?.result?.[0];
+            if (chartResult) {
+              const timestamps = chartResult.timestamp || [];
+              const quotes = chartResult.indicators?.quote?.[0] || {};
+              const opens = quotes.open || [];
+              const highs = quotes.high || [];
+              const lows = quotes.low || [];
+              const closes = quotes.close || [];
+              const volumes = quotes.volume || [];
+              
+              for (let i = 0; i < timestamps.length; i++) {
+                const timestamp = new Date(timestamps[i] * 1000);
+                const open = opens[i];
+                const close = closes[i];
+                const high = highs[i];
+                const low = lows[i];
+                const volume = volumes[i] || 1000;
+                
+                if (open !== null && close !== null && high !== null && low !== null) {
+                  await this.prisma.historicalCandle.upsert({
+                    where: {
+                      symbol_interval_timestamp: {
+                        symbol: asset.name,
+                        interval: '1h',
+                        timestamp,
+                      },
+                    },
+                    update: {
+                      open: parseFloat(open.toFixed(4)),
+                      high: parseFloat(high.toFixed(4)),
+                      low: parseFloat(low.toFixed(4)),
+                      close: parseFloat(close.toFixed(4)),
+                      volume: parseFloat(volume.toFixed(0)),
+                    },
+                    create: {
+                      symbol: asset.name,
+                      interval: '1h',
+                      open: parseFloat(open.toFixed(4)),
+                      high: parseFloat(high.toFixed(4)),
+                      low: parseFloat(low.toFixed(4)),
+                      close: parseFloat(close.toFixed(4)),
+                      volume: parseFloat(volume.toFixed(0)),
+                      timestamp,
+                    },
+                  });
+                }
+              }
+              seeded = true;
+              console.log(`[MarketsService] Successfully seeded candles for ${asset.name} from Yahoo Finance.`);
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[MarketsService] Yahoo Finance candle seed failed for ${asset.name}: ${err.message}`);
+        }
+      }
+
+      // 4. Fallback to Simulated Random Walk (Only if everything else failed)
+      if (!seeded) {
         // Fallback: Seed simulated random walk data
+        console.warn(`[MarketsService] All candle sources failed for ${asset.name}. Falling back to simulated random walk.`);
         let walkPrice = asset.defaultPrice;
         const baseTime = new Date();
         baseTime.setMinutes(0, 0, 0);
@@ -469,7 +547,13 @@ export class MarketsService implements OnModuleInit {
                 timestamp,
               },
             },
-            update: {},
+            update: {
+              open: parseFloat(open.toFixed(4)),
+              high: parseFloat(high.toFixed(4)),
+              low: parseFloat(low.toFixed(4)),
+              close: parseFloat(close.toFixed(4)),
+              volume: 5000,
+            },
             create: {
               symbol: asset.name,
               interval: '1h',
