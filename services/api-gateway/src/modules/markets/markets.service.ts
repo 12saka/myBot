@@ -30,6 +30,22 @@ export class MarketsService implements OnModuleInit {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 5000): Promise<Response> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      return response;
+    } catch (err) {
+      clearTimeout(id);
+      throw err;
+    }
+  }
+
   async onModuleInit() {
     console.log('[MarketsService] Initializing real-time feeds and database candle cache...');
     this.bootstrapMarketCache();
@@ -103,7 +119,7 @@ export class MarketsService implements OnModuleInit {
       
       let cryptoPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       try {
-        const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(cryptoSymbolsQuery)}`);
+        const response = await this.fetchWithTimeout(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(cryptoSymbolsQuery)}`);
         if (response.ok) {
           const stats = await response.json();
           for (const item of stats) {
@@ -127,7 +143,7 @@ export class MarketsService implements OnModuleInit {
       if (twelveDataKey) {
         try {
           const symbolsQuery = nonCryptoSymbols.map(s => this.getTwelveDataSymbol(s.name)).join(',');
-          const response = await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbolsQuery)}&apikey=${twelveDataKey}`);
+          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbolsQuery)}&apikey=${twelveDataKey}`);
           if (response.ok) {
             const data = await response.json();
             for (const asset of nonCryptoSymbols) {
@@ -155,7 +171,7 @@ export class MarketsService implements OnModuleInit {
           await Promise.all(nonCryptoSymbols.map(async (asset) => {
             try {
               const yahooTicker = this.getYahooTicker(asset.name);
-              const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1m&range=1d`);
+              const response = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1m&range=1d`);
               if (response.ok) {
                 const data = await response.json();
                 const meta = data?.chart?.result?.[0]?.meta;
@@ -340,7 +356,7 @@ export class MarketsService implements OnModuleInit {
     for (const asset of this.symbols) {
       if (asset.type === 'crypto' && asset.binanceSymbol) {
         try {
-          const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=1h&limit=100`);
+          const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=1h&limit=100`);
           if (res.ok) {
             const data = await res.json();
             for (const item of data) {
@@ -378,7 +394,7 @@ export class MarketsService implements OnModuleInit {
       try {
         const yahooTicker = this.getYahooTicker(asset.name);
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1h&range=7d`;
-        const res = await fetch(url);
+        const res = await this.fetchWithTimeout(url);
         if (res.ok) {
           const data = await res.json();
           const chartResult = data?.chart?.result?.[0];
@@ -515,7 +531,7 @@ export class MarketsService implements OnModuleInit {
       if (interval === '1h') binanceInterval = '1h';
       try {
         const binanceSym = `${cleanSymbol}USDT`;
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`);
+        const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`);
         if (res.ok) {
           const klines = await res.json();
           // Clear old candles for this symbol+interval to avoid duplicates
@@ -553,7 +569,7 @@ export class MarketsService implements OnModuleInit {
           let tdInterval = interval;
           if (interval === '1h') tdInterval = '1h'; // Twelve Data supports '1h'
           
-          const response = await fetch(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=100&apikey=${twelveDataKey}`);
+          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=100&apikey=${twelveDataKey}`);
           if (response.ok) {
             const data = await response.json();
             const values = data.values || [];
@@ -602,7 +618,7 @@ export class MarketsService implements OnModuleInit {
           else if (interval === '15m' || interval === '30m') range = '5d';
           else if (interval === '1h') range = '7d';
           
-          const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=${yahooInterval}&range=${range}`);
+          const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=${yahooInterval}&range=${range}`);
           if (res.ok) {
             const data = await res.json();
             const chartData = data?.chart?.result?.[0];
