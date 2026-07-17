@@ -197,9 +197,10 @@ export class MarketsService implements OnModuleInit {
  
       // 3. Update Database Records & Populate in-memory Cache
       for (const asset of this.symbols) {
-        let currentPrice = asset.defaultPrice;
-        let changePct24h = 0;
-        let volume24h = 1500000;
+        const lastCached = this.tickerCache[asset.name];
+        let currentPrice = lastCached ? lastCached.price : asset.defaultPrice;
+        let changePct24h = lastCached ? lastCached.changePct24h : 0;
+        let volume24h = lastCached ? lastCached.volume24h : 1500000;
 
         if (asset.type === 'crypto' && asset.binanceSymbol && cryptoPriceMap[asset.binanceSymbol]) {
           const binanceData = cryptoPriceMap[asset.binanceSymbol];

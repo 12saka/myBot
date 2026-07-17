@@ -219,9 +219,13 @@ export class SignalsController {
   @Delete(':id')
   @ApiOperation({ summary: 'Delete or dismiss an active trading signal' })
   async deleteSignal(@Param('id') id: string) {
-    await this.prisma.signal.delete({
-      where: { id },
-    });
+    try {
+      await this.prisma.signal.delete({
+        where: { id },
+      });
+    } catch (err: any) {
+      console.warn(`[SignalsController] Failed to delete signal ${id}: ${err.message}`);
+    }
     return { success: true };
   }
 
