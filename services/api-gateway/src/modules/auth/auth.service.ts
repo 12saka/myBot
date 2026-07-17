@@ -60,7 +60,7 @@ export class AuthService {
   // Dispatch OTP via Resend Email API
   async sendEmailOtp(email: string, otp: string): Promise<{ delivered: boolean; mode: 'live' | 'mock'; devOtp?: string }> {
     const resendApiKey = process.env.RESEND_API_KEY || 're_mock_key';
-    const sender = process.env.EMAIL_SENDER || 'security@trademind.ai';
+    const sender = process.env.EMAIL_SENDER || process.env.MAIL_FROM || 'onboarding@resend.dev';
     const mockResult = {
       delivered: true,
       mode: 'mock' as const,

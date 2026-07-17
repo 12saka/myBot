@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
   Mail, Phone, ShieldCheck, ChevronRight, ArrowLeft,
   Key, Sparkles, CheckCircle2, Lock, AlertTriangle,
-  RefreshCw, Smartphone, Check, HelpCircle
+  RefreshCw, Smartphone, Check, HelpCircle, Eye, EyeOff
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { apiFetch } from '@/lib/api';
@@ -23,6 +23,8 @@ export default function ForgotPasswordPage() {
   const [otp, setOtp] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [countdown, setCountdown] = useState(300); // 5 minutes (300s)
   const [resendCooldown, setResendCooldown] = useState(60); // 1 minute cooldown
@@ -407,26 +409,44 @@ export default function ForgotPasswordPage() {
                 <form onSubmit={handleResetPassword} className="space-y-4 text-xs">
                   <div>
                     <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">New Password</label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full input-glass rounded-xl px-3.5 py-3"
-                      required
-                    />
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full input-glass rounded-xl pl-3.5 pr-10 py-3"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
                   </div>
 
                   <div>
                     <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">Confirm Password</label>
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={e => setConfirmPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full input-glass rounded-xl px-3.5 py-3"
-                      required
-                    />
+                    <div className="relative">
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={e => setConfirmPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full input-glass rounded-xl pl-3.5 pr-10 py-3"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        {showConfirmPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Password strength meter */}

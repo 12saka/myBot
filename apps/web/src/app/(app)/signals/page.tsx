@@ -95,7 +95,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       </div>
 
       {/* Metrics row */}
-      <div className="flex items-center gap-4 text-xs">
+      <div className="flex flex-wrap items-center gap-4 text-xs">
         {[
           { label: 'Risk:Reward', value: signal.riskReward, icon: BarChart3 },
           { label: 'Win Prob',    value: signal.probability, icon: Shield },

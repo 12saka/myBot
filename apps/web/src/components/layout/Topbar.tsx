@@ -108,6 +108,7 @@ export function Topbar() {
             newUnread.forEach(notif => {
               toast(notif.message || notif.title, {
                 icon: '⚡',
+                className: '!max-w-[90vw] md:!max-w-md',
                 style: {
                   borderRadius: '12px',
                   background: '#0f172a',

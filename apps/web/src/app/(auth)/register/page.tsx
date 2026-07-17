@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import {
   User, Mail, Phone, Lock, Sparkles, Shield,
   CheckCircle, ArrowLeft, ArrowRight, TrendingUp,
-  Award, BrainCircuit, Activity
+  Award, BrainCircuit, Activity, Eye, EyeOff
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { toast } from 'react-hot-toast';
@@ -26,6 +26,8 @@ export default function RegisterPage() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [verifyCode, setVerifyCode] = useState('');
   const [experience, setExperience] = useState('Intermediate');
   const [riskLevel, setRiskLevel] = useState('Balanced');
@@ -189,9 +191,9 @@ export default function RegisterPage() {
         }),
       });
       setIsSubmitting(false);
-      toast.success('Profile created successfully! Let\'s choose your subscription plan...');
+      toast.success('Profile created successfully! Welcome to TradeMind!');
       setTimeout(() => {
-        router.push('/choose-plan');
+        router.push('/dashboard');
       }, 1000);
     } catch (err: any) {
       setIsSubmitting(false);
@@ -338,25 +340,43 @@ export default function RegisterPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2">Password</label>
-                      <input
-                        type="password"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full input-glass rounded-xl px-3.5 py-3"
-                        required
-                      />
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full input-glass rounded-xl pl-3.5 pr-10 py-3"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
+                        >
+                          {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2">Confirm</label>
-                      <input
-                        type="password"
-                        value={confirmPassword}
-                        onChange={e => setConfirmPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full input-glass rounded-xl px-3.5 py-3"
-                        required
-                      />
+                      <div className="relative">
+                        <input
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          value={confirmPassword}
+                          onChange={e => setConfirmPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full input-glass rounded-xl pl-3.5 pr-10 py-3"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
+                        >
+                          {showConfirmPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
                     </div>
                   </div>
 

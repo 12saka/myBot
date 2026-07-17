@@ -45,9 +45,9 @@ export default function RootLayout({
         <QueryProvider>
           {children}
           <Toaster
-            position="top-right"
+            position="top-center"
             toastOptions={{
-              className: 'glass-card !bg-surface-2 !text-slate-100 !border !border-white/10 !shadow-2xl',
+              className: 'glass-card !bg-surface-2 !text-slate-100 !border !border-white/10 !shadow-2xl !max-w-[90vw] md:!max-w-md',
               duration: 4000,
               style: {
                 fontFamily: 'var(--font-inter)',
