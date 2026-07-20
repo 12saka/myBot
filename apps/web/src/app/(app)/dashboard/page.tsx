@@ -18,6 +18,7 @@ import { MiniSparkline } from '@/components/charts/MiniSparkline';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 import { AnimatePresence } from 'framer-motion';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
+import { apiFetch } from '@/lib/api';
 
 const btcData = [61200, 62400, 63100, 62800, 64318];
 const ethData = [3050, 3120, 3090, 3200, 3182];
@@ -54,24 +55,26 @@ export default function DashboardPage() {
   const [newsLoading, setNewsLoading] = useState(true);
 
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('session_token') : null;
-    fetch('/api/v2/portfolio/stats', {
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) setStats(data); })
-      .catch(() => {});
+    const fetchDashboardData = async () => {
+      try {
+        const statsData = await apiFetch<any>('/api/v2/portfolio/stats');
+        if (statsData) setStats(statsData);
+      } catch (err) {
+        console.warn('[Dashboard] Failed to fetch stats:', err);
+      }
 
-    // Fetch dashboard news
-    fetch('/api/v2/markets/news')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (Array.isArray(data)) {
-          setDashboardNews(data.slice(0, 5));
+      try {
+        const newsData = await apiFetch<any[]>('/api/v2/markets/news');
+        if (Array.isArray(newsData)) {
+          setDashboardNews(newsData.slice(0, 5));
         }
-      })
-      .catch(() => {})
-      .finally(() => setNewsLoading(false));
+      } catch (err) {
+        console.warn('[Dashboard] Failed to fetch news:', err);
+      } finally {
+        setNewsLoading(false);
+      }
+    };
+    fetchDashboardData();
   }, []);
 
   // Compute real Fear & Greed from signal data
