@@ -441,9 +441,10 @@ async def get_prediction(
                 """
 
             session_str = f"Current Market Session Context: {req.session}" if req.session else "Current Market Session Context: Active global session"
+            timeframe_desc = "SCALPING Setup (Tight stop-losses, rapid target execution, high leverage support, immediate momentum reversals)" if timeframe in ['1m', '3m', '5m', '15m', '30m'] else "SWING/DAY TRADE Setup (Medium-term trend following, pattern breakout confirmation, wider invalidation boundaries)"
 
             prompt = f"""You are TradeMind AI, a professional trading signal analyst used by retail traders.
-Perform an in-depth market analysis for {symbol} on the {timeframe} timeframe.
+Perform an in-depth market analysis for {symbol} on the {timeframe} timeframe ({timeframe_desc}).
 
 {session_str}
 
@@ -552,35 +553,10 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
             macro_context = ""
             correlation_analysis = ""
 
-    # Deterministic Rule Validation Engine
-    # Checks if indicators align with the suggested trade direction
-    rule_direction = "WAIT"
-    close = current_price
-    ema50 = indicators.get("ema50")
-    ema200 = indicators.get("ema200")
-    rsi = indicators.get("rsi14")
-    macd_hist = indicators.get("macd_hist")
-
-    is_bullish_aligned = (
-        (ema50 is None or close > ema50) and
-        (ema200 is None or close > ema200) and
-        (rsi is None or rsi > 45) and
-        (macd_hist is None or macd_hist > 0)
-    )
-
-    is_bearish_aligned = (
-        (ema50 is None or close < ema50) and
-        (ema200 is None or close < ema200) and
-        (rsi is None or rsi < 55) and
-        (macd_hist is None or macd_hist < 0)
-    )
-
-    if direction == "BUY" and confidence >= 0.80 and is_bullish_aligned:
-        rule_direction = "BUY"
-    elif direction == "SELL" and confidence >= 0.80 and is_bearish_aligned:
-        rule_direction = "SELL"
+    # Respect the AI ensemble forecast direction directly unless confidence is below 50%
+    if confidence >= 0.50:
+        rule_direction = direction
     else:
-        # Default to WAIT as requested so users can examine the state
         rule_direction = "WAIT"
 
     # Compute visual scores for UI Diagram Panel (all from real data)

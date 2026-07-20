@@ -205,7 +205,13 @@ export class SignalsController {
           takeProfit2: res.data.take_profit_2,
           riskRewardRatio: parseFloat((Math.abs(res.data.take_profit_1 - res.data.entry) / Math.abs(res.data.entry - res.data.stop_loss) || 2.0).toFixed(1)),
           winProbability: parseFloat((res.data.confidence * 100).toFixed(0)), // convert 0.88 -> 88
-          durationEstimate: interval === '1d' ? '3-5 days' : (interval === '4h' ? '1-2 days' : '4h'),
+          durationEstimate: interval === '1m' ? '1-5 mins (Scalping)' :
+                            interval === '3m' ? '3-10 mins (Scalping)' :
+                            interval === '5m' ? '5-15 mins (Scalping)' :
+                            interval === '15m' ? '15-45 mins (Scalping)' :
+                            interval === '30m' ? '30-90 mins (Scalping)' :
+                            interval === '1h' ? '1-4 hours (Day Trade)' :
+                            interval === '4h' ? '1-2 days' : '3-5 days',
           aiReasoning: { 
             indicators: res.data.indicators,
             explanation: res.data.ai_explanation,
