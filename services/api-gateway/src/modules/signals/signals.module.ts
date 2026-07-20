@@ -518,6 +518,8 @@ export class SignalsController {
       } catch (err: any) {
         console.warn(`[SignalsController] Failed to fetch live Yahoo candles for ${cleanSymbol}: ${err.message}`);
       }
+    }
+
     if (candles.length === 0) {
       console.warn(`[SignalsController] All data sources failed for ${cleanSymbol}. Generating realistic cached fallback candles...`);
       let currentPrice = 100.0;
