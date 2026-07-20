@@ -210,11 +210,22 @@ export default function SettingsPage() {
         return;
       }
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         const base64String = reader.result as string;
-        setProfilePhoto(base64String);
-        saveToLocalStorage(profileData, base64String);
-        toast.success('Responsive profile photo updated!');
+        const toastId = toast.loading('Uploading profile photo...');
+        try {
+          await apiFetch('/api/v2/users/me', {
+            method: 'PATCH',
+            body: JSON.stringify({ avatarUrl: base64String })
+          });
+          setProfilePhoto(base64String);
+          setProfileData(prev => ({ ...prev, avatarUrl: base64String }));
+          setEditedData(prev => ({ ...prev, avatarUrl: base64String }));
+          saveToLocalStorage({ ...profileData, avatarUrl: base64String }, base64String);
+          toast.success('Profile photo uploaded and saved successfully!', { id: toastId });
+        } catch (err: any) {
+          toast.error(`Failed to save profile photo: ${err.message}`, { id: toastId });
+        }
       };
       reader.readAsDataURL(file);
     }

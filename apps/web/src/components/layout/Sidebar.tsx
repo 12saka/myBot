@@ -54,6 +54,18 @@ export function Sidebar() {
   const router = useRouter();
   const { sidebarCollapsed, toggleSidebarCollapsed, sidebarOpen, setSidebarOpen } = useUIStore();
 
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isCollapsed = sidebarCollapsed && !isMobile;
+
   const handleLogout = () => {
     const confirmLogout = window.confirm('Are you sure you want to log out of your session?');
     if (!confirmLogout) return;
@@ -121,8 +133,8 @@ export function Sidebar() {
           'md:sticky md:top-0 md:flex md:h-screen',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         )}
-        style={{ width: sidebarCollapsed ? '72px' : '240px' }}
-        animate={{ width: sidebarCollapsed ? 72 : 240 }}
+        style={{ width: isCollapsed ? '72px' : '240px' }}
+        animate={{ width: isCollapsed ? 72 : 240 }}
         transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
       >
         {/* Logo */}
@@ -136,7 +148,7 @@ export function Sidebar() {
             </span>
           </div>
           <AnimatePresence>
-            {!sidebarCollapsed && (
+            {!isCollapsed && (
               <motion.div
                 initial={{ opacity: 0, width: 0 }}
                 animate={{ opacity: 1, width: 'auto' }}
@@ -156,7 +168,7 @@ export function Sidebar() {
         <nav className="flex-1 overflow-y-auto overflow-x-hidden py-4 space-y-6 no-scrollbar">
           {NAV_GROUPS.map((group) => (
             <div key={group.label}>
-              {!sidebarCollapsed && (
+              {!isCollapsed && (
                 <div className="px-4 mb-2">
                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-600">
                     {group.label}
@@ -172,7 +184,7 @@ export function Sidebar() {
                       href={href}
                       onClick={() => setSidebarOpen(false)}
                       className={cn('sidebar-link group', isActive && 'active')}
-                      title={sidebarCollapsed ? label : undefined}
+                      title={isCollapsed ? label : undefined}
                     >
                       <Icon
                         size={18}
@@ -182,7 +194,7 @@ export function Sidebar() {
                         )}
                       />
                       <AnimatePresence>
-                        {!sidebarCollapsed && (
+                        {!isCollapsed && (
                           <motion.span
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
@@ -207,7 +219,7 @@ export function Sidebar() {
             href="/settings"
             className={cn(
               'flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 cursor-pointer transition-colors',
-              sidebarCollapsed && 'justify-center'
+              isCollapsed && 'justify-center'
             )}
           >
             <div className="h-8 w-8 flex-shrink-0 rounded-full overflow-hidden bg-gradient-to-br from-purple-500/20 to-indigo-600/20 border border-purple-500/30 flex items-center justify-center font-bold text-xs text-purple-300">
@@ -218,7 +230,7 @@ export function Sidebar() {
               )}
             </div>
             <AnimatePresence>
-              {!sidebarCollapsed && (
+              {!isCollapsed && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                   <div className="text-xs font-semibold text-slate-200 whitespace-nowrap min-h-[16px]">
                     {profile.firstName ? `${profile.firstName} ${profile.lastName}` : <span className="h-3.5 w-20 bg-white/5 animate-pulse rounded block" />}
@@ -232,12 +244,12 @@ export function Sidebar() {
             onClick={handleLogout}
             className={cn(
               'w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-red-500/10 text-slate-400 hover:text-red-400 cursor-pointer transition-colors',
-              sidebarCollapsed && 'justify-center'
+              isCollapsed && 'justify-center'
             )}
           >
             <LogOut size={18} className="flex-shrink-0" />
             <AnimatePresence>
-              {!sidebarCollapsed && (
+              {!isCollapsed && (
                 <motion.span
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -253,7 +265,7 @@ export function Sidebar() {
             onClick={toggleSidebarCollapsed}
             className="hidden md:flex w-full items-center justify-center gap-2 p-2 rounded-xl btn-ghost text-xs font-medium"
           >
-            {sidebarCollapsed ? <ChevronRight size={16} /> : <><ChevronLeft size={16} /><span>Collapse</span></>}
+            {isCollapsed ? <ChevronRight size={16} /> : <><ChevronLeft size={16} /><span>Collapse</span></>}
           </button>
         </div>
       </motion.aside>

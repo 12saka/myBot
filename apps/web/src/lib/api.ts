@@ -151,7 +151,7 @@ export const DEFAULT_PROFILE_DATA: ProfileData = {
   lastName: '',
   username: '',
   dob: '',
-  gender: '',
+  gender: 'Male',
   nationality: '',
   nationalId: '',
   occupation: '',
@@ -182,6 +182,7 @@ export function normalizeProfile(user: any): ProfileData {
   return {
     ...DEFAULT_PROFILE_DATA,
     ...profile,
+    gender: profile.gender || 'Male',
     email: user?.email || profile.email || '',
     phone: user?.phone || profile.phone || '',
   };

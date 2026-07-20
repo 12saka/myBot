@@ -318,7 +318,36 @@ async def get_prediction(
     # Base fallback values
     direction = "BUY"
     confidence = 0.82
-    current_price = candles[-1].close if candles else 64200.0
+    
+    # Determine fallback price based on symbol category if no candles are present
+    fallback_price = 100.0  # default for stocks
+    symbol_upper = symbol.upper()
+    if 'BTC' in symbol_upper:
+        fallback_price = 64000.0
+    elif 'ETH' in symbol_upper:
+        fallback_price = 3400.0
+    elif 'SOL' in symbol_upper:
+        fallback_price = 140.0
+    elif 'EUR' in symbol_upper:
+        fallback_price = 1.0850
+    elif 'GBP' in symbol_upper:
+        fallback_price = 1.2750
+    elif 'JPY' in symbol_upper:
+        fallback_price = 158.00
+    elif 'XAU' in symbol_upper or 'GOLD' in symbol_upper:
+        fallback_price = 2350.0
+    elif 'XAG' in symbol_upper or 'SILVER' in symbol_upper:
+        fallback_price = 30.0
+    elif 'WTI' in symbol_upper or 'OIL' in symbol_upper or 'BRENT' in symbol_upper:
+        fallback_price = 80.0
+    elif 'US30' in symbol_upper:
+        fallback_price = 39000.0
+    elif 'NAS' in symbol_upper or 'NDX' in symbol_upper:
+        fallback_price = 19000.0
+    elif 'SPX' in symbol_upper:
+        fallback_price = 5400.0
+
+    current_price = candles[-1].close if candles else fallback_price
     
     if indicators["trend"] == "Bearish":
         direction = "SELL"

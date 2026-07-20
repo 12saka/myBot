@@ -53,7 +53,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       {/* Delete / Dismiss button in top corner */}
       <button
         onClick={() => onDelete(signal.id)}
-        className="absolute top-3 right-3 p-1.5 rounded-lg bg-white/0 hover:bg-white/5 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer"
+        className="absolute top-3 right-3 p-1.5 rounded-lg bg-white/5 md:bg-white/0 hover:bg-white/10 md:hover:bg-white/5 text-slate-500 hover:text-red-400 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all duration-200 cursor-pointer"
         title="Delete Signal"
       >
         <Trash2 size={13} />
@@ -870,6 +870,65 @@ export default function SignalsPage() {
                         <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/10 text-xs text-amber-200 leading-relaxed">
                           <p className="font-medium">{selectedChartSignal.aiReasoning.tradingview_idea}</p>
                         </div>
+                      </div>
+                    )}
+
+                    {/* Institutional Analysis Upgrade Display */}
+                    {(selectedChartSignal.aiReasoning?.macro_context || selectedChartSignal.aiReasoning?.correlation_analysis || selectedChartSignal.aiReasoning?.category_scores) && (
+                      <div className="space-y-4">
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">🏛️ Institutional Analysis Layers</h4>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Macroeconomic & News sentiment */}
+                          {selectedChartSignal.aiReasoning?.macro_context && (
+                            <div className="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/10 text-xs leading-relaxed space-y-2">
+                              <div className="font-bold text-indigo-300 flex items-center gap-1.5">
+                                <span>🌍 Macroeconomic & Fundamental Driver</span>
+                              </div>
+                              <p className="text-slate-400">{selectedChartSignal.aiReasoning.macro_context}</p>
+                            </div>
+                          )}
+
+                          {/* Cross-Asset Correlation */}
+                          {selectedChartSignal.aiReasoning?.correlation_analysis && (
+                            <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 text-xs leading-relaxed space-y-2">
+                              <div className="font-bold text-emerald-300 flex items-center gap-1.5">
+                                <span>🔗 Cross-Asset Correlation Analysis</span>
+                              </div>
+                              <p className="text-slate-400">{selectedChartSignal.aiReasoning.correlation_analysis}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Category Scores breakdown */}
+                        {selectedChartSignal.aiReasoning?.category_scores && (
+                          <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 space-y-3">
+                            <div className="text-xs font-bold text-purple-300">📊 Multi-Factor Weighted Scoring Model</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                              {[
+                                { name: 'Technical (30%)', val: selectedChartSignal.aiReasoning.category_scores.technical },
+                                { name: 'Fundamental (25%)', val: selectedChartSignal.aiReasoning.category_scores.fundamental },
+                                { name: 'Sentiment (15%)', val: selectedChartSignal.aiReasoning.category_scores.sentiment },
+                                { name: 'Correlation (10%)', val: selectedChartSignal.aiReasoning.category_scores.correlation },
+                                { name: 'Volume/Liq (10%)', val: selectedChartSignal.aiReasoning.category_scores.volume },
+                                { name: 'On-Chain (10%)', val: selectedChartSignal.aiReasoning.category_scores.on_chain },
+                              ].map(({ name, val }) => {
+                                const percentage = val ? Math.round(Number(val) * 100) : 50;
+                                return (
+                                  <div key={name} className="space-y-1 bg-white/2 p-2 rounded-lg border border-white/5">
+                                    <div className="flex justify-between text-[9px] font-semibold text-slate-400">
+                                      <span>{name}</span>
+                                      <span className="text-slate-200">{percentage}%</span>
+                                    </div>
+                                    <div className="h-1 w-full bg-slate-800/80 rounded-full overflow-hidden">
+                                      <div className="h-full bg-purple-500 rounded-full animate-width-fill" style={{ width: `${percentage}%` }} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
