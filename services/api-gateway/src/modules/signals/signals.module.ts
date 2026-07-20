@@ -149,6 +149,27 @@ export class SignalsController {
         }
       }
 
+      // Detect active trading session based on server UTC hour
+      const utcHour = new Date().getUTCHours();
+      let activeSession = 'Asian Session';
+      
+      const isSydney = utcHour >= 22 || utcHour < 7;
+      const isTokyo = utcHour >= 0 && utcHour < 9;
+      const isLondon = utcHour >= 8 && utcHour < 17;
+      const isNewYork = utcHour >= 13 && utcHour < 22;
+      
+      if (isLondon && isNewYork) {
+        activeSession = 'London / New York Session Overlap (High Volatility)';
+      } else if (isLondon) {
+        activeSession = 'London Session (Medium-High Volatility)';
+      } else if (isNewYork) {
+        activeSession = 'New York Session (Medium-High Volatility)';
+      } else if (isTokyo) {
+        activeSession = 'Tokyo Session (Low-Medium Volatility)';
+      } else if (isSydney) {
+        activeSession = 'Sydney Session (Low Volatility)';
+      }
+
       const body = {
         symbol,
         timeframe: interval,
@@ -161,6 +182,7 @@ export class SignalsController {
           timestamp: c.timestamp.toISOString(),
         })),
         news: recentNews,
+        session: activeSession,
       };
 
       const signatureHeaders = generateHmacSignature(body, apiKey);
@@ -193,6 +215,9 @@ export class SignalsController {
             indicator_verdicts: res.data.indicator_verdicts || {},
             market_structure_analysis: res.data.market_structure_analysis || '',
             tradingview_idea: res.data.tradingview_idea || '',
+            category_scores: res.data.category_scores || {},
+            macro_context: res.data.macro_context || '',
+            correlation_analysis: res.data.correlation_analysis || '',
             timeframe: interval,
             status: res.data.direction === 'WAIT' ? 'WAIT' : 'ACTIVE'
           },
@@ -234,6 +259,16 @@ export class SignalsController {
             },
             market_structure_analysis: 'Price is consolidating between key support and resistance zones. No clear breakout has occurred.',
             tradingview_idea: `Consolidation phase for ${symbol}. Neutral bias.`,
+            category_scores: {
+              technical: 0.50,
+              fundamental: 0.50,
+              sentiment: 0.50,
+              correlation: 0.50,
+              volume: 0.50,
+              on_chain: 0.50
+            },
+            macro_context: 'Macroeconomic conditions are stable. Local fallback active.',
+            correlation_analysis: 'Cross-market correlation coefficients are within expected deviations.',
             timeframe: interval,
             status: 'WAIT'
           },

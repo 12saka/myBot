@@ -93,6 +93,7 @@ class PredictRequest(BaseModel):
     timeframe: str = "1h"
     candles: Optional[List[CandleItem]] = None
     news: Optional[List[NewsItem]] = None
+    session: Optional[str] = None
 
 class PredictResponse(BaseModel):
     symbol: str
@@ -111,6 +112,9 @@ class PredictResponse(BaseModel):
     indicator_verdicts: Optional[dict] = None
     market_structure_analysis: Optional[str] = None
     tradingview_idea: Optional[str] = None
+    category_scores: Optional[dict] = None
+    macro_context: Optional[str] = None
+    correlation_analysis: Optional[str] = None
 
 class ChatMessage(BaseModel):
     role: str
@@ -350,6 +354,16 @@ async def get_prediction(
         detected_signals = ["MA stability breakout", "Consolidation pattern bounce"]
 
     ai_explanation = f"Technical indicators suggest a {direction} setup based on alignment rules."
+    category_scores = {
+        "technical": 0.50,
+        "fundamental": 0.50,
+        "sentiment": 0.50,
+        "correlation": 0.50,
+        "volume": 0.50,
+        "on_chain": 0.50
+    }
+    macro_context = "Macroeconomic forces are currently neutral. Monitor central bank actions."
+    correlation_analysis = "Cross-asset relationships are within normal parameters."
 
     # Gemini generation integration (new SDK)
     if gemini_client:
@@ -360,8 +374,52 @@ async def get_prediction(
                 for idx, n in enumerate(req.news):
                     news_context += f"{idx+1}. [{n.source}] {n.headline} - {n.summary}\n"
 
+            # Detect asset class and apply corresponding macro & correlation guidance
+            symbol_upper = symbol.upper()
+            is_crypto = any(c in symbol_upper for c in ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'])
+            is_forex = '/' in symbol_upper or any(f in symbol_upper for f in ['EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF'])
+            is_index = any(idx in symbol_upper for idx in ['US30', 'NAS100', 'SPX500', 'DAX40', 'FTSE100', 'NIKKEI'])
+            is_commodity = any(com in symbol_upper for com in ['XAU', 'XAG', 'WTI', 'BRENT', 'OIL', 'GAS', 'COPPER'])
+            
+            if is_forex:
+                asset_class = "forex"
+                asset_guidance = """
+                Forex Specifics: Check US Dollar Index (DXY) strength and interest rate path bias.
+                Correlations: EURUSD and GBPUSD move inverse to DXY. USDJPY moves positive with US 10-Year bond yields.
+                """
+            elif is_index:
+                asset_class = "indices"
+                asset_guidance = """
+                Indices Specifics: Check Corporate earnings trends, VIX volatility levels, and NASDAQ tech sector weights.
+                Correlations: Positive correlation with general market liquidity and risk-on sentiment, inverse to bond yields.
+                """
+            elif is_commodity:
+                asset_class = "commodities"
+                asset_guidance = """
+                Commodities Specifics: Gold (XAU/USD) is highly sensitive to real yields, safe-haven flows, and USD trend. Crude Oil (WTI) is driven by inventory changes and OPEC production cues.
+                Correlations: Gold moves inverse to USD/yields. Crude Oil is inverse to USDCAD.
+                """
+            elif is_crypto:
+                asset_class = "crypto"
+                asset_guidance = """
+                Crypto Specifics: Bitcoin (BTC) drives the crypto market. Evaluate on-chain trends like exchange reserves, whale accumulation, and stablecoin inflows.
+                Correlations: Highly correlated with NASDAQ (NAS100) and general global liquidity expansions.
+                """
+            else:
+                asset_class = "stocks"
+                asset_guidance = """
+                Stocks Specifics: Assess sector momentum, earnings results, and interest rate environment.
+                """
+
+            session_str = f"Current Market Session Context: {req.session}" if req.session else "Current Market Session Context: Active global session"
+
             prompt = f"""You are TradeMind AI, a professional trading signal analyst used by retail traders.
 Perform an in-depth market analysis for {symbol} on the {timeframe} timeframe.
+
+{session_str}
+
+Asset Class Rules:
+{asset_guidance}
 
 Current Technical Indicators (computed from real candle data):
 - Current Price: {current_price}
@@ -391,6 +449,16 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
   "tp1": float,
   "tp2": float,
   "explanation": "A detailed 3-paragraph analysis: (1) TREND CONTEXT - Describe the overall market structure, where price sits relative to EMAs, and whether the trend is mature or fresh. (2) ENTRY RATIONALE - Explain why this entry price is optimal based on support/resistance, order blocks, FVG confluence, and indicator alignment. Mention specific indicator values. (3) MARKET SENTIMENT & RISK MANAGEMENT - Incorporate recent news sentiment (if available) into the outlook. Explain stop loss placement logic, what would invalidate this trade, and why the take profit targets are realistic.",
+  "category_scores": {{
+    "technical": float (0.0 to 1.0),
+    "fundamental": float (0.0 to 1.0),
+    "sentiment": float (0.0 to 1.0),
+    "correlation": float (0.0 to 1.0),
+    "volume": float (0.0 to 1.0),
+    "on_chain": float (0.0 to 1.0, default 0.5 if not crypto)
+  }},
+  "macro_context": "Detailed breakdown of the macroeconomic factors and news events affecting this asset class",
+  "correlation_analysis": "Detailed explanation of cross-asset correlations confirming this trade setup",
   "indicator_verdicts": {{
     "ema": "Explain the EMA 20/50/200 alignment and what it tells us about trend direction and strength",
     "rsi": "Explain the RSI reading ({indicators['rsi14']}), whether momentum supports the trade, and any divergence",
@@ -436,15 +504,24 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
                 indicator_verdicts = res_json.get("indicator_verdicts", {})
                 market_structure_analysis = res_json.get("market_structure_analysis", "")
                 tradingview_idea = res_json.get("tradingview_idea", "")
+                category_scores = res_json.get("category_scores", category_scores)
+                macro_context = res_json.get("macro_context", macro_context)
+                correlation_analysis = res_json.get("correlation_analysis", correlation_analysis)
             else:
                 indicator_verdicts = {}
                 market_structure_analysis = ""
                 tradingview_idea = ""
+                category_scores = {}
+                macro_context = ""
+                correlation_analysis = ""
         except Exception as e:
             print(f"[AI-Service] ERROR: Gemini signal generation failed entirely, using heuristic: {str(e)}")
             indicator_verdicts = {}
             market_structure_analysis = ""
             tradingview_idea = ""
+            category_scores = {}
+            macro_context = ""
+            correlation_analysis = ""
 
     # Deterministic Rule Validation Engine
     # Checks if indicators align with the suggested trade direction
@@ -570,6 +647,9 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         indicator_verdicts=indicator_verdicts,
         market_structure_analysis=market_structure_analysis,
         tradingview_idea=tradingview_idea,
+        category_scores=category_scores,
+        macro_context=macro_context,
+        correlation_analysis=correlation_analysis,
     )
 
 @app.post("/ai/chat")
