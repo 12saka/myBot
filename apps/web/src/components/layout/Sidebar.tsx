@@ -130,8 +130,8 @@ export function Sidebar() {
         className={cn(
           'fixed left-0 top-0 z-50 h-full flex flex-col glass-panel border-r border-white/6',
           'transition-all duration-300 ease-in-out',
-          'md:sticky md:top-0 md:flex md:h-screen',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+          'md:sticky md:top-0 md:h-screen',
+          sidebarOpen ? 'flex translate-x-0' : 'hidden md:flex -translate-x-full md:translate-x-0'
         )}
         style={{ width: isCollapsed ? '72px' : '240px' }}
         animate={{ width: isCollapsed ? 72 : 240 }}

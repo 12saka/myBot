@@ -70,6 +70,8 @@ export class UsersController {
       leverage,
       avatarUrl,
       phone,
+      alpacaApiKey,
+      alpacaSecretKey,
     } = body;
 
     if (phone !== undefined) {
@@ -109,6 +111,8 @@ export class UsersController {
         baseCurrency,
         leverage,
         avatarUrl,
+        alpacaApiKey,
+        alpacaSecretKey,
       },
     });
 

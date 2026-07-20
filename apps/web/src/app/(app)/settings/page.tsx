@@ -166,6 +166,7 @@ export default function SettingsPage() {
         setProfileData(freshProfile);
         setEditedData(freshProfile);
         setProfilePhoto(user.profile?.avatarUrl || '');
+        setIsAlpacaConnected(!!user.profile?.alpacaApiKey);
         saveProfileSnapshot(freshProfile, { profilePhoto: user.profile?.avatarUrl || '' });
       } catch (e: any) {
         console.error('Failed to refresh profile:', e);
@@ -545,6 +546,53 @@ export default function SettingsPage() {
       }
     } catch (err: any) {
       toast.error(`Sync failed: ${err.message}`, { id: toastId });
+    }
+  };
+
+  const handleConnectAlpaca = async () => {
+    if (!editedData.alpacaApiKey?.trim() || !editedData.alpacaSecretKey?.trim()) {
+      toast.error('Please enter both your Alpaca API Key ID and Secret Key.');
+      return;
+    }
+    const toastId = toast.loading('Connecting to Alpaca...');
+    try {
+      await apiFetch('/api/v2/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          alpacaApiKey: editedData.alpacaApiKey,
+          alpacaSecretKey: editedData.alpacaSecretKey
+        })
+      });
+      setIsAlpacaConnected(true);
+      setProfileData(prev => ({ ...prev, alpacaApiKey: editedData.alpacaApiKey, alpacaSecretKey: editedData.alpacaSecretKey }));
+      saveToLocalStorage({ ...profileData, alpacaApiKey: editedData.alpacaApiKey, alpacaSecretKey: editedData.alpacaSecretKey });
+      addActivityLog('Connected to Alpaca Link');
+      toast.success('Alpaca API credentials integrated successfully!', { id: toastId });
+    } catch (err: any) {
+      toast.error(`Verification failed: ${err.message}`, { id: toastId });
+    }
+  };
+
+  const handleDisconnectAlpaca = async () => {
+    const confirmDisconnect = window.confirm('Are you sure you want to disconnect your Alpaca broker?');
+    if (!confirmDisconnect) return;
+    const toastId = toast.loading('Disconnecting broker...');
+    try {
+      await apiFetch('/api/v2/users/me', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          alpacaApiKey: '',
+          alpacaSecretKey: ''
+        })
+      });
+      setIsAlpacaConnected(false);
+      setEditedData(prev => ({ ...prev, alpacaApiKey: '', alpacaSecretKey: '' }));
+      setProfileData(prev => ({ ...prev, alpacaApiKey: '', alpacaSecretKey: '' }));
+      saveToLocalStorage({ ...profileData, alpacaApiKey: '', alpacaSecretKey: '' });
+      addActivityLog('Alpaca integration disconnected');
+      toast.success('Alpaca integration disconnected successfully.', { id: toastId });
+    } catch (err: any) {
+      toast.error(`Disconnection failed: ${err.message}`, { id: toastId });
     }
   };
 
@@ -1920,7 +1968,9 @@ export default function SettingsPage() {
                   <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
                     <div>
                       <div className="font-bold text-slate-200">Alpaca Securities LLC</div>
-                      <div className="text-[10px] text-slate-500 mt-1">Acct: ••••••9821</div>
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        Key ID: {editedData.alpacaApiKey ? `${editedData.alpacaApiKey.slice(0, 6)}••••••••` : '••••••••'}
+                      </div>
                     </div>
                     <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
                   </div>
@@ -1932,11 +1982,7 @@ export default function SettingsPage() {
                       <RefreshCw size={12} /> Sync
                     </button>
                     <button
-                      onClick={() => {
-                        setIsAlpacaConnected(false);
-                        addActivityLog('Alpaca integration disconnected');
-                        toast.success('Alpaca disconnected.');
-                      }}
+                      onClick={handleDisconnectAlpaca}
                       className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer"
                     >
                       Disconnect
@@ -1944,16 +1990,34 @@ export default function SettingsPage() {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3 text-xs">
+                <div className="space-y-3.5 text-xs">
                   <p className="text-[10px] text-slate-500 leading-normal">
-                    Enter Alpaca paper/live keys to authenticate the connection.
+                    Enter your Alpaca Paper or Live API keys to authenticate and synchronize.
                   </p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">API Key ID</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. CKEW3CS6HQ6ULMVSIDHQ"
+                        value={editedData.alpacaApiKey || ''}
+                        onChange={(e) => setEditedData(prev => ({ ...prev, alpacaApiKey: e.target.value }))}
+                        className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">Secret Key</label>
+                      <input
+                        type="password"
+                        placeholder="••••••••••••••••••••••••••••••••••••••••"
+                        value={editedData.alpacaSecretKey || ''}
+                        onChange={(e) => setEditedData(prev => ({ ...prev, alpacaSecretKey: e.target.value }))}
+                        className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
+                      />
+                    </div>
+                  </div>
                   <button
-                    onClick={() => {
-                      setIsAlpacaConnected(true);
-                      addActivityLog('Connected to Alpaca Link');
-                      toast.success('Alpaca API connected successfully!');
-                    }}
+                    onClick={handleConnectAlpaca}
                     className="w-full btn-primary py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                   >
                     Authenticate Alpaca API

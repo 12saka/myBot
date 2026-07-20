@@ -91,8 +91,13 @@ export class WalletController {
     }
 
     // Sync with dedicated Alpaca broker if keys are present
-    const alpacaKey = process.env.ALPACA_API_KEY;
-    const alpacaSecret = process.env.ALPACA_SECRET_KEY;
+    const profile = await this.prisma.profile.findUnique({
+      where: { userId: userPayload.userId }
+    });
+
+    const alpacaKey = profile?.alpacaApiKey || process.env.ALPACA_KEY;
+    const alpacaSecret = profile?.alpacaSecretKey || process.env.ALPACA_SECRET;
+
     if (alpacaKey && alpacaSecret) {
       try {
         let res = await fetch('https://paper-api.alpaca.markets/v2/account', {

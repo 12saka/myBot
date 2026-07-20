@@ -454,8 +454,13 @@ export class PortfolioController {
   @Get('broker')
   @ApiOperation({ summary: 'Get connected broker account details and statistics' })
   async getBrokerDetails(@Req() req: Request) {
-    const alpacaKey = process.env.ALPACA_KEY;
-    const alpacaSecret = process.env.ALPACA_SECRET;
+    const userPayload = req.user as any;
+    const profile = await this.prisma.profile.findUnique({
+      where: { userId: userPayload.userId }
+    });
+
+    const alpacaKey = profile?.alpacaApiKey || process.env.ALPACA_KEY;
+    const alpacaSecret = profile?.alpacaSecretKey || process.env.ALPACA_SECRET;
 
     if (!alpacaKey || !alpacaSecret) {
       const statsData = await this.getStats(req);

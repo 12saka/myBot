@@ -695,7 +695,7 @@ export default function SignalsPage() {
               </div>
 
               {/* Chart */}
-              <div className={cn("flex-shrink-0 px-2 pt-2 relative transition-all duration-300", isFullscreen ? "h-[80vh]" : "h-[450px]")}>
+              <div className={cn("flex-shrink-0 px-2 pt-2 relative transition-all duration-300", isFullscreen ? "h-[80vh]" : "h-[240px] md:h-[450px]")}>
                 <TradingViewWidget
                   symbol={selectedChartSignal.symbol}
                   height="100%"
@@ -704,6 +704,11 @@ export default function SignalsPage() {
                   tp1={selectedChartSignal.tp1}
                   tp2={selectedChartSignal.tp2}
                 />
+              </div>
+
+              {/* Mobile Swipe helper notice */}
+              <div className="md:hidden text-[9px] text-slate-500 font-bold text-center py-1 bg-white/2 border-b border-white/5 flex items-center justify-center gap-1">
+                <span>💡 Touch the margins or swipe outside the chart frame to scroll details</span>
               </div>
 
               {/* Target Price Labels Overlay */}
@@ -737,7 +742,7 @@ export default function SignalsPage() {
                 const structure = selectedChartSignal.aiReasoning?.structure || {};
 
                 return (
-                  <div className="flex-1 p-6 space-y-6 overflow-y-auto">
+                  <div className="flex-1 p-6 space-y-6 overflow-y-auto pb-32 md:pb-12">
                     {/* Signal Lifecycle Timeline */}
                     <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
                       <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Signal Lifecycle Timeline</h4>

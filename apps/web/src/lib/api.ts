@@ -143,6 +143,8 @@ export type ProfileData = {
   baseCurrency: string;
   leverage: string;
   avatarUrl?: string;
+  alpacaApiKey?: string;
+  alpacaSecretKey?: string;
 };
 
 export const DEFAULT_PROFILE_DATA: ProfileData = {
@@ -174,6 +176,8 @@ export const DEFAULT_PROFILE_DATA: ProfileData = {
   tradingSession: 'London',
   baseCurrency: 'USD',
   leverage: '1:100',
+  alpacaApiKey: '',
+  alpacaSecretKey: '',
 };
 
 export function normalizeProfile(user: any): ProfileData {
