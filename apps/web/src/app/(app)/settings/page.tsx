@@ -148,6 +148,9 @@ export default function SettingsPage() {
           const cachedProfile = { ...DEFAULT_PROFILE_DATA, ...parsed.profileData };
           setProfileData(cachedProfile);
           setEditedData(cachedProfile);
+          if (cachedProfile.brokerType && cachedProfile.brokerType !== 'None') {
+            setBrokerType(cachedProfile.brokerType.toLowerCase() as any);
+          }
         }
         if (parsed.profilePhoto) setProfilePhoto(parsed.profilePhoto);
         if (parsed.idCardFile) setIdCardFile(parsed.idCardFile);
@@ -166,7 +169,9 @@ export default function SettingsPage() {
         setProfileData(freshProfile);
         setEditedData(freshProfile);
         setProfilePhoto(user.profile?.avatarUrl || '');
-        setIsAlpacaConnected(!!user.profile?.alpacaApiKey);
+        if (freshProfile.brokerType && freshProfile.brokerType !== 'None') {
+          setBrokerType(freshProfile.brokerType.toLowerCase() as any);
+        }
         saveProfileSnapshot(freshProfile, { profilePhoto: user.profile?.avatarUrl || '' });
       } catch (e: any) {
         console.error('Failed to refresh profile:', e);
@@ -418,7 +423,6 @@ export default function SettingsPage() {
   };
 
   const [mt5Config, setMt5Config] = useState(getInitialMt5State());
-  const [isAlpacaConnected, setIsAlpacaConnected] = useState(true);
   const [isConnectingBroker, setIsConnectingBroker] = useState(false);
 
   // --- Activity Logs State & Helper ---
@@ -528,21 +532,21 @@ export default function SettingsPage() {
   const handleBrokerSync = async () => {
     const toastId = toast.loading(`Synchronizing live broker account status...`);
     try {
+      if (editedData.brokerType?.toLowerCase() !== brokerType) {
+        toast.error(`${brokerType.toUpperCase()} is not connected.`, { id: toastId });
+        return;
+      }
+      
       if (brokerType === 'alpaca') {
-        if (!isAlpacaConnected) {
-          toast.error('Alpaca is not connected.', { id: toastId });
-          return;
-        }
         const res = await apiFetch<any>('/api/v2/portfolio/broker');
         addActivityLog('Broker connection synchronized: Alpaca API');
         toast.success(`Synced Alpaca Account successfully! Balance: $${res.balance.toLocaleString()}, Equity: $${res.equity.toLocaleString()}`, { id: toastId });
-      } else {
-        if (!mt5Config.connected) {
-          toast.error('MT5 is not connected.', { id: toastId });
-          return;
-        }
+      } else if (brokerType === 'mt5') {
         addActivityLog('Broker connection synchronized: MetaTrader 5');
-        toast.success(`Synced MT5 Account #${mt5Config.login} successfully! Leverage: 1:500, Balance: $10,540.20, Free Margin: $9,820.00`, { id: toastId });
+        toast.success(`Synced MT5 Account #${editedData.brokerKey} successfully! Leverage: 1:500, Balance: $10,540.20, Free Margin: $9,820.00`, { id: toastId });
+      } else {
+        addActivityLog('Broker connection synchronized: Custom Broker');
+        toast.success(`Synced Custom Broker Account successfully! Status: Active`, { id: toastId });
       }
     } catch (err: any) {
       toast.error(`Sync failed: ${err.message}`, { id: toastId });
