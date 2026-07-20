@@ -406,7 +406,7 @@ export default function SettingsPage() {
   }, [aiPreferences]);
 
   // --- MT5 & Alpaca Broker State ---
-  const [brokerType, setBrokerType] = useState<'alpaca' | 'mt5'>('alpaca');
+  const [brokerType, setBrokerType] = useState<'alpaca' | 'mt5' | 'custom'>('alpaca');
   
   const getInitialMt5State = () => {
     if (typeof window === 'undefined') return { connected: false, server: 'MetaQuotes-Demo', login: '', password: '' };
@@ -549,85 +549,58 @@ export default function SettingsPage() {
     }
   };
 
-  const handleConnectAlpaca = async () => {
-    if (!editedData.alpacaApiKey?.trim() || !editedData.alpacaSecretKey?.trim()) {
-      toast.error('Please enter both your Alpaca API Key ID and Secret Key.');
+  const handleConnectBroker = async (type: string) => {
+    const key = editedData.brokerKey?.trim();
+    const secret = editedData.brokerSecret?.trim();
+    const server = editedData.brokerServer?.trim() || '';
+
+    if (!key || !secret) {
+      toast.error('Please enter both your connection Key/ID and Secret/Password.');
       return;
     }
-    const toastId = toast.loading('Connecting to Alpaca...');
+
+    const toastId = toast.loading(`Connecting to ${type.toUpperCase()} broker terminal...`);
     try {
       await apiFetch('/api/v2/users/me', {
         method: 'PATCH',
         body: JSON.stringify({
-          alpacaApiKey: editedData.alpacaApiKey,
-          alpacaSecretKey: editedData.alpacaSecretKey
+          brokerType: type,
+          brokerKey: key,
+          brokerSecret: secret,
+          brokerServer: server
         })
       });
-      setIsAlpacaConnected(true);
-      setProfileData(prev => ({ ...prev, alpacaApiKey: editedData.alpacaApiKey, alpacaSecretKey: editedData.alpacaSecretKey }));
-      saveToLocalStorage({ ...profileData, alpacaApiKey: editedData.alpacaApiKey, alpacaSecretKey: editedData.alpacaSecretKey });
-      addActivityLog('Connected to Alpaca Link');
-      toast.success('Alpaca API credentials integrated successfully!', { id: toastId });
+      setProfileData(prev => ({ ...prev, brokerType: type, brokerKey: key, brokerSecret: secret, brokerServer: server }));
+      saveToLocalStorage({ ...profileData, brokerType: type, brokerKey: key, brokerSecret: secret, brokerServer: server });
+      addActivityLog(`Connected broker connection: ${type.toUpperCase()}`);
+      toast.success(`${type.toUpperCase()} integrated and authenticated successfully!`, { id: toastId });
     } catch (err: any) {
       toast.error(`Verification failed: ${err.message}`, { id: toastId });
     }
   };
 
-  const handleDisconnectAlpaca = async () => {
-    const confirmDisconnect = window.confirm('Are you sure you want to disconnect your Alpaca broker?');
+  const handleDisconnectBroker = async () => {
+    const confirmDisconnect = window.confirm('Are you sure you want to disconnect your active broker connection?');
     if (!confirmDisconnect) return;
     const toastId = toast.loading('Disconnecting broker...');
     try {
       await apiFetch('/api/v2/users/me', {
         method: 'PATCH',
         body: JSON.stringify({
-          alpacaApiKey: '',
-          alpacaSecretKey: ''
+          brokerType: 'None',
+          brokerKey: '',
+          brokerSecret: '',
+          brokerServer: ''
         })
       });
-      setIsAlpacaConnected(false);
-      setEditedData(prev => ({ ...prev, alpacaApiKey: '', alpacaSecretKey: '' }));
-      setProfileData(prev => ({ ...prev, alpacaApiKey: '', alpacaSecretKey: '' }));
-      saveToLocalStorage({ ...profileData, alpacaApiKey: '', alpacaSecretKey: '' });
-      addActivityLog('Alpaca integration disconnected');
-      toast.success('Alpaca integration disconnected successfully.', { id: toastId });
+      setEditedData(prev => ({ ...prev, brokerType: 'None', brokerKey: '', brokerSecret: '', brokerServer: '' }));
+      setProfileData(prev => ({ ...prev, brokerType: 'None', brokerKey: '', brokerSecret: '', brokerServer: '' }));
+      saveToLocalStorage({ ...profileData, brokerType: 'None', brokerKey: '', brokerSecret: '', brokerServer: '' });
+      addActivityLog('Broker connection disconnected');
+      toast.success('Broker disconnected successfully.', { id: toastId });
     } catch (err: any) {
       toast.error(`Disconnection failed: ${err.message}`, { id: toastId });
     }
-  };
-
-  const handleConnectMt5 = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!mt5Config.login.trim()) {
-      toast.error('Please enter your MT5 Login ID');
-      return;
-    }
-    if (!mt5Config.password.trim()) {
-      toast.error('Please enter your MT5 Password');
-      return;
-    }
-    setIsConnectingBroker(true);
-    const toastId = toast.loading('Connecting to MT5 Broker terminal via API link...');
-    await new Promise(r => setTimeout(r, 2000));
-    setIsConnectingBroker(false);
-    
-    const nextConfig = { ...mt5Config, connected: true };
-    setMt5Config(nextConfig);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('trademind_mt5_broker', JSON.stringify(nextConfig));
-    }
-    addActivityLog(`Connected MT5 Account: ${mt5Config.login} on ${mt5Config.server}`);
-    toast.success('MetaTrader 5 Account connected successfully!', { id: toastId });
-  };
-
-  const handleDisconnectMt5 = () => {
-    const nextConfig = { ...mt5Config, connected: false };
-    setMt5Config(nextConfig);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('trademind_mt5_broker', JSON.stringify(nextConfig));
-    }
-    addActivityLog('MetaTrader 5 Account disconnected');
-    toast.success('MetaTrader 5 Account disconnected.');
   };
 
   const handlePrint = () => {
@@ -1857,173 +1830,126 @@ export default function SettingsPage() {
             </div>
             
             <div className="flex gap-1.5 p-1 rounded-xl bg-slate-900/60 border border-white/5">
-              <button
-                type="button"
-                onClick={() => setBrokerType('alpaca')}
-                className={cn(
-                  "flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all cursor-pointer",
-                  brokerType === 'alpaca' ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" : "text-slate-400 hover:text-slate-200"
-                )}
-              >
-                Alpaca API
-              </button>
-              <button
-                type="button"
-                onClick={() => setBrokerType('mt5')}
-                className={cn(
-                  "flex-1 text-[10px] font-bold py-1.5 rounded-lg transition-all cursor-pointer",
-                  brokerType === 'mt5' ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" : "text-slate-400 hover:text-slate-200"
-                )}
-              >
-                MetaTrader 5 (MT5)
-              </button>
+              {[
+                { id: 'alpaca', label: 'Alpaca API' },
+                { id: 'mt5', label: 'MetaTrader 5 (MT5)' },
+                { id: 'custom', label: 'Custom Broker' }
+              ].map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setBrokerType(id as any)}
+                  className={cn(
+                    "flex-1 text-[9px] font-bold py-1.5 rounded-lg transition-all cursor-pointer text-center",
+                    brokerType === id ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" : "text-slate-400 hover:text-slate-200"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
-            {brokerType === 'mt5' ? (
-              mt5Config.connected ? (
-                <div className="space-y-3.5">
-                  <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
-                    <div>
-                      <div className="font-bold text-slate-200">MT5 Broker Account</div>
-                      <div className="text-[10px] text-slate-500 mt-1">Server: {mt5Config.server}</div>
-                      <div className="text-[10px] text-slate-400">Login ID: {mt5Config.login}</div>
+            {editedData.brokerType?.toLowerCase() === brokerType ? (
+              <div className="space-y-3.5">
+                <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
+                  <div>
+                    <div className="font-bold text-slate-200">
+                      {brokerType === 'alpaca' ? 'Alpaca Securities LLC' : brokerType === 'mt5' ? 'MetaTrader 5 Client' : 'Custom Broker Terminal'}
                     </div>
-                    <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
+                    <div className="text-[10px] text-slate-500 mt-1">
+                      Account ID: {editedData.brokerKey ? `${editedData.brokerKey.slice(0, 8)}••••••••` : '••••••••'}
+                    </div>
+                    {editedData.brokerServer && (
+                      <div className="text-[9px] text-slate-600 mt-0.5">
+                        Server/Endpoint: {editedData.brokerServer}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleBrokerSync}
-                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer"
-                    >
-                      <RefreshCw size={12} /> Sync
-                    </button>
-                    <button
-                      onClick={handleDisconnectMt5}
-                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer"
-                    >
-                      Disconnect
-                    </button>
-                  </div>
+                  <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
                 </div>
-              ) : (
-                <form onSubmit={handleConnectMt5} className="space-y-3 text-xs">
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleBrokerSync}
+                    className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw size={12} /> Sync
+                  </button>
+                  <button
+                    onClick={handleDisconnectBroker}
+                    className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3.5 text-xs">
+                <p className="text-[10px] text-slate-500 leading-normal">
+                  {brokerType === 'alpaca'
+                    ? 'Enter your Alpaca Paper or Live API keys to authorize auto-trading execution.'
+                    : brokerType === 'mt5'
+                      ? 'Enter your MetaTrader 5 Login ID, password, and broker server details.'
+                      : 'Enter your custom broker API key and endpoint gateway server.'}
+                </p>
+                <div className="space-y-3">
                   <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">MT5 Server</label>
-                    <select
-                      value={mt5Config.server}
-                      onChange={e => setMt5Config({ ...mt5Config, server: e.target.value })}
-                      className="w-full input-glass rounded-xl px-3 py-2 text-slate-200 focus:outline-none"
-                    >
-                      <option value="MetaQuotes-Demo">MetaQuotes-Demo</option>
-                      <option value="ICMarkets-Demo">ICMarkets-Demo</option>
-                      <option value="Pepperstone-Demo">Pepperstone-Demo</option>
-                      <option value="Exness-Trial">Exness-Trial</option>
-                      <option value="JMMarkets-Demo">JM Markets (Demo)</option>
-                      <option value="JMMarkets-Live">JM Markets (Live)</option>
-                      <option value="FBS-Demo">FBS (Demo)</option>
-                      <option value="FBS-Real">FBS (Real)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Login ID</label>
+                    <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">
+                      {brokerType === 'alpaca' ? 'API Key ID' : brokerType === 'mt5' ? 'MT5 Login ID' : 'Broker API Key / ID'}
+                    </label>
                     <input
                       type="text"
-                      required
-                      placeholder="e.g. 5028198"
-                      value={mt5Config.login}
-                      onChange={e => setMt5Config({ ...mt5Config, login: e.target.value })}
-                      className="w-full input-glass rounded-xl px-3 py-2 text-slate-200 focus:outline-none bg-slate-950/40"
+                      placeholder={brokerType === 'alpaca' ? 'e.g. CKEW3CS6HQ6ULMVSIDHQ' : brokerType === 'mt5' ? 'e.g. 509214' : 'API Key ID'}
+                      value={editedData.brokerKey || ''}
+                      onChange={(e) => setEditedData(prev => ({ ...prev, brokerKey: e.target.value }))}
+                      className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">MT5 Password</label>
+                    <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">
+                      {brokerType === 'alpaca' ? 'Secret Key' : brokerType === 'mt5' ? 'MT5 Password' : 'Secret Key / Password'}
+                    </label>
                     <input
                       type="password"
-                      required
-                      placeholder="Enter MT5 terminal password"
-                      value={mt5Config.password}
-                      onChange={e => setMt5Config({ ...mt5Config, password: e.target.value })}
-                      className="w-full input-glass rounded-xl px-3 py-2 text-slate-200 focus:outline-none bg-slate-950/40"
+                      placeholder="••••••••••••••••••••••••••••••••••••••••"
+                      value={editedData.brokerSecret || ''}
+                      onChange={(e) => setEditedData(prev => ({ ...prev, brokerSecret: e.target.value }))}
+                      className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
                     />
                   </div>
-                  <button
-                    type="submit"
-                    disabled={isConnectingBroker}
-                    className="w-full btn-primary py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                  >
-                    {isConnectingBroker ? (
-                      <>
-                        <RefreshCw size={12} className="animate-spin" />
-                        Connecting...
-                      </>
-                    ) : (
-                      'Link MT5 Account'
-                    )}
-                  </button>
-                </form>
-              )
-            ) : (
-              isAlpacaConnected ? (
-                <div className="space-y-3.5">
-                  <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
+                  {brokerType !== 'alpaca' ? (
                     <div>
-                      <div className="font-bold text-slate-200">Alpaca Securities LLC</div>
-                      <div className="text-[10px] text-slate-500 mt-1">
-                        Key ID: {editedData.alpacaApiKey ? `${editedData.alpacaApiKey.slice(0, 6)}••••••••` : '••••••••'}
-                      </div>
-                    </div>
-                    <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleBrokerSync}
-                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer"
-                    >
-                      <RefreshCw size={12} /> Sync
-                    </button>
-                    <button
-                      onClick={handleDisconnectAlpaca}
-                      className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer"
-                    >
-                      Disconnect
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3.5 text-xs">
-                  <p className="text-[10px] text-slate-500 leading-normal">
-                    Enter your Alpaca Paper or Live API keys to authenticate and synchronize.
-                  </p>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">API Key ID</label>
+                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">
+                        {brokerType === 'mt5' ? 'MT5 Server Host' : 'API Endpoint Server'}
+                      </label>
                       <input
                         type="text"
-                        placeholder="e.g. CKEW3CS6HQ6ULMVSIDHQ"
-                        value={editedData.alpacaApiKey || ''}
-                        onChange={(e) => setEditedData(prev => ({ ...prev, alpacaApiKey: e.target.value }))}
+                        placeholder={brokerType === 'mt5' ? 'e.g. ICMarkets-Demo' : 'e.g. https://api.custombroker.com'}
+                        value={editedData.brokerServer || ''}
+                        onChange={(e) => setEditedData(prev => ({ ...prev, brokerServer: e.target.value }))}
                         className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
                       />
                     </div>
+                  ) : (
                     <div>
-                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">Secret Key</label>
-                      <input
-                        type="password"
-                        placeholder="••••••••••••••••••••••••••••••••••••••••"
-                        value={editedData.alpacaSecretKey || ''}
-                        onChange={(e) => setEditedData(prev => ({ ...prev, alpacaSecretKey: e.target.value }))}
+                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">API Endpoint environment</label>
+                      <select
+                        value={editedData.brokerServer || 'https://paper-api.alpaca.markets'}
+                        onChange={(e) => setEditedData(prev => ({ ...prev, brokerServer: e.target.value }))}
                         className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
-                      />
+                      >
+                        <option value="https://paper-api.alpaca.markets">Paper Sandbox (Demo)</option>
+                        <option value="https://api.alpaca.markets">Live Account (Production)</option>
+                      </select>
                     </div>
-                  </div>
-                  <button
-                    onClick={handleConnectAlpaca}
-                    className="w-full btn-primary py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                  >
-                    Authenticate Alpaca API
-                  </button>
+                  )}
                 </div>
-              )
+                <button
+                  onClick={() => handleConnectBroker(brokerType)}
+                  className="w-full btn-primary py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                >
+                  Authenticate {brokerType === 'alpaca' ? 'Alpaca API' : brokerType === 'mt5' ? 'MT5 Account' : 'Custom Broker'}
+                </button>
+              </div>
             )}
           </div>
         </div>

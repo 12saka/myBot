@@ -74,8 +74,10 @@ model Profile {
   tradingSession    String?  @default("London")
   tradingStyle      String?  @default("Day Trading")
   username          String?
-  alpacaApiKey      String?
-  alpacaSecretKey   String?
+  brokerType        String?  @default("None")
+  brokerKey         String?
+  brokerSecret      String?
+  brokerServer      String?
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 

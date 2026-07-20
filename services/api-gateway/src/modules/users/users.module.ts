@@ -70,8 +70,10 @@ export class UsersController {
       leverage,
       avatarUrl,
       phone,
-      alpacaApiKey,
-      alpacaSecretKey,
+      brokerType,
+      brokerKey,
+      brokerSecret,
+      brokerServer,
     } = body;
 
     if (phone !== undefined) {
@@ -111,8 +113,10 @@ export class UsersController {
         baseCurrency,
         leverage,
         avatarUrl,
-        alpacaApiKey,
-        alpacaSecretKey,
+        brokerType,
+        brokerKey,
+        brokerSecret,
+        brokerServer,
       },
     });
 
