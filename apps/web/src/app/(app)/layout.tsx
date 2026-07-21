@@ -10,6 +10,7 @@ import { WebSocketProvider } from '@/providers/WebSocketProvider';
 import { usePortfolioStore } from '@/store/usePortfolioStore';
 import { useMarketStore } from '@/store/useMarketStore';
 import { useAIStore } from '@/store/useAIStore';
+import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
@@ -34,6 +35,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { setPortfolio } = usePortfolioStore();
   const { setTickers, setWatchlist } = useMarketStore();
   const { setSignals } = useAIStore();
+  const { sidebarOpen } = useUIStore();
 
   useEffect(() => {
     // Guard check: Redirect unauthenticated user immediately
@@ -111,36 +113,38 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </motion.main>
 
           {/* Mobile Bottom Navigation */}
-          <nav className="glass-panel fixed bottom-0 left-0 right-0 z-50 border-t border-white/5 py-2 md:hidden">
-            <div className="flex items-center justify-around px-2">
-              {[
-                { href: '/dashboard', label: 'Home',      icon: LayoutDashboard },
-                { href: '/markets',   label: 'Markets',   icon: TrendingUp },
-                { href: '/signals',   label: 'Signals',   icon: Zap },
-                { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
-                { href: '/news',      label: 'News',      icon: Newspaper },
-                { href: '/academy',   label: 'Academy',   icon: BookOpen },
-              ].map(({ href, label, icon: Icon }) => {
-                const isActive = pathname === href || pathname?.startsWith(href + '/');
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    className={cn(
-                      "flex flex-col items-center gap-1 px-3 py-1.5 transition-all relative shrink-0",
-                      isActive ? "text-purple-400" : "text-slate-400 hover:text-slate-200"
-                    )}
-                  >
-                    <Icon size={18} className={cn("transition-transform duration-200", isActive && "scale-110")} />
-                    <span className="text-[9px] font-bold tracking-wide uppercase">{label}</span>
-                    {isActive && (
-                      <span className="absolute bottom-0 w-1.5 h-1.5 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7]" />
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </nav>
+          {!sidebarOpen && (
+            <nav className="glass-panel fixed bottom-0 left-0 right-0 z-50 border-t border-white/5 py-2 md:hidden">
+              <div className="flex items-center justify-around px-2">
+                {[
+                  { href: '/dashboard', label: 'Home',      icon: LayoutDashboard },
+                  { href: '/markets',   label: 'Markets',   icon: TrendingUp },
+                  { href: '/signals',   label: 'Signals',   icon: Zap },
+                  { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
+                  { href: '/news',      label: 'News',      icon: Newspaper },
+                  { href: '/academy',   label: 'Academy',   icon: BookOpen },
+                ].map(({ href, label, icon: Icon }) => {
+                  const isActive = pathname === href || pathname?.startsWith(href + '/');
+                  return (
+                    <Link
+                      key={href}
+                      href={href}
+                      className={cn(
+                        "flex flex-col items-center gap-1 px-3 py-1.5 transition-all relative shrink-0",
+                        isActive ? "text-purple-400" : "text-slate-400 hover:text-slate-200"
+                      )}
+                    >
+                      <Icon size={18} className={cn("transition-transform duration-200", isActive && "scale-110")} />
+                      <span className="text-[9px] font-bold tracking-wide uppercase">{label}</span>
+                      {isActive && (
+                        <span className="absolute bottom-0 w-1.5 h-1.5 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7]" />
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+            </nav>
+          )}
         </div>
       </div>
     </WebSocketProvider>
