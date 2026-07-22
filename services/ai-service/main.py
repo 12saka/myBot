@@ -504,7 +504,7 @@ Market Structure (computed from price action):
 
 You MUST output ONLY a valid JSON object (no markdown, no extra text) with this EXACT structure:
 {{
-  "direction": "BUY" or "SELL" or "WAIT",
+  "direction": "BUY" or "SELL",
   "confidence": float between 0.50 and 0.98,
   "entry": float,
   "stop_loss": float,
