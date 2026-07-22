@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { generateHmacSignature } from '../../utils/hmac-signer';
+import { Interval } from '@nestjs/schedule';
 import axios from 'axios';
 
 @ApiTags('signals')
@@ -12,12 +13,21 @@ import axios from 'axios';
 export class SignalsController {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 5000): Promise<Response> {
+  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 7000): Promise<Response> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        ...(options.headers || {})
+      };
       const response = await fetch(url, {
         ...options,
+        headers,
         signal: controller.signal
       });
       clearTimeout(id);
@@ -48,6 +58,19 @@ export class SignalsController {
     // 2. If no active signals are cached, request new signals from Python AI Service
     console.log('[SIGNALS GATEWAY] No active signals in database. Triggering Python AI Service fallback...');
     return [await this.generateSignalRequest('BTC')];
+  }
+
+  // Background signal scanner: evaluates watched pairs every 2 minutes for actionable BUY/SELL signals
+  @Interval(120000)
+  async autoScanMarketSignals() {
+    const scanSymbols = ['BTC', 'ETH', 'SOL', 'US30', 'US100', 'EUR/USD', 'GOLD'];
+    for (const sym of scanSymbols) {
+      try {
+        await this.generateSignalRequest(sym, '1h', false);
+      } catch (err: any) {
+        console.warn(`[SIGNALS GATEWAY] Background signal scan skipped for ${sym}: ${err.message}`);
+      }
+    }
   }
 
   @Post()
@@ -527,65 +550,8 @@ export class SignalsController {
     }
 
     if (candles.length === 0) {
-      console.warn(`[SignalsController] All data sources failed for ${cleanSymbol}. Generating realistic cached fallback candles...`);
-      let currentPrice = 100.0;
-      const md = await this.prisma.marketData.findFirst({ where: { symbol: cleanSymbol } });
-      if (md) {
-        currentPrice = md.bidPrice || 100.0;
-      } else {
-        if (cleanSymbol.includes('BTC')) currentPrice = 64000;
-        else if (cleanSymbol.includes('ETH')) currentPrice = 3400;
-        else if (cleanSymbol.includes('SOL')) currentPrice = 140;
-        else if (cleanSymbol.includes('EUR')) currentPrice = 1.0850;
-        else if (cleanSymbol.includes('GBP')) currentPrice = 1.2750;
-        else if (cleanSymbol.includes('JPY')) currentPrice = 158.00;
-        else if (cleanSymbol.includes('XAU') || cleanSymbol.includes('GOLD')) currentPrice = 2350;
-        else if (cleanSymbol.includes('US30')) currentPrice = 39000;
-        else if (cleanSymbol.includes('NAS')) currentPrice = 19000;
-        else if (cleanSymbol.includes('SPX')) currentPrice = 5400;
-      }
-
-      const generated = [];
-      let price = currentPrice;
-      const candleCount = 100;
-      for (let i = candleCount - 1; i >= 0; i--) {
-        const change = (Math.random() - 0.5) * (price * 0.002);
-        const open = price - change;
-        const close = price;
-        const high = Math.max(open, close) + (Math.random() * price * 0.001);
-        const low = Math.min(open, close) - (Math.random() * price * 0.001);
-        const timestamp = new Date(Date.now() - i * 60 * 60 * 1000);
-        
-        try {
-          const newCandle = await this.prisma.historicalCandle.create({
-            data: {
-              symbol: cleanSymbol,
-              interval,
-              timestamp,
-              open,
-              high,
-              low,
-              close,
-              volume: 1000 + Math.random() * 5000,
-            }
-          });
-          generated.push(newCandle);
-        } catch (dbErr) {
-          // In case of conflict, push a mock object
-          generated.push({
-            symbol: cleanSymbol,
-            interval,
-            timestamp,
-            open,
-            high,
-            low,
-            close,
-            volume: 1000
-          });
-        }
-        price = open;
-      }
-      return generated;
+      console.warn(`[SignalsController] Live candles unavailable for ${cleanSymbol}. Retrying on next cycle.`);
+      return [];
     }
     
     return candles;

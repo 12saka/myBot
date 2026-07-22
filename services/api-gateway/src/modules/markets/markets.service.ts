@@ -30,12 +30,21 @@ export class MarketsService implements OnModuleInit {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 5000): Promise<Response> {
+  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 7000): Promise<Response> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        ...(options.headers || {})
+      };
       const response = await fetch(url, {
         ...options,
+        headers,
         signal: controller.signal
       });
       clearTimeout(id);
@@ -523,50 +532,8 @@ export class MarketsService implements OnModuleInit {
         }
       }
 
-      // 4. Fallback to Simulated Random Walk (Only if everything else failed)
       if (!seeded) {
-        // Fallback: Seed simulated random walk data
-        console.warn(`[MarketsService] All candle sources failed for ${asset.name}. Falling back to simulated random walk.`);
-        let walkPrice = asset.defaultPrice;
-        const baseTime = new Date();
-        baseTime.setMinutes(0, 0, 0);
-
-        for (let i = 100; i >= 0; i--) {
-          const timestamp = new Date(baseTime.getTime() - i * 60 * 60 * 1000);
-          const change = (Math.random() - 0.5) * (asset.name === 'NVDA' ? 8.0 : asset.name === 'EUR/USD' ? 0.001 : 1.5);
-          const open = walkPrice;
-          walkPrice += change;
-          const close = walkPrice;
-          const high = Math.max(open, close) + Math.random() * (asset.name === 'EUR/USD' ? 0.0005 : 0.5);
-          const low = Math.min(open, close) - Math.random() * (asset.name === 'EUR/USD' ? 0.0005 : 0.5);
-
-          await this.prisma.historicalCandle.upsert({
-            where: {
-              symbol_interval_timestamp: {
-                symbol: asset.name,
-                interval: '1h',
-                timestamp,
-              },
-            },
-            update: {
-              open: parseFloat(open.toFixed(4)),
-              high: parseFloat(high.toFixed(4)),
-              low: parseFloat(low.toFixed(4)),
-              close: parseFloat(close.toFixed(4)),
-              volume: 5000,
-            },
-            create: {
-              symbol: asset.name,
-              interval: '1h',
-              open: parseFloat(open.toFixed(4)),
-              high: parseFloat(high.toFixed(4)),
-              low: parseFloat(low.toFixed(4)),
-              close: parseFloat(close.toFixed(4)),
-              volume: 5000,
-              timestamp,
-            },
-          });
-        }
+        console.warn(`[MarketsService] Live candle seeding skipped for ${asset.name}. Will retry during next price poll cycle.`);
       }
     }
     console.log('[MarketsService] Pre-seeding database completed successfully.');

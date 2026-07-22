@@ -349,9 +349,41 @@ async def get_prediction(
 
     current_price = candles[-1].close if candles else fallback_price
     
-    if indicators["trend"] == "Bearish":
+    # Quantitative Technical Signal Voting Engine (Multi-factor momentum scoring)
+    bullish_votes = 0
+    bearish_votes = 0
+
+    if indicators["rsi14"] is not None:
+        if indicators["rsi14"] < 48:
+            bullish_votes += 1.5
+        elif indicators["rsi14"] > 52:
+            bearish_votes += 1.5
+
+    if indicators["macd"] is not None and indicators["macd_signal"] is not None:
+        if indicators["macd"] >= indicators["macd_signal"]:
+            bullish_votes += 2.0
+        else:
+            bearish_votes += 2.0
+
+    if indicators["ema20"] and indicators["ema50"]:
+        if indicators["ema20"] >= indicators["ema50"]:
+            bullish_votes += 2.0
+        else:
+            bearish_votes += 2.0
+
+    if structure["fvg_detected"]:
+        bullish_votes += 1.0
+    if structure["order_block_detected"]:
+        bullish_votes += 1.0
+    if structure["liquidity_sweep"]:
+        bullish_votes += 1.0
+
+    if bullish_votes >= bearish_votes:
+        direction = "BUY"
+        confidence = float(min(0.95, round(0.75 + (bullish_votes - bearish_votes) * 0.04, 2)))
+    else:
         direction = "SELL"
-        confidence = 0.76
+        confidence = float(min(0.95, round(0.75 + (bearish_votes - bullish_votes) * 0.04, 2)))
 
     entry = current_price
     stop_loss = entry * (0.99 if direction == "BUY" else 1.01)
