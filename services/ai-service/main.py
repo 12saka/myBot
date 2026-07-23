@@ -463,7 +463,7 @@ async def get_prediction(
         confidence = float(min(0.95, max(0.68, round(0.72 + (bullish_votes / total_votes) * 0.22, 2))))
     else:
         direction = "SELL"
-        confidence = float(min(0.95, max(0.68, round(bearish_votes / total_votes) * 0.22, 2))))
+        confidence = float(min(0.95, max(0.68, round(0.72 + (bearish_votes / total_votes) * 0.22, 2))))
 
     entry = current_price
     stop_loss = entry * (0.99 if direction == "BUY" else 1.01)
