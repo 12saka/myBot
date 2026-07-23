@@ -506,10 +506,6 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
 {{
   "direction": "BUY" or "SELL",
   "confidence": float between 0.50 and 0.98,
-  "entry": float,
-  "stop_loss": float,
-  "tp1": float,
-  "tp2": float,
   "explanation": "A detailed 3-paragraph analysis: (1) TREND CONTEXT - Describe the overall market structure, where price sits relative to EMAs, and whether the trend is mature or fresh. (2) ENTRY RATIONALE - Explain why this entry price is optimal based on support/resistance, order blocks, FVG confluence, and indicator alignment. Mention specific indicator values. (3) MARKET SENTIMENT & RISK MANAGEMENT - Incorporate recent news sentiment (if available) into the outlook. Explain stop loss placement logic, what would invalidate this trade, and why the take profit targets are realistic.",
   "category_scores": {{
     "technical": float (0.0 to 1.0),
@@ -557,11 +553,7 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
 
             if res_json:
                 direction = res_json.get("direction", direction)
-                confidence = res_json.get("confidence", confidence)
-                entry = res_json.get("entry", entry)
-                stop_loss = res_json.get("stop_loss", stop_loss)
-                tp1 = res_json.get("tp1", tp1)
-                tp2 = res_json.get("tp2", tp2)
+                confidence = float(res_json.get("confidence", confidence))
                 ai_explanation = res_json.get("explanation", ai_explanation)
                 indicator_verdicts = res_json.get("indicator_verdicts", {})
                 market_structure_analysis = res_json.get("market_structure_analysis", "")
@@ -664,6 +656,39 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         else:
             market_structure_analysis += "No recent liquidity sweeps have occurred, suggesting trend continuation."
             
+    # Ensure entry is ALWAYS the exact real live current_price (0% hallucination)
+    entry = float(current_price)
+    atr_val = indicators.get("atr")
+    
+    if atr_val and atr_val > 0 and (atr_val / entry) < 0.15:
+        sl_dist = atr_val * 1.5
+        tp1_dist = atr_val * 2.0
+        tp2_dist = atr_val * 3.5
+    else:
+        symbol_up = symbol.upper()
+        if any(c in symbol_up for c in ['BTC', 'ETH', 'SOL', 'BNB', 'XRP']):
+            pct = 0.015
+        elif '/' in symbol_up or any(f in symbol_up for f in ['EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF']):
+            pct = 0.003
+        elif any(idx in symbol_up for idx in ['US30', 'US100', 'SPX', 'DAX']):
+            pct = 0.005
+        elif any(com in symbol_up for com in ['XAU', 'GOLD', 'OIL', 'WTI']):
+            pct = 0.006
+        else:
+            pct = 0.010
+        sl_dist = entry * pct
+        tp1_dist = entry * (pct * 1.5)
+        tp2_dist = entry * (pct * 3.0)
+
+    if rule_direction == "BUY":
+        stop_loss = entry - sl_dist
+        tp1 = entry + tp1_dist
+        tp2 = entry + tp2_dist
+    else:
+        stop_loss = entry + sl_dist
+        tp1 = entry - tp1_dist
+        tp2 = entry - tp2_dist
+
     if 'tradingview_idea' not in dir() or not tradingview_idea:
         tradingview_idea = f"Trade idea for {symbol}: Looking for a potential {rule_direction} setup. Target TP1 at {tp1:.2f} and stop-loss at {stop_loss:.2f}. Invalidation is confirmed below the key support/resistance levels."
 
