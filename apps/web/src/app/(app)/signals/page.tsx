@@ -267,9 +267,13 @@ export default function SignalsPage() {
     return () => clearInterval(interval);
   }, [autoGenerate, signals, watchlist]);
 
-  // Initial load
+  // Initial load and continuous live background polling (every 10 seconds)
   useEffect(() => {
     fetchActiveSignalsSilent();
+    const pollInterval = setInterval(() => {
+      fetchActiveSignalsSilent();
+    }, 10000);
+    return () => clearInterval(pollInterval);
   }, []);
 
   const fetchActiveSignalsSilent = async () => {

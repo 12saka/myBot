@@ -65,9 +65,19 @@ export class SignalsController implements OnModuleInit {
       return activeSignals;
     }
 
-    // 2. If no active signals are cached, request new signals from Python AI Service
-    console.log('[SIGNALS GATEWAY] No active signals in database. Triggering Python AI Service fallback...');
-    return [await this.generateSignalRequest('BTC')];
+    // 2. If no active signals are cached, generate fresh signals for all primary market pairs
+    console.log('[SIGNALS GATEWAY] No active signals in database. Generating multi-market AI signals...');
+    const defaultSymbols = ['BTC', 'ETH', 'SOL', 'US30', 'US100', 'EUR/USD', 'GOLD'];
+    const generatedSignals = [];
+    for (const sym of defaultSymbols) {
+      try {
+        const sig = await this.generateSignalRequest(sym, '1h', true);
+        generatedSignals.push(sig);
+      } catch (err: any) {
+        console.warn(`[SIGNALS GATEWAY] Cold-start signal generation failed for ${sym}: ${err.message}`);
+      }
+    }
+    return generatedSignals;
   }
 
   // Background signal scanner: evaluates watched pairs every 2 minutes for actionable BUY/SELL signals
@@ -136,7 +146,7 @@ export class SignalsController implements OnModuleInit {
   }
 
   private async generateSignalRequest(symbol: string, interval = '1h', forceFresh = false) {
-    // Check if we already have an active unexpired signal for this symbol and timeframe in database
+    // Check if we already have an ACTIVE or RUNNING signal for this symbol in database
     if (!forceFresh) {
       const existingSignal = await this.prisma.signal.findFirst({
         where: {
@@ -148,8 +158,13 @@ export class SignalsController implements OnModuleInit {
         orderBy: { createdAt: 'desc' },
       });
 
-      if (existingSignal && (existingSignal.aiReasoning as any)?.timeframe === interval) {
-        return existingSignal;
+      if (existingSignal) {
+        const reasoning = (existingSignal.aiReasoning as any) || {};
+        const status = reasoning.status || 'ACTIVE';
+        // Reuse only if active or running! If completed/hit (TP1_HIT, TP2_HIT, SL_HIT, CLOSED), generate fresh!
+        if (['ACTIVE', 'RUNNING'].includes(status) && reasoning.timeframe === interval) {
+          return existingSignal;
+        }
       }
     }
 

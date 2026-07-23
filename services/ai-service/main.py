@@ -203,10 +203,16 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
     df['dx'] = 100 * (abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di'] + 1e-9))
     df['adx'] = df['dx'].ewm(alpha=1/14, adjust=False).mean()
     
-    # 8. Volume Trend
+    # 8. Volume Trend & RVOL
     vol_sma20 = df['volume'].rolling(window=20).mean()
     last_row = df.iloc[-1]
     volume_trend = "increasing" if last_row['volume'] > vol_sma20.iloc[-1] else "decreasing"
+    avg_vol_20 = float(vol_sma20.iloc[-1]) if not pd.isna(vol_sma20.iloc[-1]) and vol_sma20.iloc[-1] > 0 else 1000.0
+    rvol = float(last_row['volume'] / avg_vol_20)
+    
+    # 9. Dynamic Swing Pivot High & Low
+    swing_high = float(df['high'].tail(20).max())
+    swing_low = float(df['low'].tail(20).min())
     
     trend = "Neutral"
     if last_row['close'] > last_row['ema50'] and (pd.isna(last_row['ema200']) or last_row['close'] > last_row['ema200']):
@@ -229,6 +235,9 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
         "vwap": float(last_row['vwap']) if not pd.isna(last_row['vwap']) else None,
         "adx": float(last_row['adx']) if not pd.isna(last_row['adx']) else None,
         "volume_trend": volume_trend,
+        "rvol": round(rvol, 2),
+        "swing_high": swing_high,
+        "swing_low": swing_low,
         "trend": trend
     }
 
@@ -656,41 +665,37 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         else:
             market_structure_analysis += "No recent liquidity sweeps have occurred, suggesting trend continuation."
             
-    # Ensure entry is ALWAYS the exact real live current_price (0% hallucination)
+    # Market-Ready Dynamic Pivot-Anchored SL / TP Boundaries (Institutional 1:1.8 & 1:3.0 R:R)
     entry = float(current_price)
-    atr_val = indicators.get("atr")
-    
-    if atr_val and atr_val > 0 and (atr_val / entry) < 0.15:
-        sl_dist = atr_val * 1.5
-        tp1_dist = atr_val * 2.0
-        tp2_dist = atr_val * 3.5
-    else:
-        symbol_up = symbol.upper()
-        if any(c in symbol_up for c in ['BTC', 'ETH', 'SOL', 'BNB', 'XRP']):
-            pct = 0.015
-        elif '/' in symbol_up or any(f in symbol_up for f in ['EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF']):
-            pct = 0.003
-        elif any(idx in symbol_up for idx in ['US30', 'US100', 'SPX', 'DAX']):
-            pct = 0.005
-        elif any(com in symbol_up for com in ['XAU', 'GOLD', 'OIL', 'WTI']):
-            pct = 0.006
-        else:
-            pct = 0.010
-        sl_dist = entry * pct
-        tp1_dist = entry * (pct * 1.5)
-        tp2_dist = entry * (pct * 3.0)
+    atr_val = indicators.get("atr") or (entry * 0.01)
+    swing_low = indicators.get("swing_low") or (entry * 0.985)
+    swing_high = indicators.get("swing_high") or (entry * 1.015)
 
     if rule_direction == "BUY":
+        struct_sl = swing_low - (0.5 * atr_val)
+        sl_dist = max(entry - struct_sl, 0.005 * entry)
+        sl_dist = min(sl_dist, 0.03 * entry)
+        
         stop_loss = entry - sl_dist
+        tp1_dist = sl_dist * 1.8  # Guaranteed 1:1.8 R:R on Target 1
+        tp2_dist = sl_dist * 3.0  # Guaranteed 1:3.0 R:R on Target 2
+        
         tp1 = entry + tp1_dist
         tp2 = entry + tp2_dist
     else:
+        struct_sl = swing_high + (0.5 * atr_val)
+        sl_dist = max(struct_sl - entry, 0.005 * entry)
+        sl_dist = min(sl_dist, 0.03 * entry)
+        
         stop_loss = entry + sl_dist
+        tp1_dist = sl_dist * 1.8
+        tp2_dist = sl_dist * 3.0
+        
         tp1 = entry - tp1_dist
         tp2 = entry - tp2_dist
 
     if 'tradingview_idea' not in dir() or not tradingview_idea:
-        tradingview_idea = f"Trade idea for {symbol}: Looking for a potential {rule_direction} setup. Target TP1 at {tp1:.2f} and stop-loss at {stop_loss:.2f}. Invalidation is confirmed below the key support/resistance levels."
+        tradingview_idea = f"Market-ready {rule_direction} trade setup for {symbol}. Entry: {entry:.2f}, TP1: {tp1:.2f} (1:1.8 R:R), TP2: {tp2:.2f} (1:3.0 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
 
     return PredictResponse(
         symbol=symbol,
