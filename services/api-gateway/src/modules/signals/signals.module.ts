@@ -247,7 +247,18 @@ export class SignalsController implements OnModuleInit {
         ? (res.data.take_profit_1 >= res.data.entry ? 'BUY' : 'SELL')
         : res.data.direction;
 
-      // Save the returned prediction and Gemini explanations into the database
+      // 1. Strictly expire any existing active signals for this asset to prevent duplicates
+      await this.prisma.signal.updateMany({
+        where: {
+          symbol: res.data.symbol,
+          expiresAt: { gt: new Date() },
+        },
+        data: {
+          expiresAt: new Date(), // expire older signal
+        },
+      });
+
+      // 2. Save the returned prediction and Gemini explanations into the database
       const signal = await this.prisma.signal.create({
         data: {
           symbol: res.data.symbol,
@@ -300,6 +311,16 @@ export class SignalsController implements OnModuleInit {
       const dynamicWinProb = Math.min(92, Math.max(68, 75 + (Math.abs(Math.round(close)) % 15)));
       const dynamicRR = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss) || 1.67).toFixed(1));
       
+      await this.prisma.signal.updateMany({
+        where: {
+          symbol,
+          expiresAt: { gt: new Date() },
+        },
+        data: {
+          expiresAt: new Date(),
+        },
+      });
+
       const signal = await this.prisma.signal.create({
         data: {
           symbol,

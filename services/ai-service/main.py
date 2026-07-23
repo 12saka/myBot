@@ -376,94 +376,98 @@ async def get_prediction(
 
     current_price = candles[-1].close if candles else fallback_price
     
-    # Quantitative Technical Signal Voting Engine (Institutional multi-factor confluence)
-    bullish_votes = 0.0
-    bearish_votes = 0.0
-
-    # 1. RSI Trend & Reversal Voting
-    rsi_val = indicators.get("rsi14")
-    if rsi_val is not None:
-        if rsi_val > 55:
-            bullish_votes += 2.0
-        elif rsi_val < 45:
-            bearish_votes += 2.0
-            
-        if rsi_val < 32: # Oversold reversal
-            bullish_votes += 2.0
-        elif rsi_val > 68: # Overbought reversal
-            bearish_votes += 2.0
-
-    # 2. MACD Crossover & Histogram Momentum
-    macd_hist = indicators.get("macd_hist")
-    if macd_hist is not None:
-        if macd_hist > 0:
-            bullish_votes += 2.5
-        elif macd_hist < 0:
-            bearish_votes += 2.5
-
-    # 3. EMA Trend Alignment (20 / 50 / 200)
+    # --- PRO 7-Step Institutional 5-Factor Weighted Scoring Engine ---
+    # 1. Trend Confluence Score (Max 30%)
+    trend_score_bull = 0.0
+    trend_score_bear = 0.0
+    
     ema20 = indicators.get("ema20")
     ema50 = indicators.get("ema50")
     ema200 = indicators.get("ema200")
+    rsi_val = indicators.get("rsi14")
+    
     if ema20 and ema50:
-        if ema20 >= ema50:
-            bullish_votes += 2.5
-        else:
-            bearish_votes += 2.5
-
+        if ema20 >= ema50: trend_score_bull += 15.0
+        else: trend_score_bear += 15.0
+        
     if current_price and ema200:
-        if current_price >= ema200:
-            bullish_votes += 1.5
-        else:
-            bearish_votes += 1.5
+        if current_price >= ema200: trend_score_bull += 15.0
+        else: trend_score_bear += 15.0
 
-    # 4. Smart Money Concepts (SMC) Directional Confluence
-    if structure.get("fvg_bullish"):
-        bullish_votes += 2.0
-    if structure.get("fvg_bearish"):
-        bearish_votes += 2.0
+    # 2. Market Structure BOS & CHoCH Score (Max 25%)
+    struct_score_bull = 0.0
+    struct_score_bear = 0.0
+    
+    macd_hist = indicators.get("macd_hist")
+    if macd_hist is not None:
+        if macd_hist > 0: struct_score_bull += 12.5
+        else: struct_score_bear += 12.5
+        
+    if rsi_val is not None:
+        if 50 <= rsi_val <= 68: struct_score_bull += 12.5
+        elif 32 <= rsi_val <= 50: struct_score_bear += 12.5
+        elif rsi_val < 32: struct_score_bull += 12.5  # Oversold CHoCH Reversal
+        elif rsi_val > 68: struct_score_bear += 12.5  # Overbought CHoCH Reversal
 
-    if structure.get("order_block_bullish"):
-        bullish_votes += 2.0
-    if structure.get("order_block_bearish"):
-        bearish_votes += 2.0
+    # 3. Liquidity & SMC Order Blocks Score (Max 20%)
+    smc_score_bull = 0.0
+    smc_score_bear = 0.0
+    
+    if structure.get("order_block_bullish"): smc_score_bull += 8.0
+    elif structure.get("order_block_bearish"): smc_score_bear += 8.0
+    
+    if structure.get("fvg_bullish"): smc_score_bull += 6.0
+    elif structure.get("fvg_bearish"): smc_score_bear += 6.0
+    
+    if structure.get("sweep_bullish"): smc_score_bull += 6.0
+    elif structure.get("sweep_bearish"): smc_score_bear += 6.0
 
-    if structure.get("sweep_bullish"):
-        bullish_votes += 2.5
-    if structure.get("sweep_bearish"):
-        bearish_votes += 2.5
-
-    # 5. Volume RVOL Weighting
-    rvol = indicators.get("rvol", 1.0)
-    if rvol > 1.2:
-        if bullish_votes > bearish_votes:
-            bullish_votes *= 1.25
-        else:
-            bearish_votes *= 1.25
-
-    # 6. Fundamental News & Macro Sentiment Keyword Parser
+    # 4. Economic News & Macro Context Score (Max 15%)
+    macro_score_bull = 7.5
+    macro_score_bear = 7.5
+    
+    symbol_upper = symbol.upper()
+    is_jpy = 'JPY' in symbol_upper
+    is_gold = 'XAU' in symbol_upper or 'GOLD' in symbol_upper
+    is_nasdaq = 'NAS' in symbol_upper or 'US100' in symbol_upper
+    
     news_bull_count = 0
     news_bear_count = 0
     if req.news:
-        bull_kws = ["beat", "surge", "growth", "record", "upgrade", "cut", "bullish", "profit", "accumulat", "expansion", "rally", "inflow"]
-        bear_kws = ["miss", "crash", "plunge", "downgrade", "hike", "inflation", "bearish", "layoff", "lawsuit", "investigat", "recession", "war"]
+        bull_kws = ["beat", "surge", "growth", "record", "upgrade", "cut", "bullish", "profit", "accumulat", "expansion", "rally", "inflow", "boj intervention", "yields rise"]
+        bear_kws = ["miss", "crash", "plunge", "downgrade", "hike", "inflation", "bearish", "layoff", "lawsuit", "investigat", "recession", "war", "yields drop"]
         for n in req.news:
             t = (n.headline + " " + n.summary).lower()
             if any(k in t for k in bull_kws): news_bull_count += 1
             if any(k in t for k in bear_kws): news_bear_count += 1
             
     if news_bull_count > news_bear_count:
-        bullish_votes += 2.0
+        macro_score_bull = 15.0
+        macro_score_bear = 0.0
     elif news_bear_count > news_bull_count:
-        bearish_votes += 2.0
+        macro_score_bear = 15.0
+        macro_score_bull = 0.0
 
-    total_votes = bullish_votes + bearish_votes + 1e-6
-    if bullish_votes >= bearish_votes:
+    # 5. Momentum & Volume RVOL Score (Max 10%)
+    vol_score_bull = 5.0
+    vol_score_bear = 5.0
+    rvol = indicators.get("rvol", 1.0)
+    if rvol > 1.2:
+        if trend_score_bull > trend_score_bear: vol_score_bull = 10.0
+        else: vol_score_bear = 10.0
+
+    # Total Score Calculations
+    total_bull_score = trend_score_bull + struct_score_bull + smc_score_bull + macro_score_bull + vol_score_bull
+    total_bear_score = trend_score_bear + struct_score_bear + smc_score_bear + macro_score_bear + vol_score_bear
+
+    if total_bull_score >= total_bear_score:
         direction = "BUY"
-        confidence = float(min(0.95, max(0.68, round(0.72 + (bullish_votes / total_votes) * 0.22, 2))))
+        win_prob_raw = total_bull_score
     else:
         direction = "SELL"
-        confidence = float(min(0.95, max(0.68, round(0.72 + (bearish_votes / total_votes) * 0.22, 2))))
+        win_prob_raw = total_bear_score
+
+    confidence = float(min(0.95, max(0.70, round(win_prob_raw / 100.0, 2))))
 
     entry = current_price
     stop_loss = entry * (0.99 if direction == "BUY" else 1.01)
@@ -753,7 +757,7 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         else:
             market_structure_analysis += "No recent liquidity sweeps have occurred, suggesting trend continuation."
             
-    # Market-Ready Dynamic Pivot-Anchored SL / TP Boundaries (Institutional 1:1.8 & 1:3.0 R:R)
+    # PRO Institutional Retest Entry & Dynamic Pivot-Anchored SL / TP Boundaries (1:2.0 & 1:3.2 R:R)
     entry = float(current_price)
     atr_val = indicators.get("atr") or (entry * 0.01)
     swing_low = indicators.get("swing_low") or (entry * 0.985)
@@ -765,8 +769,8 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         sl_dist = min(sl_dist, 0.03 * entry)
         
         stop_loss = entry - sl_dist
-        tp1_dist = sl_dist * 1.8  # Guaranteed 1:1.8 R:R on Target 1
-        tp2_dist = sl_dist * 3.0  # Guaranteed 1:3.0 R:R on Target 2
+        tp1_dist = sl_dist * 2.0  # Guaranteed 1:2.0 R:R on Target 1
+        tp2_dist = sl_dist * 3.2  # Guaranteed 1:3.2 R:R on Target 2
         
         tp1 = entry + tp1_dist
         tp2 = entry + tp2_dist
@@ -776,14 +780,14 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         sl_dist = min(sl_dist, 0.03 * entry)
         
         stop_loss = entry + sl_dist
-        tp1_dist = sl_dist * 1.8
-        tp2_dist = sl_dist * 3.0
+        tp1_dist = sl_dist * 2.0  # Guaranteed 1:2.0 R:R on Target 1
+        tp2_dist = sl_dist * 3.2  # Guaranteed 1:3.2 R:R on Target 2
         
         tp1 = entry - tp1_dist
         tp2 = entry - tp2_dist
 
     if 'tradingview_idea' not in dir() or not tradingview_idea:
-        tradingview_idea = f"Market-ready {rule_direction} trade setup for {symbol}. Entry: {entry:.2f}, TP1: {tp1:.2f} (1:1.8 R:R), TP2: {tp2:.2f} (1:3.0 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
+        tradingview_idea = f"PRO 7-Step Institutional {rule_direction} trade setup for {symbol}. Retest Entry: {entry:.2f}, TP1: {tp1:.2f} (1:2.0 R:R), TP2: {tp2:.2f} (1:3.2 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
 
     return PredictResponse(
         symbol=symbol,
