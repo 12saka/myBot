@@ -82,10 +82,10 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       {/* Price Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 border-y border-white/5 py-3">
         {[
-          { label: 'Entry',      value: signal.entry.toLocaleString(),    color: 'text-slate-200' },
-          { label: 'Stop Loss',  value: signal.stopLoss.toLocaleString(), color: 'text-red-400'   },
-          { label: 'Target 1',   value: signal.tp1.toLocaleString(),      color: 'text-emerald-400' },
-          { label: 'Target 2',   value: signal.tp2.toLocaleString(),      color: 'text-emerald-300' },
+          { label: 'Entry',      value: typeof signal.entry === 'number' && !isNaN(signal.entry) ? signal.entry.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-slate-200' },
+          { label: 'Stop Loss',  value: typeof signal.stopLoss === 'number' && !isNaN(signal.stopLoss) ? signal.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-red-400'   },
+          { label: 'Target 1',   value: typeof signal.tp1 === 'number' && !isNaN(signal.tp1) ? signal.tp1.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-emerald-400' },
+          { label: 'Target 2',   value: typeof signal.tp2 === 'number' && !isNaN(signal.tp2) ? signal.tp2.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-emerald-300' },
         ].map(({ label, value, color }) => (
           <div key={label} className="text-xs">
             <span className="block text-[9px] uppercase tracking-wider text-slate-600 mb-0.5">{label}</span>

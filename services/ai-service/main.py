@@ -246,8 +246,14 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
         return {
             "support": None,
             "resistance": None,
+            "fvg_bullish": False,
+            "fvg_bearish": False,
             "fvg_detected": False,
+            "order_block_bullish": False,
+            "order_block_bearish": False,
             "order_block_detected": False,
+            "sweep_bullish": False,
+            "sweep_bearish": False,
             "liquidity_sweep": False
         }
     
@@ -262,43 +268,55 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
     if pd.isna(resistance):
         resistance = float(df['high'].max())
         
-    fvg_detected = False
+    fvg_bullish = False
+    fvg_bearish = False
     for i in range(len(df) - 3, len(df)):
         if i < 2: continue
         if df['low'].iloc[i] > df['high'].iloc[i-2] + (df['close'].iloc[i-1] * 0.0005):
-            fvg_detected = True
+            fvg_bullish = True
             break
         if df['high'].iloc[i] < df['low'].iloc[i-2] - (df['close'].iloc[i-1] * 0.0005):
-            fvg_detected = True
+            fvg_bearish = True
             break
             
-    order_block_detected = False
+    order_block_bullish = False
+    order_block_bearish = False
     for i in range(len(df) - 5, len(df)):
         if i < 2: continue
         body_size = abs(df['close'].iloc[i] - df['open'].iloc[i])
         avg_body = abs(df['close'] - df['open']).rolling(10).mean().iloc[i]
         if body_size > avg_body * 1.5:
-            order_block_detected = True
+            if df['close'].iloc[i] > df['open'].iloc[i]:
+                order_block_bullish = True
+            else:
+                order_block_bearish = True
             break
 
-    liquidity_sweep = False
+    sweep_bullish = False
+    sweep_bearish = False
     recent_candles = df.tail(5)
     for idx, row in recent_candles.iterrows():
         prev_low = df['low'].iloc[:idx].tail(15).min()
         prev_high = df['high'].iloc[:idx].tail(15).max()
         if row['low'] < prev_low and row['close'] > prev_low:
-            liquidity_sweep = True
+            sweep_bullish = True
             break
         if row['high'] > prev_high and row['close'] < prev_high:
-            liquidity_sweep = True
+            sweep_bearish = True
             break
             
     return {
         "support": support,
         "resistance": resistance,
-        "fvg_detected": fvg_detected,
-        "order_block_detected": order_block_detected,
-        "liquidity_sweep": liquidity_sweep
+        "fvg_bullish": fvg_bullish,
+        "fvg_bearish": fvg_bearish,
+        "fvg_detected": fvg_bullish or fvg_bearish,
+        "order_block_bullish": order_block_bullish,
+        "order_block_bearish": order_block_bearish,
+        "order_block_detected": order_block_bullish or order_block_bearish,
+        "sweep_bullish": sweep_bullish,
+        "sweep_bearish": sweep_bearish,
+        "liquidity_sweep": sweep_bullish or sweep_bearish
     }
 
 # --- Routes ---
@@ -358,41 +376,94 @@ async def get_prediction(
 
     current_price = candles[-1].close if candles else fallback_price
     
-    # Quantitative Technical Signal Voting Engine (Multi-factor momentum scoring)
-    bullish_votes = 0
-    bearish_votes = 0
+    # Quantitative Technical Signal Voting Engine (Institutional multi-factor confluence)
+    bullish_votes = 0.0
+    bearish_votes = 0.0
 
-    if indicators["rsi14"] is not None:
-        if indicators["rsi14"] < 48:
+    # 1. RSI Trend & Reversal Voting
+    rsi_val = indicators.get("rsi14")
+    if rsi_val is not None:
+        if rsi_val > 55:
+            bullish_votes += 2.0
+        elif rsi_val < 45:
+            bearish_votes += 2.0
+            
+        if rsi_val < 32: # Oversold reversal
+            bullish_votes += 2.0
+        elif rsi_val > 68: # Overbought reversal
+            bearish_votes += 2.0
+
+    # 2. MACD Crossover & Histogram Momentum
+    macd_hist = indicators.get("macd_hist")
+    if macd_hist is not None:
+        if macd_hist > 0:
+            bullish_votes += 2.5
+        elif macd_hist < 0:
+            bearish_votes += 2.5
+
+    # 3. EMA Trend Alignment (20 / 50 / 200)
+    ema20 = indicators.get("ema20")
+    ema50 = indicators.get("ema50")
+    ema200 = indicators.get("ema200")
+    if ema20 and ema50:
+        if ema20 >= ema50:
+            bullish_votes += 2.5
+        else:
+            bearish_votes += 2.5
+
+    if current_price and ema200:
+        if current_price >= ema200:
             bullish_votes += 1.5
-        elif indicators["rsi14"] > 52:
+        else:
             bearish_votes += 1.5
 
-    if indicators["macd"] is not None and indicators["macd_signal"] is not None:
-        if indicators["macd"] >= indicators["macd_signal"]:
-            bullish_votes += 2.0
+    # 4. Smart Money Concepts (SMC) Directional Confluence
+    if structure.get("fvg_bullish"):
+        bullish_votes += 2.0
+    if structure.get("fvg_bearish"):
+        bearish_votes += 2.0
+
+    if structure.get("order_block_bullish"):
+        bullish_votes += 2.0
+    if structure.get("order_block_bearish"):
+        bearish_votes += 2.0
+
+    if structure.get("sweep_bullish"):
+        bullish_votes += 2.5
+    if structure.get("sweep_bearish"):
+        bearish_votes += 2.5
+
+    # 5. Volume RVOL Weighting
+    rvol = indicators.get("rvol", 1.0)
+    if rvol > 1.2:
+        if bullish_votes > bearish_votes:
+            bullish_votes *= 1.25
         else:
-            bearish_votes += 2.0
+            bearish_votes *= 1.25
 
-    if indicators["ema20"] and indicators["ema50"]:
-        if indicators["ema20"] >= indicators["ema50"]:
-            bullish_votes += 2.0
-        else:
-            bearish_votes += 2.0
+    # 6. Fundamental News & Macro Sentiment Keyword Parser
+    news_bull_count = 0
+    news_bear_count = 0
+    if req.news:
+        bull_kws = ["beat", "surge", "growth", "record", "upgrade", "cut", "bullish", "profit", "accumulat", "expansion", "rally", "inflow"]
+        bear_kws = ["miss", "crash", "plunge", "downgrade", "hike", "inflation", "bearish", "layoff", "lawsuit", "investigat", "recession", "war"]
+        for n in req.news:
+            t = (n.headline + " " + n.summary).lower()
+            if any(k in t for k in bull_kws): news_bull_count += 1
+            if any(k in t for k in bear_kws): news_bear_count += 1
+            
+    if news_bull_count > news_bear_count:
+        bullish_votes += 2.0
+    elif news_bear_count > news_bull_count:
+        bearish_votes += 2.0
 
-    if structure["fvg_detected"]:
-        bullish_votes += 1.0
-    if structure["order_block_detected"]:
-        bullish_votes += 1.0
-    if structure["liquidity_sweep"]:
-        bullish_votes += 1.0
-
+    total_votes = bullish_votes + bearish_votes + 1e-6
     if bullish_votes >= bearish_votes:
         direction = "BUY"
-        confidence = float(min(0.95, round(0.75 + (bullish_votes - bearish_votes) * 0.04, 2)))
+        confidence = float(min(0.95, max(0.68, round(0.72 + (bullish_votes / total_votes) * 0.22, 2))))
     else:
         direction = "SELL"
-        confidence = float(min(0.95, round(0.75 + (bearish_votes - bullish_votes) * 0.04, 2)))
+        confidence = float(min(0.95, max(0.68, round(bearish_votes / total_votes) * 0.22, 2))))
 
     entry = current_price
     stop_loss = entry * (0.99 if direction == "BUY" else 1.01)
@@ -400,28 +471,45 @@ async def get_prediction(
     tp2 = entry * (1.05 if direction == "BUY" else 0.95)
 
     detected_signals = []
-    if indicators["trend"] != "Neutral":
+    if indicators.get("trend") != "Neutral":
         detected_signals.append(f"Price trending {indicators['trend']}")
-    if indicators["rsi14"]:
-        if indicators["rsi14"] > 70:
-            detected_signals.append("RSI Overbought (>70)")
-        elif indicators["rsi14"] < 30:
-            detected_signals.append("RSI Oversold (<30)")
-    if indicators["macd"] and indicators["macd_signal"]:
+    if indicators.get("rsi14"):
+        rsi_val = indicators["rsi14"]
+        if rsi_val > 70:
+            detected_signals.append(f"RSI Overbought ({rsi_val:.1f})")
+        elif rsi_val < 30:
+            detected_signals.append(f"RSI Oversold ({rsi_val:.1f})")
+        elif rsi_val > 55:
+            detected_signals.append(f"Bullish RSI Momentum ({rsi_val:.1f})")
+        elif rsi_val < 45:
+            detected_signals.append(f"Bearish RSI Momentum ({rsi_val:.1f})")
+
+    if indicators.get("macd") is not None and indicators.get("macd_signal") is not None:
         if indicators["macd"] > indicators["macd_signal"]:
             detected_signals.append("Bullish MACD crossover")
         else:
             detected_signals.append("Bearish MACD crossover")
             
-    if structure["fvg_detected"]:
-        detected_signals.append("Fair Value Gap (FVG) imbalance")
-    if structure["order_block_detected"]:
-        detected_signals.append("Institutional Order Block respected")
-    if structure["liquidity_sweep"]:
-        detected_signals.append("Liquidity sweep reversal")
+    if structure.get("fvg_bullish"):
+        detected_signals.append("Bullish Fair Value Gap (FVG) magnet")
+    elif structure.get("fvg_bearish"):
+        detected_signals.append("Bearish Fair Value Gap (FVG) resistance")
+
+    if structure.get("order_block_bullish"):
+        detected_signals.append("Bullish Institutional Demand Zone")
+    elif structure.get("order_block_bearish"):
+        detected_signals.append("Bearish Institutional Supply Zone")
+
+    if structure.get("sweep_bullish"):
+        detected_signals.append("Bullish Liquidity Sweep Reversal")
+    elif structure.get("sweep_bearish"):
+        detected_signals.append("Bearish Liquidity Sweep Reversal")
+
+    if indicators.get("rvol", 1.0) > 1.2:
+        detected_signals.append(f"Institutional Volume Surge (RVOL {indicators['rvol']:.2f}x)")
 
     if not detected_signals:
-        detected_signals = ["MA stability breakout", "Consolidation pattern bounce"]
+        detected_signals = [f"EMA {indicators.get('trend', 'Structure')} Alignment", "Price Action Confluence"]
 
     ai_explanation = f"Technical indicators suggest a {direction} setup based on alignment rules."
     category_scores = {
