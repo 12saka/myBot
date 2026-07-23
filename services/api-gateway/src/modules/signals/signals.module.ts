@@ -65,9 +65,9 @@ export class SignalsController implements OnModuleInit {
       return activeSignals;
     }
 
-    // 2. If no active signals are cached, generate fresh signals for all primary market pairs
-    console.log('[SIGNALS GATEWAY] No active signals in database. Generating multi-market AI signals...');
-    const defaultSymbols = ['BTC', 'ETH', 'SOL', 'US30', 'US100', 'EUR/USD', 'GOLD'];
+    // 2. If no active signals are cached, generate fresh signals for the primary 6 market assets
+    console.log('[SIGNALS GATEWAY] No active signals in database. Generating primary 6-market AI signals...');
+    const defaultSymbols = ['BTC', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
     const generatedSignals = [];
     for (const sym of defaultSymbols) {
       try {
@@ -80,10 +80,10 @@ export class SignalsController implements OnModuleInit {
     return generatedSignals;
   }
 
-  // Background signal scanner: evaluates watched pairs every 2 minutes for actionable BUY/SELL signals
+  // Background signal scanner: evaluates primary watched pairs every 2 minutes for actionable BUY/SELL signals
   @Interval(120000)
   async autoScanMarketSignals() {
-    const scanSymbols = ['BTC', 'ETH', 'SOL', 'US30', 'US100', 'EUR/USD', 'GOLD'];
+    const scanSymbols = ['BTC', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
     for (const sym of scanSymbols) {
       try {
         await this.generateSignalRequest(sym, '1h', false);
