@@ -72,7 +72,10 @@ export class SignalsController implements OnModuleInit {
     for (const sym of defaultSymbols) {
       try {
         const sig = await this.generateSignalRequest(sym, '1h', true);
-        generatedSignals.push(sig);
+        const reasoning = (sig as any)?.aiReasoning || {};
+        if (reasoning.status !== 'MARKET_CLOSED') {
+          generatedSignals.push(sig);
+        }
       } catch (err: any) {
         console.warn(`[SIGNALS GATEWAY] Cold-start signal generation failed for ${sym}: ${err.message}`);
       }
@@ -145,7 +148,67 @@ export class SignalsController implements OnModuleInit {
     return s;
   }
 
-  private async generateSignalRequest(symbol: string, interval = '1h', forceFresh = false) {
+  private isMarketOpen(symbol: string): { isOpen: boolean; reason?: string } {
+    const cleanSym = symbol.toUpperCase().trim();
+    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => cleanSym.includes(c));
+    if (isCrypto) {
+      return { isOpen: true }; // Crypto trades 24/7
+    }
+
+    const now = new Date();
+    const day = now.getUTCDay(); // 0 = Sunday, 6 = Saturday
+    const hour = now.getUTCHours();
+
+    // Weekend Market Closure (Friday 22:00 UTC to Sunday 22:00 UTC)
+    if (day === 6) {
+      return {
+        isOpen: false,
+        reason: `Market for ${symbol} is closed on Saturdays. Traditional markets reopen Sunday at 22:00 UTC.`
+      };
+    }
+    if (day === 0 && hour < 22) {
+      return {
+        isOpen: false,
+        reason: `Market for ${symbol} is currently closed. Traditional markets reopen Sunday at 22:00 UTC.`
+      };
+    }
+    if (day === 5 && hour >= 22) {
+      return {
+        isOpen: false,
+        reason: `Market for ${symbol} closed for the weekend at Friday 22:00 UTC.`
+      };
+    }
+
+    return { isOpen: true };
+  }
+
+  private async generateSignalRequest(symbol: string, interval = '1h', forceFresh = false, userId?: string) {
+    // 1. Check if traditional market is closed
+    const marketCheck = this.isMarketOpen(symbol);
+    if (!marketCheck.isOpen) {
+      console.log(`[SIGNALS GATEWAY] Skipping signal generation for ${symbol}: Market Closed (${marketCheck.reason})`);
+      return {
+        id: `closed-${symbol.toLowerCase()}-${Date.now()}`,
+        symbol,
+        direction: 'WAIT',
+        entryPrice: 0,
+        stopLoss: 0,
+        takeProfit1: 0,
+        takeProfit2: 0,
+        riskRewardRatio: 0,
+        winProbability: 0,
+        durationEstimate: 'Market Closed',
+        aiReasoning: {
+          status: 'MARKET_CLOSED',
+          explanation: marketCheck.reason,
+          indicators: ['Traditional Market Closed'],
+          timeframe: interval
+        },
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 2 * 3600 * 1000)
+      };
+    }
+
     // Check if we already have an ACTIVE or RUNNING signal for this symbol in database
     if (!forceFresh) {
       const existingSignal = await this.prisma.signal.findFirst({
@@ -161,7 +224,6 @@ export class SignalsController implements OnModuleInit {
       if (existingSignal) {
         const reasoning = (existingSignal.aiReasoning as any) || {};
         const status = reasoning.status || 'ACTIVE';
-        // Reuse only if active or running! If completed/hit (TP1_HIT, TP2_HIT, SL_HIT, CLOSED), generate fresh!
         if (['ACTIVE', 'RUNNING'].includes(status) && reasoning.timeframe === interval) {
           return existingSignal;
         }
@@ -297,72 +359,8 @@ export class SignalsController implements OnModuleInit {
 
       return signal;
     } catch (err: any) {
-      console.warn(`[SIGNALS GATEWAY] Failed to fetch signals for ${symbol} from AI Service: ${err.message}. Using local momentum fallback...`);
-      
-      const isBullish = cachedCandles.length > 1
-        ? cachedCandles[cachedCandles.length - 1].close >= cachedCandles[0].close
-        : true;
-      const fallbackDirection: 'BUY' | 'SELL' = isBullish ? 'BUY' : 'SELL';
-      const close = cachedCandles.length > 0 ? cachedCandles[cachedCandles.length - 1].close : 100;
-      const entryPrice = close;
-      const stopLoss = entryPrice * (isBullish ? 0.985 : 1.015);
-      const takeProfit1 = entryPrice * (isBullish ? 1.025 : 0.975);
-      const takeProfit2 = entryPrice * (isBullish ? 1.05 : 0.95);
-      const dynamicWinProb = Math.min(92, Math.max(68, 75 + (Math.abs(Math.round(close)) % 15)));
-      const dynamicRR = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss) || 1.67).toFixed(1));
-      
-      await this.prisma.signal.updateMany({
-        where: {
-          symbol,
-          expiresAt: { gt: new Date() },
-        },
-        data: {
-          expiresAt: new Date(),
-        },
-      });
-
-      const signal = await this.prisma.signal.create({
-        data: {
-          symbol,
-          direction: fallbackDirection,
-          entryPrice,
-          stopLoss,
-          takeProfit1,
-          takeProfit2,
-          riskRewardRatio: dynamicRR,
-          winProbability: dynamicWinProb,
-          durationEstimate: '4h',
-          aiReasoning: {
-            indicators: ['EMA Trend Follower', 'Momentum Reversal'],
-            explanation: `Local quantitative model identified high-probability ${fallbackDirection} setup based on momentum alignment.`,
-            technicals: {},
-            structure: {},
-            scores: { bullish: isBullish ? 75 : 25, bearish: isBullish ? 25 : 75, momentum: 75, volume: 75, trend: 75 },
-            indicator_verdicts: {
-              ema: `EMAs align with ${fallbackDirection} momentum.`,
-              rsi: 'RSI confirms directional bias.',
-              macd: 'MACD histogram supports price action.'
-            },
-            market_structure_analysis: `Price is maintaining directional bias towards ${fallbackDirection} targets.`,
-            tradingview_idea: `${fallbackDirection} signal generated for ${symbol}. Target 1: ${takeProfit1.toFixed(2)}, Stop Loss: ${stopLoss.toFixed(2)}.`,
-            category_scores: {
-              technical: 0.75,
-              fundamental: 0.70,
-              sentiment: 0.75,
-              correlation: 0.70,
-              volume: 0.75,
-              on_chain: 0.70
-            },
-            macro_context: 'Macroeconomic backdrop supports current direction.',
-            correlation_analysis: 'Cross-market correlation coefficients confirm directional setup.',
-            timeframe: interval,
-            status: 'ACTIVE'
-          },
-          expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000),
-        }
-      });
-      
-      return signal;
+      console.error(`[SIGNALS GATEWAY] AI Service signal generation error for ${symbol}: ${err.message}`);
+      throw new Error(`AI Signal Engine offline or unavailable for ${symbol}: ${err.message}. Please ensure python ai-service is running.`);
     }
   }
 
