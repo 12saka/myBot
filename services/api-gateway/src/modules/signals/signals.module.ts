@@ -23,7 +23,7 @@ export class SignalsController implements OnModuleInit {
     }
   }
 
-  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 7000): Promise<Response> {
+  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500): Promise<Response> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {

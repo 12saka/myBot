@@ -177,30 +177,27 @@ export class MarketsService implements OnModuleInit {
 
       if (!fetchedFromTwelveData) {
         try {
-          await Promise.all(nonCryptoSymbols.map(async (asset) => {
-            try {
-              const yahooTicker = this.getYahooTicker(asset.name);
-              const response = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=1m&range=1d`);
-              if (response.ok) {
-                const data = await response.json();
-                const meta = data?.chart?.result?.[0]?.meta;
-                if (meta) {
-                  const price = parseFloat(meta.regularMarketPrice || meta.previousClose || asset.defaultPrice);
-                  const prevClose = parseFloat(meta.chartPreviousClose || meta.previousClose || price);
-                  const changePct = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0.0;
-                  yahooPriceMap[yahooTicker] = {
-                    price,
-                    changePct: parseFloat(changePct.toFixed(2)),
-                    volume: parseFloat(meta.regularMarketVolume || 100000)
-                  };
-                }
+          const yahooSymbolsQuery = nonCryptoSymbols.map(s => this.getYahooTicker(s.name)).join(',');
+          const response = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSymbolsQuery)}`);
+          if (response.ok) {
+            const data = await response.json();
+            const results = data?.quoteResponse?.result || [];
+            for (const q of results) {
+              const symbol = q.symbol;
+              const price = parseFloat(q.regularMarketPrice || q.postMarketPrice || q.preMarketPrice || 0);
+              const changePct = parseFloat(q.regularMarketChangePercent || 0);
+              const volume = parseFloat(q.regularMarketVolume || 100000);
+              if (price > 0) {
+                yahooPriceMap[symbol] = {
+                  price,
+                  changePct: parseFloat(changePct.toFixed(2)),
+                  volume
+                };
               }
-            } catch (err: any) {
-              console.warn(`[MarketsService] Failed to fetch live price for ${asset.name} from Yahoo Finance: ${err.message}`);
             }
-          }));
+          }
         } catch (err: any) {
-          console.warn(`[MarketsService] Yahoo Finance parallel chart fetch failed: ${err.message}`);
+          console.warn(`[MarketsService] Yahoo Finance batch quote API failed: ${err.message}`);
         }
       }
  
