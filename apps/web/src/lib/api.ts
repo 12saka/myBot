@@ -84,6 +84,29 @@ const getSignalType = (symbol: string): AISignal['type'] => {
   return 'stocks';
 };
 
+export function getAssetStrategyName(symbol: string, strategyKey?: string): string {
+  const upper = symbol.toUpperCase();
+  if (strategyKey === 'crypto-btc-onchain' || upper.includes('BTC')) {
+    return 'BTC On-Chain Volatility & Order Block Retest';
+  }
+  if (strategyKey === 'forex-jpy-yields' || upper.includes('JPY')) {
+    return 'BoJ Rate Differential & 10Y Yield Vector';
+  }
+  if (strategyKey === 'forex-eur-dxy' || upper.includes('EUR')) {
+    return 'ECB/Fed Monetary Policy & DXY Sweep Strategy';
+  }
+  if (strategyKey === 'commodity-gold-yields' || upper.includes('GOLD') || upper.includes('XAU')) {
+    return 'XAU/USD Real Yields & Safe-Haven Reversal';
+  }
+  if (strategyKey === 'index-nas100-tech' || upper.includes('US100') || upper.includes('NAS')) {
+    return 'NASDAQ Tech Earnings & FVG Continuation';
+  }
+  if (strategyKey === 'index-us30-dow' || upper.includes('US30') || upper.includes('DOW')) {
+    return 'Dow Jones Industrial Pullback & S/R Retest';
+  }
+  return 'PRO 7-Step Institutional Confluence';
+}
+
 export function mapSignal(item: any): AISignal {
   const reasoning = item.aiReasoning || {};
   const indicators = Array.isArray(reasoning.indicators) ? reasoning.indicators : [];
@@ -103,6 +126,7 @@ export function mapSignal(item: any): AISignal {
   const tp2 = Number(item.takeProfit2 ?? item.tp2 ?? item.take_profit_2 ?? entry * 1.05);
 
   const rrRatio = Number(item.riskRewardRatio ?? (Math.abs(tp1 - entry) / (Math.abs(entry - stopLoss) || 1))).toFixed(1);
+  const strategyName = getAssetStrategyName(item.symbol || 'BTC/USD', item.strategyKey || reasoning.strategy_key);
 
   return {
     id: item.id || `sig-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -117,7 +141,7 @@ export function mapSignal(item: any): AISignal {
     riskReward: `1:${rrRatio}`,
     probability: `${confidence}%`,
     duration: item.durationEstimate || '4h (Day Trade)',
-    strategy: item.strategy || 'TradeMind Institutional AI',
+    strategy: strategyName,
     technicals: indicators.length ? indicators : [explanation],
     fundamentals: [macroContext],
     sentiment: [marketStructure],

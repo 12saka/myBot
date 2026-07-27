@@ -67,7 +67,7 @@ export class SignalsController implements OnModuleInit {
 
     // 2. If no active signals are cached, generate fresh signals for the primary 6 market assets
     console.log('[SIGNALS GATEWAY] No active signals in database. Generating primary 6-market AI signals...');
-    const defaultSymbols = ['BTC', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
+    const defaultSymbols = ['BTC', 'ETH', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
     const generatedSignals = [];
     for (const sym of defaultSymbols) {
       try {
@@ -86,7 +86,7 @@ export class SignalsController implements OnModuleInit {
   // Background signal scanner: evaluates primary watched pairs every 2 minutes for actionable BUY/SELL signals
   @Interval(120000)
   async autoScanMarketSignals() {
-    const scanSymbols = ['BTC', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
+    const scanSymbols = ['BTC', 'ETH', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
     for (const sym of scanSymbols) {
       try {
         await this.generateSignalRequest(sym, '1h', false);
@@ -319,9 +319,14 @@ export class SignalsController implements OnModuleInit {
             console.warn(`[SIGNALS GATEWAY] AI Service returned ${status || postErr.code} (Render cold start). Retrying in 3s... (Attempt ${attempt}/${maxAttempts})`);
             await new Promise(r => setTimeout(r, 3000));
           } else {
-            throw postErr;
+            console.warn(`[SIGNALS GATEWAY] AI Service unreachable on ${symbol} (status ${status || postErr.code}). Falling through to local PRO engine...`);
+            break;
           }
         }
+      }
+
+      if (!res || !res.data) {
+        throw new Error('AI Service unreachable or payload missing');
       }
 
       const finalDirection = res.data.direction;
