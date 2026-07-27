@@ -51,13 +51,46 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       };
     } catch (err) {}
 
-    // 2. High-speed Gateway poller for Index, Commodity & Forex (every 1.5 seconds)
+    // High-speed Universal Parallel Poller for ALL Assets (Crypto, Forex, Indices, Commodities)
     const fetchLivePrices = async () => {
+      if (!isMounted) return;
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-        const gatewayRes = await fetch(`${apiUrl}/api/v2/markets`);
-        if (gatewayRes.ok) {
-          const markets = await gatewayRes.json();
+        
+        // Execute parallel fast requests for Binance Crypto + Gateway Markets simultaneously
+        const [binanceRes, gatewayRes] = await Promise.allSettled([
+          fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]'),
+          fetch(`${apiUrl}/api/v2/markets`)
+        ]);
+
+        if (binanceRes.status === 'fulfilled' && binanceRes.value.ok) {
+          const cryptoData = await binanceRes.value.json();
+          if (Array.isArray(cryptoData)) {
+            cryptoData.forEach((t: any) => {
+              const symMap: Record<string, string> = {
+                'BTCUSDT': 'BTC/USD',
+                'ETHUSDT': 'ETH/USD',
+                'SOLUSDT': 'SOL/USD',
+                'BNBUSDT': 'BNB/USD',
+                'XRPUSDT': 'XRP/USD'
+              };
+              const mapped = symMap[t.symbol];
+              if (mapped && isMounted) {
+                updateTicker(mapped, {
+                  price: parseFloat(t.lastPrice),
+                  changePct24h: parseFloat(t.priceChangePercent),
+                  high24h: parseFloat(t.highPrice),
+                  low24h: parseFloat(t.lowPrice),
+                  volume24h: parseFloat(t.quoteVolume),
+                  type: 'crypto'
+                });
+              }
+            });
+          }
+        }
+
+        if (gatewayRes.status === 'fulfilled' && gatewayRes.value.ok) {
+          const markets = await gatewayRes.value.json();
           if (Array.isArray(markets)) {
             markets.forEach((m: any) => {
               let storeSymbol = m.symbol || m.name;
@@ -80,7 +113,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     };
 
     fetchLivePrices();
-    const interval = setInterval(fetchLivePrices, 1500);
+    const interval = setInterval(fetchLivePrices, 1000); // 1-second ultra-fast refresh for all assets
 
     return () => {
       isMounted = false;

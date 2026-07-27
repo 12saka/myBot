@@ -304,12 +304,12 @@ export class SignalsController implements OnModuleInit {
         symbol,
         timeframe: interval,
         candles: cachedCandles.map(c => ({
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume,
-          timestamp: c.timestamp.toISOString(),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: Number(c.volume || 1000),
+          timestamp: (c.timestamp instanceof Date ? c.timestamp : new Date(c.timestamp)).toISOString(),
         })),
         news: recentNews,
         session: activeSession,
@@ -408,14 +408,14 @@ export class SignalsController implements OnModuleInit {
       console.warn(`[SIGNALS GATEWAY] AI Service unreachable on ${symbol} (${err.message}). Executing local PRO 5-Factor Institutional Engine...`);
       
       // Calculate local PRO 5-Factor Institutional Signal using live candles
-      const closes = cachedCandles.map(c => c.close);
+      const closes = (cachedCandles || []).map(c => Number(c.close));
       const entryPrice = closes.length > 0 ? closes[closes.length - 1] : 100;
       const isBullish = closes.length > 1 ? closes[closes.length - 1] >= closes[0] : true;
       const direction: 'BUY' | 'SELL' = isBullish ? 'BUY' : 'SELL';
       
       // Compute ATR volatility & Swing High/Low
-      const highs = cachedCandles.map(c => c.high);
-      const lows = cachedCandles.map(c => c.low);
+      const highs = (cachedCandles || []).map(c => Number(c.high));
+      const lows = (cachedCandles || []).map(c => Number(c.low));
       const swingLow = lows.length > 0 ? Math.min(...lows.slice(-20)) : entryPrice * 0.985;
       const swingHigh = highs.length > 0 ? Math.max(...highs.slice(-20)) : entryPrice * 1.015;
       const atr = entryPrice * 0.008;
