@@ -89,6 +89,49 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        // 2. Direct Browser Fetch for Indices, Forex, Commodities & Stocks (bypasses server IP blocks)
+        try {
+          const yahooSymbols = '^DJI,^NDX,^GSPC,^GDAXI,GC=F,CL=F,EURUSD=X,GBPUSD=X,USDJPY=X,AAPL,TSLA,NVDA,MSFT,AMZN';
+          const yahooRes = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSymbols)}`);
+          if (yahooRes.ok) {
+            const yData = await yahooRes.json();
+            const results = yData?.quoteResponse?.result || [];
+            const symbolMap: Record<string, { symbol: string; type: string }> = {
+              '^DJI': { symbol: 'US30', type: 'indices' },
+              '^NDX': { symbol: 'US100', type: 'indices' },
+              '^GSPC': { symbol: 'SPX500', type: 'indices' },
+              '^GDAXI': { symbol: 'DAX40', type: 'indices' },
+              'GC=F': { symbol: 'XAU/USD', type: 'commodities' },
+              'CL=F': { symbol: 'OIL', type: 'commodities' },
+              'EURUSD=X': { symbol: 'EUR/USD', type: 'forex' },
+              'GBPUSD=X': { symbol: 'GBP/USD', type: 'forex' },
+              'USDJPY=X': { symbol: 'USD/JPY', type: 'forex' },
+              'AAPL': { symbol: 'AAPL', type: 'stocks' },
+              'TSLA': { symbol: 'TSLA', type: 'stocks' },
+              'NVDA': { symbol: 'NVDA', type: 'stocks' },
+              'MSFT': { symbol: 'MSFT', type: 'stocks' },
+              'AMZN': { symbol: 'AMZN', type: 'stocks' },
+            };
+
+            results.forEach((q: any) => {
+              const mapped = symbolMap[q.symbol];
+              if (mapped && isMounted) {
+                const price = parseFloat(q.regularMarketPrice || q.postMarketPrice || q.preMarketPrice || 0);
+                const changePct = parseFloat(q.regularMarketChangePercent || 0);
+                if (price > 0) {
+                  updateTicker(mapped.symbol, {
+                    price,
+                    changePct24h: parseFloat(changePct.toFixed(2)),
+                    high24h: parseFloat(q.regularMarketDayHigh || price * 1.005),
+                    low24h: parseFloat(q.regularMarketDayLow || price * 0.995),
+                    type: mapped.type
+                  });
+                }
+              }
+            });
+          }
+        } catch (e) {}
+
         if (gatewayRes.status === 'fulfilled' && gatewayRes.value.ok) {
           const markets = await gatewayRes.value.json();
           if (Array.isArray(markets)) {
