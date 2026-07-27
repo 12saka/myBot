@@ -118,8 +118,8 @@ export class MarketsService implements OnModuleInit {
     return this.tickerCache;
   }
 
-  // Poll live prices every 10 seconds
-  @Interval(10000)
+  // Poll live prices every 2.5 seconds for instant high-speed streaming
+  @Interval(2500)
   async updateLivePrices() {
     try {
       // 1. Fetch Crypto Prices & 24h Stats from Binance

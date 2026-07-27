@@ -19,39 +19,41 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
   const updateTicker = useMarketStore((s) => s.updateTicker);
 
-  // 1. Live spot market price poller (Binance live feed)
+  // 1. Direct Sub-Second Binance WebSocket Stream for Crypto
   useEffect(() => {
+    let ws: WebSocket | null = null;
     let isMounted = true;
 
-    const fetchLivePrices = async () => {
-      try {
-        const binanceRes = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]');
-        if (binanceRes.ok) {
-          const data = await binanceRes.json();
-          if (Array.isArray(data)) {
-            data.forEach((t: any) => {
-              const symMap: Record<string, string> = {
-                'BTCUSDT': 'BTC/USD',
-                'ETHUSDT': 'ETH/USD',
-                'SOLUSDT': 'SOL/USD',
-                'BNBUSDT': 'BNB/USD',
-                'XRPUSDT': 'XRP/USD'
-              };
-              const mapped = symMap[t.symbol];
-              if (mapped && isMounted) {
-                updateTicker(mapped, {
-                  price: parseFloat(t.lastPrice),
-                  changePct24h: parseFloat(t.priceChangePercent),
-                  high24h: parseFloat(t.highPrice),
-                  low24h: parseFloat(t.lowPrice),
-                  volume24h: parseFloat(t.quoteVolume),
-                  type: 'crypto'
-                });
-              }
+    try {
+      ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@ticker/ethusdt@ticker/solusdt@ticker/bnbusdt@ticker/xrpusdt@ticker');
+      ws.onmessage = (event) => {
+        if (!isMounted) return;
+        try {
+          const data = JSON.parse(event.data);
+          const symMap: Record<string, string> = {
+            'BTCUSDT': 'BTC/USD',
+            'ETHUSDT': 'ETH/USD',
+            'SOLUSDT': 'SOL/USD',
+            'BNBUSDT': 'BNB/USD',
+            'XRPUSDT': 'XRP/USD'
+          };
+          const mapped = symMap[data.s];
+          if (mapped && data.c) {
+            updateTicker(mapped, {
+              price: parseFloat(data.c),
+              changePct24h: parseFloat(data.P || '0'),
+              high24h: parseFloat(data.h || data.c),
+              low24h: parseFloat(data.l || data.c),
+              type: 'crypto'
             });
           }
-        }
-        // 2. Fetch Index, Commodity, Stock & Forex live prices from Gateway
+        } catch (e) {}
+      };
+    } catch (err) {}
+
+    // 2. High-speed Gateway poller for Index, Commodity & Forex (every 1.5 seconds)
+    const fetchLivePrices = async () => {
+      try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
         const gatewayRes = await fetch(`${apiUrl}/api/v2/markets`);
         if (gatewayRes.ok) {
@@ -74,15 +76,15 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             });
           }
         }
-      } catch (err) {
-        // Silently catch network errors
-      }
+      } catch (err) {}
     };
 
     fetchLivePrices();
-    const interval = setInterval(fetchLivePrices, 4000);
+    const interval = setInterval(fetchLivePrices, 1500);
+
     return () => {
       isMounted = false;
+      if (ws) ws.close();
       clearInterval(interval);
     };
   }, [updateTicker]);
