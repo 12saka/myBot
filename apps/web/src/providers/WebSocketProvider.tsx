@@ -19,44 +19,88 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
   const updateTicker = useMarketStore((s) => s.updateTicker);
 
+  // 1. Live spot market price poller (Binance live feed)
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchLivePrices = async () => {
+      try {
+        const binanceRes = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]');
+        if (binanceRes.ok) {
+          const data = await binanceRes.json();
+          if (Array.isArray(data)) {
+            data.forEach((t: any) => {
+              const symMap: Record<string, string> = {
+                'BTCUSDT': 'BTC/USD',
+                'ETHUSDT': 'ETH/USD',
+                'SOLUSDT': 'SOL/USD',
+                'BNBUSDT': 'BNB/USD',
+                'XRPUSDT': 'XRP/USD'
+              };
+              const mapped = symMap[t.symbol];
+              if (mapped && isMounted) {
+                updateTicker(mapped, {
+                  price: parseFloat(t.lastPrice),
+                  changePct24h: parseFloat(t.priceChangePercent),
+                  high24h: parseFloat(t.highPrice),
+                  low24h: parseFloat(t.lowPrice),
+                  volume24h: parseFloat(t.quoteVolume),
+                  type: 'crypto'
+                });
+              }
+            });
+          }
+        }
+      } catch (err) {
+        // Silently catch network errors
+      }
+    };
+
+    fetchLivePrices();
+    const interval = setInterval(fetchLivePrices, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [updateTicker]);
+
+  // 2. WebSocket gateway connection
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const token = localStorage.getItem('trademind_token');
-    if (!token) return;
-
-    // Connect to the API gateway WebSocket server
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    
     const socket = io(apiUrl, {
-      query: { token },
+      query: { token: token || '' },
       transports: ['websocket'],
     });
 
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('[WebSocket] Connected to API gateway.');
-
-      // Subscribe to live market feeds for all assets
       SYMBOLS_TO_SUBSCRIBE.forEach((symbol) => {
         socket.emit('subscribe_market', { symbol });
       });
     });
 
     socket.on('market_tick', (data: { symbol: string; bidPrice: number; askPrice: number }) => {
-      // Map token ticker naming back to frontend keys (BTC -> BTC/USD)
       const symbol = data.symbol;
       const storeSymbol = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(symbol)
         ? `${symbol}/USD`
         : symbol;
 
-      // Update in our Zustand state store
       updateTicker(storeSymbol, {
         price: data.bidPrice,
         high24h: Math.max(data.bidPrice, data.bidPrice * 1.01),
         low24h: Math.min(data.bidPrice, data.bidPrice * 0.99),
       });
     });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [updateTicker]);
 
     socket.on('notification', (data: { title: string; message: string }) => {
       toast(
