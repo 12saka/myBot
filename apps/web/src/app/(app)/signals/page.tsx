@@ -80,18 +80,46 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       </div>
 
       {/* Price Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 border-y border-white/5 py-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 border-y border-white/5 py-3 overflow-hidden">
         {[
-          { label: 'Entry',      value: typeof signal.entry === 'number' && !isNaN(signal.entry) ? signal.entry.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-slate-200' },
-          { label: 'Stop Loss',  value: typeof signal.stopLoss === 'number' && !isNaN(signal.stopLoss) ? signal.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-red-400'   },
-          { label: 'Target 1',   value: typeof signal.tp1 === 'number' && !isNaN(signal.tp1) ? signal.tp1.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-emerald-400' },
-          { label: 'Target 2',   value: typeof signal.tp2 === 'number' && !isNaN(signal.tp2) ? signal.tp2.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 5 }) : '0.00', color: 'text-emerald-300' },
-        ].map(({ label, value, color }) => (
-          <div key={label} className="text-xs">
-            <span className="block text-[9px] uppercase tracking-wider text-slate-600 mb-0.5">{label}</span>
-            <span className={cn('font-bold', color)}>${value}</span>
-          </div>
-        ))}
+          { 
+            label: 'Entry', 
+            val: signal.entry, 
+            color: 'text-slate-200' 
+          },
+          { 
+            label: 'Stop Loss', 
+            val: signal.stopLoss, 
+            color: 'text-red-400'   
+          },
+          { 
+            label: 'Target 1', 
+            val: signal.tp1, 
+            color: 'text-emerald-400' 
+          },
+          { 
+            label: 'Target 2', 
+            val: signal.tp2, 
+            color: 'text-emerald-300' 
+          },
+        ].map(({ label, val, color }) => {
+          const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(signal.symbol);
+          const isJpy = signal.symbol.includes('JPY');
+          const maxDecimals = isForex ? (isJpy ? 3 : 4) : 2;
+          const formatted = typeof val === 'number' && !isNaN(val) 
+            ? val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: maxDecimals }) 
+            : '0.00';
+          const prefix = isForex ? '' : '$';
+          
+          return (
+            <div key={label} className="min-w-0">
+              <span className="block text-[9px] uppercase tracking-wider text-slate-500 mb-0.5 truncate">{label}</span>
+              <span className={cn('font-mono font-bold text-[11px] sm:text-xs truncate block', color)}>
+                {prefix}{formatted}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {/* Metrics row */}

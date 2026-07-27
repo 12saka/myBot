@@ -482,12 +482,12 @@ export class SignalsController implements OnModuleInit {
 
   private getTwelveDataSymbol(symbol: string): string {
     const map: Record<string, string> = {
-      'US30': 'DIA',
-      'US100': 'QQQ',
-      'SPX500': 'SPY',
-      'DAX40': 'EWG',
-      'GOLD': 'GLD',
-      'OIL': 'USO',
+      'US30': 'US30',
+      'US100': 'US100',
+      'SPX500': 'SPX500',
+      'DAX40': 'GER30',
+      'GOLD': 'XAU/USD',
+      'OIL': 'WTI/USD',
       'EUR/USD': 'EUR/USD',
       'GBP/USD': 'GBP/USD',
       'USD/JPY': 'USD/JPY',
