@@ -540,12 +540,7 @@ export class SignalsController implements OnModuleInit {
     if (candles.length >= 50) {
       const lastCandle = candles[candles.length - 1];
       const diffMs = now.getTime() - lastCandle.timestamp.getTime();
-      let maxAgeMs = 3 * 3600 * 1000; // default 3 hours for 1h
-      if (interval === '1m') maxAgeMs = 5 * 60 * 1000;
-      else if (interval === '3m') maxAgeMs = 15 * 60 * 1000;
-      else if (interval === '5m') maxAgeMs = 25 * 60 * 1000;
-      else if (interval === '15m') maxAgeMs = 75 * 60 * 1000;
-      else if (interval === '30m') maxAgeMs = 150 * 60 * 1000;
+      let maxAgeMs = 2 * 60 * 1000; // Max 2 minutes cache age to ensure 100% real-time live price updates
       
       if (diffMs < maxAgeMs) {
         isFresh = true;
