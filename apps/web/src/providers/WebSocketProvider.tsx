@@ -51,13 +51,36 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             });
           }
         }
+        // 2. Fetch Index, Commodity, Stock & Forex live prices from Gateway
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        const gatewayRes = await fetch(`${apiUrl}/api/v2/markets`);
+        if (gatewayRes.ok) {
+          const markets = await gatewayRes.json();
+          if (Array.isArray(markets)) {
+            markets.forEach((m: any) => {
+              let storeSymbol = m.symbol || m.name;
+              if (storeSymbol === 'GOLD') storeSymbol = 'XAU/USD';
+              if (storeSymbol === 'BTC') storeSymbol = 'BTC/USD';
+              if (storeSymbol === 'ETH') storeSymbol = 'ETH/USD';
+              if (isMounted && m.price) {
+                updateTicker(storeSymbol, {
+                  price: parseFloat(m.price),
+                  changePct24h: parseFloat(m.changePct24h || 0),
+                  high24h: parseFloat(m.high24h || m.price * 1.01),
+                  low24h: parseFloat(m.low24h || m.price * 0.99),
+                  type: m.type || 'index'
+                });
+              }
+            });
+          }
+        }
       } catch (err) {
         // Silently catch network errors
       }
     };
 
     fetchLivePrices();
-    const interval = setInterval(fetchLivePrices, 5000);
+    const interval = setInterval(fetchLivePrices, 4000);
     return () => {
       isMounted = false;
       clearInterval(interval);
@@ -96,11 +119,6 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         low24h: Math.min(data.bidPrice, data.bidPrice * 0.99),
       });
     });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, [updateTicker]);
 
     socket.on('notification', (data: { title: string; message: string }) => {
       toast(
