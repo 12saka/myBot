@@ -20,6 +20,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       try {
         await this.$connect();
         console.log('✅ [PRISMA] Database connected successfully.');
+        try {
+          await this.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "userId" TEXT;`);
+          await this.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "strategyKey" TEXT;`);
+          console.log('✅ [PRISMA] Auto-migrated "Signal" table columns (userId, strategyKey).');
+        } catch (e: any) {
+          console.warn(`⚠️ [PRISMA] Column migration notice: ${e.message}`);
+        }
         break;
       } catch (err) {
         retries--;

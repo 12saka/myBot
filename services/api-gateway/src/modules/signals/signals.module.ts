@@ -12,7 +12,13 @@ export class SignalsController implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    console.log('[SignalsController] Signal module initialized. Pure live market quantitative analysis active.');
+    console.log('[SignalsController] Ensuring database schema columns are migrated on remote database...');
+    try {
+      await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "strategyKey" TEXT;`);
+      await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "userId" TEXT;`);
+    } catch (e: any) {
+      console.warn(`[SignalsController] Raw SQL schema migration notice: ${e.message}`);
+    }
   }
 
   private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500): Promise<Response> {
