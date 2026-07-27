@@ -93,6 +93,8 @@ export class SignalsController implements OnModuleInit {
     } catch (err: any) {
       console.error(`[SIGNALS GATEWAY] getSignals error caught gracefully: ${err.message}`);
       try {
+        await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "userId" TEXT;`);
+        await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "strategyKey" TEXT;`);
         return await this.prisma.signal.findMany({ take: 10, orderBy: { createdAt: 'desc' } });
       } catch (dbErr) {
         return [];
