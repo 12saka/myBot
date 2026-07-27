@@ -337,9 +337,13 @@ export class SignalsController implements OnModuleInit {
         },
       });
 
+      const strategyKey = this.getStrategyKey(symbol);
+
       // 2. Save the returned prediction and Gemini explanations into the database
       const signal = await this.prisma.signal.create({
         data: {
+          userId: userId || null,
+          strategyKey,
           symbol: res.data.symbol,
           direction: finalDirection,
           entryPrice: res.data.entry,
@@ -368,6 +372,7 @@ export class SignalsController implements OnModuleInit {
             macro_context: res.data.macro_context || '',
             correlation_analysis: res.data.correlation_analysis || '',
             timeframe: interval,
+            strategy_key: strategyKey,
             status: 'ACTIVE'
           },
           expiresAt: new Date(Date.now() + (interval === '1d' ? 3 * 24 : 1 * 4) * 60 * 60 * 1000), 
@@ -516,6 +521,17 @@ export class SignalsController implements OnModuleInit {
       'XRP': 'XRP-USD'
     };
     return mappings[symbol] || symbol;
+  }
+
+  private getStrategyKey(symbol: string): string {
+    const s = symbol.toUpperCase();
+    if (s.includes('BTC')) return 'crypto-btc-onchain';
+    if (s.includes('JPY')) return 'forex-jpy-yields';
+    if (s.includes('EUR')) return 'forex-eur-dxy';
+    if (s.includes('XAU') || s.includes('GOLD')) return 'commodity-gold-yields';
+    if (s.includes('NAS') || s.includes('US100')) return 'index-nas100-tech';
+    if (s.includes('US30') || s.includes('DOW')) return 'index-us30-dow';
+    return 'institutional-core';
   }
 
   async getOrFetchCandles(symbol: string, interval: string): Promise<any[]> {

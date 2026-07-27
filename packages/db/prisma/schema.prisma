@@ -39,6 +39,7 @@ model User {
   supportTickets     SupportTicket[]
   transactions       Transaction[]
   wallet             Wallet?
+  signals            Signal[]
 
   @@index([createdAt])
 }
@@ -208,6 +209,8 @@ model Trade {
 
 model Signal {
   id               String         @id @default(uuid())
+  userId           String?
+  strategyKey      String         @default("institutional-core")
   symbol           String
   direction        OrderDirection
   entryPrice       Float
@@ -221,7 +224,10 @@ model Signal {
   createdAt        DateTime       @default(now())
   expiresAt        DateTime
 
+  user             User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([symbol, expiresAt])
+  @@index([userId, expiresAt])
 }
 
 model TradingStrategy {
