@@ -230,7 +230,7 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+    const aiServiceUrl = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
     const apiKey = process.env.AI_SERVICE_API_KEY || 'internal-secret-key';
     const cachedCandles = await this.getOrFetchCandles(symbol, interval);
 
