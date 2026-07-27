@@ -60,7 +60,7 @@ const syncWatchlistToDb = async (list: string[]) => {
 };
 
 export const useMarketStore = create<MarketState>()((set) => ({
-  tickers: MOCK_TICKERS,
+  tickers: [],
   selectedSymbol: null,
   watchlist: getInitialWatchlist(),
   setTickers: (tickers) => set({ tickers }),
