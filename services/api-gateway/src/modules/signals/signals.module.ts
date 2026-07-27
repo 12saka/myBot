@@ -12,18 +12,7 @@ export class SignalsController implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    console.log('[SignalsController] Seeding initial active 7-market signals on startup...');
-    try {
-      await this.prisma.signal.deleteMany({});
-      const defaultSymbols = ['BTC', 'ETH', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
-      for (const sym of defaultSymbols) {
-        try {
-          await this.generateSignalRequest(sym, '1h', true);
-        } catch (e) {}
-      }
-    } catch (e: any) {
-      console.warn(`[SignalsController] Signal initialization skipped: ${e.message}`);
-    }
+    console.log('[SignalsController] Signal module initialized. Pure live market quantitative analysis active.');
   }
 
   private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500): Promise<Response> {
@@ -736,33 +725,6 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    if (candles.length === 0) {
-      console.warn(`[SignalsController] Live candles unavailable for ${cleanSymbol}. Generating 50 real-market historical candles...`);
-      const basePrices: Record<string, number> = {
-        'BTC': 64200, 'ETH': 3450, 'SOL': 145, 'US30': 39200, 'US100': 19100, 'GOLD': 2350, 'EUR/USD': 1.0850, 'GBP/USD': 1.2750, 'USD/JPY': 158.20
-      };
-      const basePrice = basePrices[cleanSymbol] || 100;
-      const seeded = [];
-      const nowMs = Date.now();
-      for (let i = 50; i >= 0; i--) {
-        const time = new Date(nowMs - i * 3600 * 1000);
-        const p = basePrice * (1 + (Math.sin(i / 5) * 0.005));
-        seeded.push({
-          id: `seed-${cleanSymbol}-${i}`,
-          symbol: cleanSymbol,
-          interval,
-          timestamp: time,
-          open: p * 0.999,
-          high: p * 1.002,
-          low: p * 0.998,
-          close: p,
-          volume: 1500,
-          createdAt: time
-        });
-      }
-      return seeded;
-    }
-    
     return candles;
   }
 }
