@@ -7,19 +7,22 @@ import { Interval } from '@nestjs/schedule';
 import axios from 'axios';
 
 @ApiTags('signals')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
 @Controller('signals')
 export class SignalsController implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    console.log('[SignalsController] Purging old cached signals to wipe any hallucinated records...');
+    console.log('[SignalsController] Seeding initial active 7-market signals on startup...');
     try {
-      const res = await this.prisma.signal.deleteMany({});
-      console.log(`[SignalsController] Purged ${res.count} old signal records on startup.`);
+      await this.prisma.signal.deleteMany({});
+      const defaultSymbols = ['BTC', 'ETH', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
+      for (const sym of defaultSymbols) {
+        try {
+          await this.generateSignalRequest(sym, '1h', true);
+        } catch (e) {}
+      }
     } catch (e: any) {
-      console.warn(`[SignalsController] Signal cleanup on init skipped: ${e.message}`);
+      console.warn(`[SignalsController] Signal initialization skipped: ${e.message}`);
     }
   }
 
@@ -117,6 +120,8 @@ export class SignalsController implements OnModuleInit {
   }
 
   @Post()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a manually generated trading signal' })
   async createSignal(@Body() dto: {
     symbol: string;
