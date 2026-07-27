@@ -93,6 +93,9 @@ export function mapSignal(item: any): AISignal {
 
   const macroContext = reasoning.macro_context || reasoning.macroContext || 'Macroeconomic backdrop aligned with directional volatility and liquidity.';
   const marketStructure = reasoning.market_structure_analysis || reasoning.marketStructureAnalysis || 'Price action maintaining institutional support and resistance boundaries.';
+  const indicatorVerdicts = reasoning.indicator_verdicts || reasoning.indicatorVerdicts || {};
+  const tradingviewIdea = reasoning.tradingview_idea || reasoning.tradingviewIdea || '';
+  const categoryScores = reasoning.category_scores || reasoning.categoryScores || {};
 
   const entry = Number(item.entryPrice ?? item.entry ?? 100);
   const stopLoss = Number(item.stopLoss ?? item.stop_loss ?? entry * 0.985);
@@ -122,6 +125,9 @@ export function mapSignal(item: any): AISignal {
     expiresAt: item.expiresAt || new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
     aiReasoning: item.aiReasoning,
     reasoning: explanation,
+    indicatorVerdicts,
+    tradingviewIdea,
+    categoryScores
   };
 }
 

@@ -324,9 +324,7 @@ export class SignalsController implements OnModuleInit {
         }
       }
 
-      const finalDirection = res.data.direction === 'WAIT'
-        ? (res.data.take_profit_1 >= res.data.entry ? 'BUY' : 'SELL')
-        : res.data.direction;
+      const finalDirection = res.data.direction;
 
       // 1. Strictly expire any existing active signals for this asset to prevent duplicates
       await this.prisma.signal.updateMany({

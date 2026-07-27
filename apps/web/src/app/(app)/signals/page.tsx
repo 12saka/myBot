@@ -178,35 +178,55 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="bg-white/2 border border-white/6 rounded-xl p-4 space-y-3 text-xs overflow-hidden"
+            className="bg-white/2 border border-white/6 rounded-xl p-4 space-y-3.5 text-xs overflow-hidden"
           >
-            <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider border-b border-white/5 pb-2">
+            {/* TradingView Idea Banner */}
+            {signal.tradingviewIdea && (
+              <div className="bg-purple-500/10 border border-purple-500/20 p-3 rounded-lg text-purple-200 text-xs font-medium leading-relaxed">
+                <span className="font-bold text-purple-400 block mb-1 uppercase tracking-wider text-[10px]">🎯 PRO TradingView Setup Rationale</span>
+                {signal.tradingviewIdea}
+              </div>
+            )}
+
+            <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider border-b border-white/5 pb-1.5">
               Multi-Factor AI Reasoning & Explanation
             </div>
+
             {[
-              { label: '📈 Technical Analysis', items: signal.technicals, color: 'text-emerald-400' },
-              { label: '🏛️ Fundamental Data',  items: signal.fundamentals, color: 'text-blue-400' },
-              { label: '💬 Market Sentiment',  items: signal.sentiment,    color: 'text-purple-400' },
+              { label: '📈 Technical Analysis & Confluence', items: signal.technicals, color: 'text-emerald-400' },
+              { label: '🏛️ Fundamental & News Backdrop',  items: signal.fundamentals, color: 'text-blue-400' },
+              { label: '💬 Market Structure & SMC Liquidity',  items: signal.sentiment,    color: 'text-purple-400' },
             ].map(({ label, items, color }) => (
               <div key={label}>
-                <div className={cn('text-[9px] font-bold uppercase tracking-wider mb-1.5', color)}>{label}</div>
-                <ul className="list-disc pl-4 space-y-0.5 text-slate-400">
+                <div className={cn('text-[9px] font-bold uppercase tracking-wider mb-1', color)}>{label}</div>
+                <ul className="list-disc pl-4 space-y-1 text-slate-300 text-[11px] leading-relaxed">
                   {items.map((item, i) => <li key={i}>{item}</li>)}
                 </ul>
               </div>
             ))}
 
+            {/* Indicator Verdicts Breakdown */}
+            {signal.indicatorVerdicts && Object.keys(signal.indicatorVerdicts).length > 0 && (
+              <div className="border-t border-white/5 pt-2.5">
+                <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider mb-2">
+                  📊 Institutional Indicator Verdicts
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+                  {Object.entries(signal.indicatorVerdicts).map(([key, verdict]) => (
+                    <div key={key} className="bg-slate-900/60 p-2 rounded border border-white/5 text-slate-300">
+                      <span className="font-bold uppercase text-slate-400 block mb-0.5">{key}</span>
+                      {String(verdict)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider border-t border-white/5 pt-2 mt-2">
               🧠 AI Strategy & Model Architecture
             </div>
             <div className="text-[10px] text-slate-400 leading-normal bg-white/2 p-2.5 rounded-lg border border-white/5">
-              {signal.strategy.toLowerCase().includes('lstm') ? (
-                <span><strong>LSTM (Long Short-Term Memory) Network</strong>: Analyzes multi-temporal price sequence vectors over 60 candles to establish probability paths and project volatility thresholds.</span>
-              ) : signal.strategy.toLowerCase().includes('forest') ? (
-                <span><strong>Random Forest Ensemble</strong>: Evaluates support bounds, volume clusters, and exponential crossovers against historical samples to flag structural trend reversals.</span>
-              ) : (
-                <span><strong>Ensemble Transformer Model</strong>: Maps social sentiment, orderbook order-imbalance ratios, and MACD divergence vectors to identify high-probability momentum entries.</span>
-              )}
+              <span><strong>PRO 7-Step 5-Factor Institutional Engine</strong>: Integrates 200 EMA Macro Trend (30%), Market Structure BOS/CHoCH (25%), Order Block / FVG SMC Liquidity (20%), Live News Sentiment (15%), and Volume RVOL (10%) to calculate exact retest entries and 1:2.0 / 1:3.2 R:R targets.</span>
             </div>
           </motion.div>
         )}

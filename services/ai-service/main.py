@@ -456,18 +456,20 @@ async def get_prediction(
         if trend_score_bull > trend_score_bear: vol_score_bull = 10.0
         else: vol_score_bear = 10.0
 
-    # Total Score Calculations
+    # Total Score Calculations (100% Institutional Scale)
     total_bull_score = trend_score_bull + struct_score_bull + smc_score_bull + macro_score_bull + vol_score_bull
     total_bear_score = trend_score_bear + struct_score_bear + smc_score_bear + macro_score_bear + vol_score_bear
 
-    if total_bull_score >= total_bear_score:
-        direction = "BUY"
-        win_prob_raw = total_bull_score
+    max_score = max(total_bull_score, total_bear_score)
+    if max_score < 70.0:
+        rule_direction = "WAIT"
+        confidence = float(round(max_score / 100.0, 2))
+    elif total_bull_score >= total_bear_score:
+        rule_direction = "BUY"
+        confidence = float(min(0.95, max(0.70, round(total_bull_score / 100.0, 2))))
     else:
-        direction = "SELL"
-        win_prob_raw = total_bear_score
-
-    confidence = float(min(0.95, max(0.70, round(win_prob_raw / 100.0, 2))))
+        rule_direction = "SELL"
+        confidence = float(min(0.95, max(0.70, round(total_bear_score / 100.0, 2))))
 
     entry = current_price
     stop_loss = entry * (0.99 if direction == "BUY" else 1.01)

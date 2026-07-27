@@ -29,6 +29,9 @@ export interface AISignal {
   expiresAt: string;
   aiReasoning?: any;
   reasoning?: string;
+  indicatorVerdicts?: Record<string, string>;
+  tradingviewIdea?: string;
+  categoryScores?: Record<string, number>;
 }
 
 interface AIState {
