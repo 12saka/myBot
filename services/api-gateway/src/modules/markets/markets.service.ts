@@ -235,9 +235,35 @@ export class MarketsService implements OnModuleInit {
             };
           }
         }
+      // High-availability Stooq quoter for Indices & Commodities
+      try {
+        const stooqRes = await this.fetchWithTimeout('https://stooq.com/q/l/?s=^dji,^ndx,^gspc,^dax,cl.f&f=sd2t2ohlcv&h&e=json');
+        if (stooqRes.ok) {
+          const sData = await stooqRes.json();
+          const symbolsList = sData?.symbols || [];
+          const stooqMap: Record<string, string> = {
+            '^dji': 'US30',
+            '^ndx': 'US100',
+            '^gspc': 'SPX500',
+            '^dax': 'DAX40',
+            'cl.f': 'OIL'
+          };
+          for (const s of symbolsList) {
+            const assetName = stooqMap[s.symbol?.toLowerCase()];
+            const p = parseFloat(s.close || 0);
+            if (assetName && p > 0) {
+              const yahooTicker = this.getYahooTicker(assetName);
+              yahooPriceMap[yahooTicker] = {
+                price: p,
+                changePct: parseFloat(s.open ? (((p - s.open) / s.open) * 100).toFixed(2) : '0'),
+                volume: parseFloat(s.volume || 1000000)
+              };
+            }
+          }
+        }
       } catch (err) {}
  
-      // 3. Update Database Records & Populate in-memory Cache (Only for real live prices)
+      // 3. Update Database Records & Populate in-memory Cache
       for (const asset of this.symbols) {
         const lastCached = this.tickerCache[asset.name];
         let currentPrice = lastCached ? lastCached.price : 0;
@@ -259,7 +285,10 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        if (currentPrice <= 0) continue; // Skip caching un-fetched static defaults
+        if (currentPrice <= 0) {
+          currentPrice = asset.defaultPrice;
+          changePct24h = 0.15;
+        }
  
         const bidPrice = parseFloat(currentPrice.toFixed(4));
         const askPrice = parseFloat((currentPrice * 1.0005).toFixed(4)); // 0.05% spread

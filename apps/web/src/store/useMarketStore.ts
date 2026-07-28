@@ -65,9 +65,28 @@ export const useMarketStore = create<MarketState>()((set) => ({
   watchlist: getInitialWatchlist(),
   setTickers: (tickers) => set({ tickers }),
   updateTicker: (symbol, data) =>
-    set((s) => ({
-      tickers: s.tickers.map((t) => (t.symbol === symbol ? { ...t, ...data } : t)),
-    })),
+    set((s) => {
+      const idx = s.tickers.findIndex((t) => t.symbol === symbol);
+      if (idx >= 0) {
+        const next = [...s.tickers];
+        next[idx] = { ...next[idx], ...data };
+        return { tickers: next };
+      } else {
+        const newTicker: Ticker = {
+          symbol,
+          name: data.name || symbol,
+          price: data.price || 0,
+          change24h: data.change24h || 0,
+          changePct24h: data.changePct24h || 0,
+          volume24h: data.volume24h || 0,
+          marketCap: data.marketCap || 0,
+          high24h: data.high24h || (data.price ? data.price * 1.005 : 0),
+          low24h: data.low24h || (data.price ? data.price * 0.995 : 0),
+          type: data.type || 'crypto'
+        };
+        return { tickers: [...s.tickers, newTicker] };
+      }
+    }),
   setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
   setWatchlist: (watchlist) => set({ watchlist }),
   addToWatchlist: (symbol) =>
