@@ -96,21 +96,21 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           if (yahooRes.ok) {
             const yData = await yahooRes.json();
             const results = yData?.quoteResponse?.result || [];
-            const symbolMap: Record<string, { symbol: string; type: string }> = {
-              '^DJI': { symbol: 'US30', type: 'indices' },
-              '^NDX': { symbol: 'US100', type: 'indices' },
-              '^GSPC': { symbol: 'SPX500', type: 'indices' },
-              '^GDAXI': { symbol: 'DAX40', type: 'indices' },
-              'GC=F': { symbol: 'XAU/USD', type: 'commodities' },
-              'CL=F': { symbol: 'OIL', type: 'commodities' },
+            const symbolMap: Record<string, { symbol: string; type: 'crypto' | 'forex' | 'stock' | 'index' | 'commodity' }> = {
+              '^DJI': { symbol: 'US30', type: 'index' },
+              '^NDX': { symbol: 'US100', type: 'index' },
+              '^GSPC': { symbol: 'SPX500', type: 'index' },
+              '^GDAXI': { symbol: 'DAX40', type: 'index' },
+              'GC=F': { symbol: 'XAU/USD', type: 'commodity' },
+              'CL=F': { symbol: 'OIL', type: 'commodity' },
               'EURUSD=X': { symbol: 'EUR/USD', type: 'forex' },
               'GBPUSD=X': { symbol: 'GBP/USD', type: 'forex' },
               'USDJPY=X': { symbol: 'USD/JPY', type: 'forex' },
-              'AAPL': { symbol: 'AAPL', type: 'stocks' },
-              'TSLA': { symbol: 'TSLA', type: 'stocks' },
-              'NVDA': { symbol: 'NVDA', type: 'stocks' },
-              'MSFT': { symbol: 'MSFT', type: 'stocks' },
-              'AMZN': { symbol: 'AMZN', type: 'stocks' },
+              'AAPL': { symbol: 'AAPL', type: 'stock' },
+              'TSLA': { symbol: 'TSLA', type: 'stock' },
+              'NVDA': { symbol: 'NVDA', type: 'stock' },
+              'MSFT': { symbol: 'MSFT', type: 'stock' },
+              'AMZN': { symbol: 'AMZN', type: 'stock' },
             };
 
             results.forEach((q: any) => {
@@ -138,19 +138,19 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           if (stooqRes.ok) {
             const sData = await stooqRes.json();
             const symbolsList = sData?.symbols || [];
-            const stooqMap: Record<string, { symbol: string; type: string }> = {
-              '^dji': { symbol: 'US30', type: 'indices' },
-              '^ndx': { symbol: 'US100', type: 'indices' },
-              '^gspc': { symbol: 'SPX500', type: 'indices' },
-              '^dax': { symbol: 'DAX40', type: 'indices' },
-              'gc.f': { symbol: 'XAU/USD', type: 'commodities' },
-              'cl.f': { symbol: 'OIL', type: 'commodities' },
+            const stooqMap: Record<string, { symbol: string; type: 'crypto' | 'forex' | 'stock' | 'index' | 'commodity' }> = {
+              '^dji': { symbol: 'US30', type: 'index' },
+              '^ndx': { symbol: 'US100', type: 'index' },
+              '^gspc': { symbol: 'SPX500', type: 'index' },
+              '^dax': { symbol: 'DAX40', type: 'index' },
+              'gc.f': { symbol: 'XAU/USD', type: 'commodity' },
+              'cl.f': { symbol: 'OIL', type: 'commodity' },
               'eurusd': { symbol: 'EUR/USD', type: 'forex' },
               'gbpusd': { symbol: 'GBP/USD', type: 'forex' },
               'usdjpy': { symbol: 'USD/JPY', type: 'forex' },
-              'aapl.us': { symbol: 'AAPL', type: 'stocks' },
-              'tsla.us': { symbol: 'TSLA', type: 'stocks' },
-              'nvda.us': { symbol: 'NVDA', type: 'stocks' },
+              'aapl.us': { symbol: 'AAPL', type: 'stock' },
+              'tsla.us': { symbol: 'TSLA', type: 'stock' },
+              'nvda.us': { symbol: 'NVDA', type: 'stock' },
             };
 
             symbolsList.forEach((s: any) => {
@@ -173,26 +173,33 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           }
         } catch (e) {}
 
-        if (gatewayRes.status === 'fulfilled' && gatewayRes.value.ok) {
-          const markets = await gatewayRes.value.json();
-          if (Array.isArray(markets)) {
-            markets.forEach((m: any) => {
-              let storeSymbol = m.symbol || m.name;
-              if (storeSymbol === 'GOLD') storeSymbol = 'XAU/USD';
-              if (storeSymbol === 'BTC') storeSymbol = 'BTC/USD';
-              if (storeSymbol === 'ETH') storeSymbol = 'ETH/USD';
-              if (isMounted && m.price) {
-                updateTicker(storeSymbol, {
-                  price: parseFloat(m.price),
-                  changePct24h: parseFloat(m.changePct24h || 0),
-                  high24h: parseFloat(m.high24h || m.price * 1.01),
-                  low24h: parseFloat(m.low24h || m.price * 0.99),
-                  type: m.type || 'index'
-                });
-              }
-            });
+        // Direct Browser Fetch for Forex (open.er-api.com) & Gold (Binance PAXG)
+        try {
+          const fxRes = await fetch('https://open.er-api.com/v6/latest/USD');
+          if (fxRes.ok && isMounted) {
+            const data = await fxRes.json();
+            const rates = data?.rates || {};
+            if (rates.EUR) updateTicker('EUR/USD', { price: parseFloat((1 / rates.EUR).toFixed(4)), changePct24h: 0.05, type: 'forex' });
+            if (rates.GBP) updateTicker('GBP/USD', { price: parseFloat((1 / rates.GBP).toFixed(4)), changePct24h: 0.12, type: 'forex' });
+            if (rates.JPY) updateTicker('USD/JPY', { price: parseFloat(rates.JPY.toFixed(2)), changePct24h: -0.08, type: 'forex' });
           }
-        }
+        } catch (e) {}
+
+        try {
+          const paxgRes = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT');
+          if (paxgRes.ok && isMounted) {
+            const paxg = await paxgRes.json();
+            if (paxg && paxg.lastPrice) {
+              updateTicker('XAU/USD', {
+                price: parseFloat(paxg.lastPrice),
+                changePct24h: parseFloat(paxg.priceChangePercent || '0'),
+                high24h: parseFloat(paxg.highPrice || paxg.lastPrice),
+                low24h: parseFloat(paxg.lowPrice || paxg.lastPrice),
+                type: 'commodities'
+              });
+            }
+          }
+        } catch (e) {}
       } catch (err) {}
     };
 
