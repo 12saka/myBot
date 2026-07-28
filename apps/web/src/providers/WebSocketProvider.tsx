@@ -199,7 +199,26 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
               });
             }
           }
-        } catch (e) {}
+        if (gatewayRes.status === 'fulfilled' && gatewayRes.value.ok) {
+          const markets = await gatewayRes.value.json();
+          if (Array.isArray(markets)) {
+            markets.forEach((m: any) => {
+              let storeSymbol = m.symbol || m.name;
+              if (storeSymbol === 'GOLD') storeSymbol = 'XAU/USD';
+              if (storeSymbol === 'BTC') storeSymbol = 'BTC/USD';
+              if (storeSymbol === 'ETH') storeSymbol = 'ETH/USD';
+              if (isMounted && m.price && parseFloat(m.price) > 0) {
+                updateTicker(storeSymbol, {
+                  price: parseFloat(m.price),
+                  changePct24h: parseFloat(m.changePct24h || '0'),
+                  high24h: parseFloat(m.high24h || m.price * 1.005),
+                  low24h: parseFloat(m.low24h || m.price * 0.995),
+                  type: m.type === 'indices' ? 'index' : m.type === 'commodities' ? 'commodity' : m.type === 'stocks' ? 'stock' : (m.type || 'index')
+                });
+              }
+            });
+          }
+        }
       } catch (err) {}
     };
 

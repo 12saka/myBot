@@ -501,20 +501,22 @@ async def get_prediction(
     if structure.get("fvg_bullish"): pat_weight_bull = 5.0
     elif structure.get("fvg_bearish"): pat_weight_bear = 5.0
 
-    # Total Score Calculations (100% Institutional Scale)
-    total_bull_score = trend_weight_bull + macro_weight_bull + liq_weight_bull + vol_weight_bull + cor_weight_bull + pat_weight_bull
-    total_bear_score = trend_weight_bear + macro_weight_bear + liq_weight_bear + vol_weight_bear + cor_weight_bear + pat_weight_bear
+    # Dynamic Multi-Factor Confidence Calculation (78% to 96% Scale)
+    trend_align = 25.0 if indicators.get("trend") != "Neutral" else 15.0
+    rsi_val = indicators.get("rsi14") or 50.0
+    rsi_score = 25.0 if (rsi_val > 60 or rsi_val < 40) else 15.0
+    adx_val = indicators.get("adx") or 25.0
+    adx_score = min(20.0, max(10.0, float(adx_val * 0.7)))
+    vol_score = 15.0 if indicators.get("rvol", 1.0) > 1.1 else 10.0
+    smc_score = 15.0 if (structure.get("fvg_detected") or structure.get("order_block_detected") or structure.get("liquidity_sweep")) else 10.0
 
-    max_score = max(total_bull_score, total_bear_score)
-    if max_score < 75.0:
-        rule_direction = "WAIT"
-        confidence = float(round(max_score / 100.0, 2))
-    elif total_bull_score >= total_bear_score:
+    raw_conf = (trend_align + rsi_score + adx_score + vol_score + smc_score) / 100.0
+    confidence = float(round(min(0.96, max(0.78, raw_conf)), 2))
+
+    if total_bull_score >= total_bear_score:
         rule_direction = "BUY"
-        confidence = float(min(0.96, max(0.75, round(total_bull_score / 100.0, 2))))
     else:
         rule_direction = "SELL"
-        confidence = float(min(0.96, max(0.75, round(total_bear_score / 100.0, 2))))
 
     entry = current_price
     stop_loss = entry * (0.99 if direction == "BUY" else 1.01)
