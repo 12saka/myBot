@@ -696,13 +696,44 @@ export class SignalsController implements OnModuleInit {
     if (candles.length === 0) {
       try {
         let liveSpotPrice = 0;
-        const yahooTicker = this.getYahooTicker(cleanSymbol);
-        const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooTicker)}`, {}, 3000);
-        if (res.ok) {
-          const qData = await res.json();
-          const q = qData?.quoteResponse?.result?.[0];
-          if (q) {
-            liveSpotPrice = parseFloat(q.regularMarketPrice || q.postMarketPrice || q.preMarketPrice || 0);
+
+        // 1. Forex high-availability fetch (EUR/USD, GBP/USD, USD/JPY)
+        if (cleanSymbol.includes('/') || ['EURUSD', 'GBPUSD', 'USDJPY'].includes(cleanSymbol.replace('/', ''))) {
+          try {
+            const fxRes = await this.fetchWithTimeout('https://open.er-api.com/v6/latest/USD', {}, 3000);
+            if (fxRes.ok) {
+              const fxData = await fxRes.json();
+              const rates = fxData?.rates || {};
+              if (cleanSymbol.includes('EUR') && rates.EUR) liveSpotPrice = parseFloat((1 / rates.EUR).toFixed(4));
+              else if (cleanSymbol.includes('GBP') && rates.GBP) liveSpotPrice = parseFloat((1 / rates.GBP).toFixed(4));
+              else if (cleanSymbol.includes('JPY') && rates.JPY) liveSpotPrice = parseFloat(rates.JPY.toFixed(2));
+            }
+          } catch (fxErr) {}
+        }
+
+        // 2. Gold high-availability spot fetch (XAU/USD)
+        if (liveSpotPrice <= 0 && (cleanSymbol.includes('GOLD') || cleanSymbol.includes('XAU'))) {
+          try {
+            const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT', {}, 3000);
+            if (paxgRes.ok) {
+              const paxgData = await paxgRes.json();
+              if (paxgData && paxgData.lastPrice) {
+                liveSpotPrice = parseFloat(paxgData.lastPrice);
+              }
+            }
+          } catch (goldErr) {}
+        }
+
+        // 3. Yahoo / Stooq fallback for Indices & Commodities
+        if (liveSpotPrice <= 0) {
+          const yahooTicker = this.getYahooTicker(cleanSymbol);
+          const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooTicker)}`, {}, 3000);
+          if (res.ok) {
+            const qData = await res.json();
+            const q = qData?.quoteResponse?.result?.[0];
+            if (q) {
+              liveSpotPrice = parseFloat(q.regularMarketPrice || q.postMarketPrice || q.preMarketPrice || 0);
+            }
           }
         }
 
@@ -725,6 +756,7 @@ export class SignalsController implements OnModuleInit {
               createdAt: time
             });
           }
+          console.log(`[SignalsController] Real-time live spot candles synthesized for ${cleanSymbol} at price ${liveSpotPrice}.`);
           return seeded;
         }
       } catch (err: any) {
