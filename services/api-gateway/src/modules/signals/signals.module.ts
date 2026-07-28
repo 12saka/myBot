@@ -558,6 +558,8 @@ export class SignalsController implements OnModuleInit {
     if (isCrypto) {
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
+      try {
+        const binanceSym = `${cleanSymbol}USDT`;
         const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
         const headers: Record<string, string> = {};
         if (binanceApiKey) {
