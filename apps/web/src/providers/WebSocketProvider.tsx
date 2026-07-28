@@ -197,8 +197,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
                 low24h: parseFloat(paxg.lowPrice || paxg.lastPrice),
                 type: 'commodity'
               });
-            }
-          }
+        } catch (e) {}
+
         if (gatewayRes.status === 'fulfilled' && gatewayRes.value.ok) {
           const markets = await gatewayRes.value.json();
           if (Array.isArray(markets)) {
