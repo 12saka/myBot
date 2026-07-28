@@ -128,7 +128,15 @@ export class MarketsService implements OnModuleInit {
       
       let cryptoPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       try {
-        const response = await this.fetchWithTimeout(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(cryptoSymbolsQuery)}`);
+        const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
+        const headers: Record<string, string> = {};
+        if (binanceApiKey) {
+          headers['X-MBX-APIKEY'] = binanceApiKey;
+        }
+        const response = await this.fetchWithTimeout(
+          `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(cryptoSymbolsQuery)}`,
+          { headers }
+        );
         if (response.ok) {
           const stats = await response.json();
           for (const item of stats) {

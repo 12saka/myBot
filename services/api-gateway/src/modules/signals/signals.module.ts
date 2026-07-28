@@ -558,9 +558,15 @@ export class SignalsController implements OnModuleInit {
     if (isCrypto) {
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
-      try {
-        const binanceSym = `${cleanSymbol}USDT`;
-        const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`);
+        const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
+        const headers: Record<string, string> = {};
+        if (binanceApiKey) {
+          headers['X-MBX-APIKEY'] = binanceApiKey;
+        }
+        const res = await this.fetchWithTimeout(
+          `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`,
+          { headers }
+        );
         if (res.ok) {
           const klines = await res.json();
           await this.prisma.historicalCandle.deleteMany({
