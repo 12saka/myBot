@@ -884,10 +884,14 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
     swing_low = indicators.get("swing_low") or (entry * 0.985)
     swing_high = indicators.get("swing_high") or (entry * 1.015)
 
+    is_scalping = timeframe in ['1m', '3m', '5m', '15m', '30m']
+    min_sl_pct = 0.0015 if is_scalping else 0.005
+    max_sl_pct = 0.012 if is_scalping else 0.030
+
     if rule_direction == "BUY":
-        struct_sl = swing_low - (0.5 * atr_val)
-        sl_dist = max(entry - struct_sl, 0.005 * entry)
-        sl_dist = min(sl_dist, 0.03 * entry)
+        struct_sl = swing_low - (0.3 * atr_val if is_scalping else 0.5 * atr_val)
+        sl_dist = max(entry - struct_sl, min_sl_pct * entry)
+        sl_dist = min(sl_dist, max_sl_pct * entry)
         
         stop_loss = entry - sl_dist
         tp1_dist = sl_dist * 2.0  # Guaranteed 1:2.0 R:R on Target 1
@@ -896,9 +900,9 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         tp1 = entry + tp1_dist
         tp2 = entry + tp2_dist
     else:
-        struct_sl = swing_high + (0.5 * atr_val)
-        sl_dist = max(struct_sl - entry, 0.005 * entry)
-        sl_dist = min(sl_dist, 0.03 * entry)
+        struct_sl = swing_high + (0.3 * atr_val if is_scalping else 0.5 * atr_val)
+        sl_dist = max(struct_sl - entry, min_sl_pct * entry)
+        sl_dist = min(sl_dist, max_sl_pct * entry)
         
         stop_loss = entry + sl_dist
         tp1_dist = sl_dist * 2.0  # Guaranteed 1:2.0 R:R on Target 1
