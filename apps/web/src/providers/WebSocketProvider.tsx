@@ -132,6 +132,47 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           }
         } catch (e) {}
 
+        // Direct Browser Stooq Fallback for Indices, Forex & Commodities
+        try {
+          const stooqRes = await fetch('https://stooq.com/q/l/?s=^dji,^ndx,^gspc,^dax,gc.f,cl.f,eurusd,gbpusd,usdjpy,aapl.us,tsla.us,nvda.us&f=sd2t2ohlcv&h&e=json');
+          if (stooqRes.ok) {
+            const sData = await stooqRes.json();
+            const symbolsList = sData?.symbols || [];
+            const stooqMap: Record<string, { symbol: string; type: string }> = {
+              '^dji': { symbol: 'US30', type: 'indices' },
+              '^ndx': { symbol: 'US100', type: 'indices' },
+              '^gspc': { symbol: 'SPX500', type: 'indices' },
+              '^dax': { symbol: 'DAX40', type: 'indices' },
+              'gc.f': { symbol: 'XAU/USD', type: 'commodities' },
+              'cl.f': { symbol: 'OIL', type: 'commodities' },
+              'eurusd': { symbol: 'EUR/USD', type: 'forex' },
+              'gbpusd': { symbol: 'GBP/USD', type: 'forex' },
+              'usdjpy': { symbol: 'USD/JPY', type: 'forex' },
+              'aapl.us': { symbol: 'AAPL', type: 'stocks' },
+              'tsla.us': { symbol: 'TSLA', type: 'stocks' },
+              'nvda.us': { symbol: 'NVDA', type: 'stocks' },
+            };
+
+            symbolsList.forEach((s: any) => {
+              const mapped = stooqMap[s.symbol?.toLowerCase()];
+              if (mapped && isMounted) {
+                const price = parseFloat(s.close || 0);
+                const open = parseFloat(s.open || price);
+                const changePct = open > 0 ? ((price - open) / open) * 100 : 0;
+                if (price > 0) {
+                  updateTicker(mapped.symbol, {
+                    price,
+                    changePct24h: parseFloat(changePct.toFixed(2)),
+                    high24h: parseFloat(s.high || price * 1.005),
+                    low24h: parseFloat(s.low || price * 0.995),
+                    type: mapped.type
+                  });
+                }
+              }
+            });
+          }
+        } catch (e) {}
+
         if (gatewayRes.status === 'fulfilled' && gatewayRes.value.ok) {
           const markets = await gatewayRes.value.json();
           if (Array.isArray(markets)) {

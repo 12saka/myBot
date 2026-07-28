@@ -200,11 +200,41 @@ export class MarketsService implements OnModuleInit {
           console.warn(`[MarketsService] Yahoo Finance batch quote API failed: ${err.message}`);
         }
       }
+      if (!fetchedFromTwelveData && Object.keys(yahooPriceMap).length === 0) {
+        try {
+          // Stooq Quote Fallback for Indices, Forex, and Commodities
+          const stooqRes = await this.fetchWithTimeout('https://stooq.com/q/l/?s=^dji,^ndx,^gspc,^dax,gc.f,cl.f,eurusd,gbpusd,usdjpy,aapl.us,tsla.us,nvda.us&f=sd2t2ohlcv&h&e=json');
+          if (stooqRes.ok) {
+            const sData = await stooqRes.json();
+            const symbolsList = sData?.symbols || [];
+            const stooqMap: Record<string, string> = {
+              '^dji': '^DJI', '^ndx': '^NDX', '^gspc': '^GSPC', '^dax': '^GDAXI',
+              'gc.f': 'GC=F', 'cl.f': 'CL=F', 'eurusd': 'EURUSD=X', 'gbpusd': 'GBPUSD=X', 'usdjpy': 'USDJPY=X',
+              'aapl.us': 'AAPL', 'tsla.us': 'TSLA', 'nvda.us': 'NVDA'
+            };
+            for (const s of symbolsList) {
+              const mappedTicker = stooqMap[s.symbol?.toLowerCase()];
+              const price = parseFloat(s.close || 0);
+              const open = parseFloat(s.open || price);
+              const changePct = open > 0 ? ((price - open) / open) * 100 : 0;
+              if (mappedTicker && price > 0) {
+                yahooPriceMap[mappedTicker] = {
+                  price,
+                  changePct: parseFloat(changePct.toFixed(2)),
+                  volume: parseFloat(s.volume || 100000)
+                };
+              }
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[MarketsService] Stooq fallback quote API failed: ${err.message}`);
+        }
+      }
  
-      // 3. Update Database Records & Populate in-memory Cache
+      // 3. Update Database Records & Populate in-memory Cache (Only for real live prices)
       for (const asset of this.symbols) {
         const lastCached = this.tickerCache[asset.name];
-        let currentPrice = lastCached ? lastCached.price : asset.defaultPrice;
+        let currentPrice = lastCached ? lastCached.price : 0;
         let changePct24h = lastCached ? lastCached.changePct24h : 0;
         let volume24h = lastCached ? lastCached.volume24h : 1500000;
 
@@ -216,12 +246,14 @@ export class MarketsService implements OnModuleInit {
         } else {
           const yahooTicker = this.getYahooTicker(asset.name);
           const yahooData = yahooPriceMap[yahooTicker];
-          if (yahooData) {
+          if (yahooData && yahooData.price > 0) {
             currentPrice = yahooData.price;
             changePct24h = yahooData.changePct;
             volume24h = yahooData.volume;
           }
         }
+
+        if (currentPrice <= 0) continue; // Skip caching un-fetched static defaults
  
         const bidPrice = parseFloat(currentPrice.toFixed(4));
         const askPrice = parseFloat((currentPrice * 1.0005).toFixed(4)); // 0.05% spread

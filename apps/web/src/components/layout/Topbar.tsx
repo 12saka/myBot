@@ -21,15 +21,7 @@ export function Topbar() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const featured = tickers.length > 0 ? tickers : [
-    { symbol: 'BTC/USD', price: 65420.50, changePct24h: 2.45, type: 'crypto' },
-    { symbol: 'ETH/USD', price: 3480.20, changePct24h: 1.85, type: 'crypto' },
-    { symbol: 'XAU/USD', price: 2350.50, changePct24h: 0.72, type: 'commodity' },
-    { symbol: 'EUR/USD', price: 1.0854, changePct24h: -0.18, type: 'forex' },
-    { symbol: 'USD/JPY', price: 158.24, changePct24h: 0.35, type: 'forex' },
-    { symbol: 'US100', price: 19100.25, changePct24h: 1.12, type: 'index' },
-    { symbol: 'US30', price: 39180.20, changePct24h: 0.65, type: 'index' },
-  ];
+  const featured = tickers.filter((t) => t.price > 0);
 
   const [profile, setProfile] = useState({
     firstName: '',
