@@ -63,33 +63,7 @@ export class SignalsController implements OnModuleInit {
       if (activeSignals.length > 0) {
         return activeSignals;
       }
-
-      // 2. If no active signals are cached, generate fresh signals for the primary 7 market assets
-      console.log('[SIGNALS GATEWAY] No active signals in database. Generating primary 7-market AI signals...');
-      const defaultSymbols = ['BTC', 'ETH', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
-      const generatedSignals = [];
-      for (const sym of defaultSymbols) {
-        try {
-          const sig = await this.generateSignalRequest(sym, '1h', true);
-          const reasoning = (sig as any)?.aiReasoning || {};
-          if (reasoning.status !== 'MARKET_CLOSED') {
-            generatedSignals.push(sig);
-          }
-        } catch (err: any) {
-          console.warn(`[SIGNALS GATEWAY] Cold-start signal generation failed for ${sym}: ${err.message}`);
-        }
-      }
-
-      if (generatedSignals.length > 0) {
-        return generatedSignals;
-      }
-
-      // 3. Fallback: Query all recent signals regardless of expiration
-      const recentSignals = await this.prisma.signal.findMany({
-        take: 10,
-        orderBy: { createdAt: 'desc' }
-      });
-      return recentSignals;
+      return [];
     } catch (err: any) {
       console.error(`[SIGNALS GATEWAY] getSignals error caught gracefully: ${err.message}`);
       try {
@@ -98,20 +72,6 @@ export class SignalsController implements OnModuleInit {
         return await this.prisma.signal.findMany({ take: 10, orderBy: { createdAt: 'desc' } });
       } catch (dbErr) {
         return [];
-      }
-    }
-  }
-
-  // Background signal scanner: evaluates primary watched pairs every 2 minutes for actionable BUY/SELL signals
-  @Interval(120000)
-  async autoScanMarketSignals() {
-    const scanSymbols = ['BTC', 'ETH', 'US100', 'US30', 'USD/JPY', 'EUR/USD', 'GOLD'];
-    for (const sym of scanSymbols) {
-      try {
-        await this.generateSignalRequest(sym, '1h', false);
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      } catch (err: any) {
-        console.warn(`[SIGNALS GATEWAY] Background signal scan skipped for ${sym}: ${err.message}`);
       }
     }
   }
