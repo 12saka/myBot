@@ -195,7 +195,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
                 changePct24h: parseFloat(paxg.priceChangePercent || '0'),
                 high24h: parseFloat(paxg.highPrice || paxg.lastPrice),
                 low24h: parseFloat(paxg.lowPrice || paxg.lastPrice),
-                type: 'commodities'
+                type: 'commodity'
               });
             }
           }
