@@ -58,7 +58,7 @@ export default function OrdersPage() {
     side: 'Buy' as 'Buy' | 'Sell',
     type: 'Limit' as 'Market' | 'Limit' | 'Stop Loss',
     quantity: 0.1,
-    price: 64200,
+    price: 0,
   });
 
   const [orders, setOrders] = useState<Order[]>([]);

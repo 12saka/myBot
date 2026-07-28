@@ -122,18 +122,7 @@ const HERO_STATS = [
   { value: 10000, suffix: '+', label: 'Assets Covered', icon: Globe },
 ];
 
-const LIVE_TICKERS = [
-  { sym: 'BTC/USD', price: '$64,318', chg: '+1.97%', up: true },
-  { sym: 'ETH/USD', price: '$3,182',  chg: '-1.67%', up: false },
-  { sym: 'SOL/USD', price: '$184.72', chg: '+4.61%', up: true },
-  { sym: 'AAPL',    price: '$197.34', chg: '+1.31%', up: true },
-  { sym: 'NVDA',    price: '$875.20', chg: '+2.63%', up: true },
-  { sym: 'EUR/USD', price: '1.0852',  chg: '+0.31%', up: true },
-  { sym: 'GBP/USD', price: '1.2714',  chg: '-0.22%', up: false },
-  { sym: 'BNB/USD', price: '$412.30', chg: '+1.53%', up: true },
-  { sym: 'XRP/USD', price: '$0.6248', chg: '-1.89%', up: false },
-  { sym: 'TSLA',    price: '$248.60', chg: '-2.13%', up: false },
-];
+
 
 const WHY_FEATURES = [
   {
@@ -459,11 +448,11 @@ export default function LandingPage() {
       } catch (err) {
         console.warn('Failed to fetch live tickers for landing page:', err);
       }
-      setTickers(LIVE_TICKERS);
+      setTickers([]);
     };
 
     fetchLiveTickers();
-    const interval = setInterval(fetchLiveTickers, 10000);
+    const interval = setInterval(fetchLiveTickers, 4000);
 
     return () => {
       window.removeEventListener('scroll', handleScroll);
@@ -471,7 +460,7 @@ export default function LandingPage() {
     };
   }, []);
 
-  const activeTickers = tickers.length > 0 ? tickers : LIVE_TICKERS;
+  const activeTickers = tickers;
 
   return (
     <div
@@ -998,7 +987,7 @@ export default function LandingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {LIVE_TICKERS.slice(0, 6).map((t, i) => (
+                    {activeTickers.slice(0, 6).map((t, i) => (
                       <motion.tr
                         key={t.sym}
                         initial={{ opacity: 0, x: -20 }}

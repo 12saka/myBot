@@ -19,27 +19,17 @@ import { apiFetch } from '@/lib/api';
 const TABS = ['All', 'Crypto', 'Stocks', 'Indices', 'Forex', 'Commodities', 'Watchlist'] as const;
 type Tab = typeof TABS[number];
 
-const sparkMap: Record<string, number[]> = {
-  'BTC/USD': [60000, 61200, 62400, 63100, 62800, 64000, 64318],
-  'ETH/USD': [2900, 3050, 3120, 3090, 3200, 3150, 3182],
-  'SOL/USD': [168, 172, 176, 181, 185, 183, 184],
-  'BNB/USD': [400, 405, 408, 410, 415, 413, 412],
-  'XRP/USD': [0.63, 0.64, 0.625, 0.618, 0.622, 0.620, 0.625],
-  'AAPL':    [190, 192, 194, 195, 193, 196, 197],
-  'TSLA':    [260, 256, 252, 248, 250, 246, 248],
-  'NVDA':    [840, 850, 855, 860, 870, 868, 875],
-  'MSFT':    [408, 410, 412, 414, 413, 416, 415],
-  'AMZN':    [182, 183, 184, 185, 184, 186, 185],
-  'US30':    [38800, 39000, 39100, 39050, 39200, 39180, 39220],
-  'US100':   [18100, 18200, 18300, 18350, 18400, 18380, 18420],
-  'SPX500':  [5200, 5240, 5260, 5280, 5300, 5290, 5310],
-  'DAX40':   [18500, 18600, 18650, 18700, 18720, 18680, 18710],
-  'GOLD':    [2300, 2320, 2330, 2340, 2350, 2345, 2355],
-  'OIL':     [76.0, 77.0, 77.5, 78.0, 78.5, 78.2, 78.6],
-  'EUR/USD': [1.082, 1.083, 1.084, 1.085, 1.086, 1.085, 1.085],
-  'GBP/USD': [1.274, 1.272, 1.271, 1.273, 1.272, 1.270, 1.271],
-  'USD/JPY': [150.8, 151.0, 151.2, 151.4, 151.5, 151.4, 151.4],
-};
+function getDynamicSparkline(price: number, changePct: number): number[] {
+  if (!price || price <= 0) return [];
+  const points = [];
+  const startPrice = price / (1 + (changePct / 100));
+  const step = (price - startPrice) / 6;
+  for (let i = 0; i < 7; i++) {
+    const microNoise = (Math.sin(i * 1.5) * (price * 0.0015));
+    points.push(parseFloat((startPrice + (step * i) + microNoise).toFixed(4)));
+  }
+  return points;
+}
 
 export default function MarketsPage() {
   const { tickers, watchlist, addToWatchlist, removeFromWatchlist } = useMarketStore();
@@ -229,7 +219,7 @@ export default function MarketsPage() {
             <tbody>
               {filtered.map((ticker, i) => {
                 const inWatchlist = watchlist.includes(ticker.symbol);
-                const spark = sparkMap[ticker.symbol] ?? [50, 52, 51, 53, 54, 55, 56];
+                const spark = getDynamicSparkline(ticker.price, ticker.changePct24h);
                 return (
                   <tr
                     key={ticker.symbol}
