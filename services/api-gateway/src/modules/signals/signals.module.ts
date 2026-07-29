@@ -400,6 +400,14 @@ export class SignalsController implements OnModuleInit {
         takeProfit2 = entryPrice - (slDist * 3.2); // 1:3.2 R:R
       }
 
+      const durationEstimate = interval === '1m' ? '5–15 Minutes (1m Micro Scalp)'
+        : interval === '3m' ? '8–20 Minutes (3m Micro Scalp)'
+        : interval === '5m' ? '15–45 Minutes (5m Scalp)'
+        : interval === '15m' ? '30–90 Minutes (15m Scalp)'
+        : interval === '1h' ? '1–4 Hours (Day Trade)'
+        : interval === '4h' ? '6–24 Hours (Intraday Swing)'
+        : '1–3 Days (Macro Swing)';
+
       try {
         await this.prisma.signal.updateMany({
           where: { symbol, expiresAt: { gt: new Date() } },
@@ -421,7 +429,7 @@ export class SignalsController implements OnModuleInit {
           takeProfit2,
           riskRewardRatio: 2.0,
           winProbability: 82,
-          durationEstimate: interval === '1h' ? '1-4 hours (Day Trade)' : '1-2 days',
+          durationEstimate,
           aiReasoning: {
             indicators: symbol.includes('US100') || symbol.includes('NAS') ? [
               `PRO Big Tech Mag 7 Momentum ${direction} Lead`,
@@ -469,7 +477,7 @@ export class SignalsController implements OnModuleInit {
           takeProfit2,
           riskRewardRatio: 2.0,
           winProbability: 82,
-          durationEstimate: interval === '1h' ? '1-4 hours (Day Trade)' : '1-2 days',
+          durationEstimate,
           aiReasoning: {
             indicators: [`PRO 5-Factor Institutional ${direction} Confluence`],
             explanation: `PRO 7-Step Institutional Engine confirmed high-probability ${direction} setup for ${symbol}.`,

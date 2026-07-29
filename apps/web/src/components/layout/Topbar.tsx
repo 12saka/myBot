@@ -206,7 +206,11 @@ export function Topbar() {
             <div key={i} className="flex items-center gap-2 text-xs whitespace-nowrap">
               <span className="text-slate-400 font-medium">{ticker.symbol}</span>
               <span className="font-bold text-slate-200">
-                {ticker.type === 'forex' ? ticker.price.toFixed(4) : ticker.price.toLocaleString()}
+                {ticker.symbol.includes('JPY') ? ticker.price.toFixed(2)
+                  : ticker.symbol.includes('EUR') || ticker.symbol.includes('GBP') ? ticker.price.toFixed(4)
+                  : ticker.symbol.includes('XAU') || ticker.symbol.includes('GOLD') ? `$${ticker.price.toFixed(2)}`
+                  : ticker.price > 1000 ? `$${ticker.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : `$${ticker.price.toFixed(2)}`}
               </span>
               <span className={cn(
                 'flex items-center gap-0.5 font-semibold',
