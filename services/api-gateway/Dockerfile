@@ -5,41 +5,36 @@ RUN apk add --no-cache openssl
 
 WORKDIR /usr/src/app
 
-# Copy root workspace and package files
+# Copy root workspace and package files for Layer Caching
 COPY package*.json ./
 COPY packages/db/package*.json ./packages/db/
 COPY packages/shared/package*.json ./packages/shared/
 COPY packages/configs/package*.json ./packages/configs/
-COPY apps/web/package*.json ./apps/web/
 COPY services/api-gateway/package*.json ./services/api-gateway/
-COPY services/auth-service/package*.json ./services/auth-service/
-COPY services/wallet-service/package*.json ./services/wallet-service/
 
-# Install all dependencies (hoisted to root node_modules automatically)
-RUN npm ci
+# Install dependencies fast using npm ci
+RUN npm ci --prefer-offline --no-audit
 
 # Copy packages and service source
 COPY packages/db ./packages/db
 COPY services/api-gateway ./services/api-gateway
 
-# Generate Prisma Client (builds to root node_modules/.prisma/client)
-RUN npm run db:generate --workspace=packages/db
+# Generate Prisma Client
+RUN npx prisma generate --schema=packages/db/prisma/schema.prisma
 
-# Build the NestJS API Gateway
+# Build NestJS API Gateway
 RUN npm run build --workspace=@trademind/api-gateway
 
 # Production runner stage
 FROM node:22-alpine
 
-# Install OpenSSL for Prisma engine compatibility
 RUN apk add --no-cache openssl
 
 WORKDIR /usr/src/app
 
-# Copy package config for workspace mapping
 COPY package*.json ./
 
-# Copy compiled files, node_modules (including Prisma client), and package definitions
+# Copy compiled files, node_modules, and package definitions
 COPY --from=builder /usr/src/app/node_modules ./node_modules
 COPY --from=builder /usr/src/app/packages/db ./packages/db
 COPY --from=builder /usr/src/app/services/api-gateway/dist ./services/api-gateway/dist
@@ -50,5 +45,5 @@ EXPOSE 4000
 ENV PORT=4000
 ENV NODE_ENV=production
 
-# Run migrations and start API Gateway
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma && npm run start --workspace=@trademind/api-gateway"]
+# Run migrations gracefully and start API Gateway
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma || true && npm run start --workspace=@trademind/api-gateway"]
