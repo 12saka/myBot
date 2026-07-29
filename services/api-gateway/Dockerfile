@@ -10,7 +10,10 @@ COPY package*.json ./
 COPY packages/db/package*.json ./packages/db/
 COPY packages/shared/package*.json ./packages/shared/
 COPY packages/configs/package*.json ./packages/configs/
+COPY apps/web/package*.json ./apps/web/
 COPY services/api-gateway/package*.json ./services/api-gateway/
+COPY services/auth-service/package*.json ./services/auth-service/
+COPY services/wallet-service/package*.json ./services/wallet-service/
 
 # Install dependencies fast using npm ci
 RUN npm ci --prefer-offline --no-audit
