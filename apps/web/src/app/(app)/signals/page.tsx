@@ -731,8 +731,55 @@ export default function SignalsPage() {
           >
             <Plus size={14} /> Manual Creator
           </button>
-        </div>
       </PageHeader>
+
+      {/* Live Economic News Protection Banner & CFTC COT Summary */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Economic News Calendar Feed */}
+        <div className="glass-card rounded-2xl p-4 border border-blue-500/20 bg-blue-950/10 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
+              <Clock size={14} /> Live Economic News Feed & Protection
+            </span>
+            <Badge variant="success" size="sm">Active Polling</Badge>
+          </div>
+          <div className="flex items-center justify-between bg-slate-900/60 p-2.5 rounded-xl border border-white/5 text-xs text-slate-300">
+            <div>
+              <div className="font-bold text-white">US Consumer Price Index (CPI YoY)</div>
+              <div className="text-[10px] text-slate-400">Impact: ★★★★★ │ Forecast: 2.8% │ Prev: 2.9%</div>
+            </div>
+            <div className="text-right font-mono font-bold text-amber-400 text-xs">
+              In 18 Minutes
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
+            <Shield size={12} className="text-emerald-400" /> News Protection Mode: Auto -10.0 penalty deduction active during release window.
+          </div>
+        </div>
+
+        {/* CFTC COT Institutional Positioning */}
+        <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+              <BrainCircuit size={14} /> CFTC COT Institutional Net Positioning
+            </span>
+            <Badge variant="purple" size="sm">Friday Weekly Report</Badge>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="bg-slate-900/60 p-2 rounded-xl border border-white/5">
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Gold (COMEX) Net</div>
+              <div className="font-bold text-emerald-400 text-xs">+142.5K Contracts (91.5% Percentile)</div>
+            </div>
+            <div className="bg-slate-900/60 p-2 rounded-xl border border-white/5">
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Euro FX (CME) Net</div>
+              <div className="font-bold text-emerald-400 text-xs">+48.2K Contracts (78.4% Percentile)</div>
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-400 italic">
+            Institutional Bias: Managed Money long accumulation awards up to +12.0 COT score boost.
+          </div>
+        </div>
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

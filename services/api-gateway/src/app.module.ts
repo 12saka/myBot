@@ -13,7 +13,8 @@ import { WalletModule } from './modules/wallet/wallet.module';
 import { SubscriptionModule } from './modules/subscription/subscription.module';
 import { CopilotModule } from './modules/copilot/copilot.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
-import { HealthModule } from './modules/health/health.module';
+import { CalendarModule } from './modules/calendar/calendar.module';
+import { CotModule } from './modules/cot/cot.module';
 
 @Module({
   imports: [
@@ -32,6 +33,8 @@ import { HealthModule } from './modules/health/health.module';
     SubscriptionModule,
     CopilotModule,
     NotificationsModule,
+    CalendarModule,
+    CotModule,
   ],
 })
 export class AppModule {}
