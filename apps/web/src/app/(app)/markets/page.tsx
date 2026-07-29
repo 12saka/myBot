@@ -148,6 +148,20 @@ export default function MarketsPage() {
         </button>
       </PageHeader>
 
+      {/* Interactive Market Insights & Guidance Banner */}
+      <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-300">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30">
+            <Activity size={18} />
+          </div>
+          <div>
+            <div className="font-bold text-white text-sm">💡 Real-Time Market Execution Guidance</div>
+            <div className="text-[11px] text-slate-400">Click any asset row below to load instant 500ms TradingView charts, AI volume profiles, and execute 1-click trades.</div>
+          </div>
+        </div>
+        <Badge variant="purple" size="md">Sub-Second WS Active</Badge>
+      </div>
+
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 text-xs">
           {TABS.map(tab => (

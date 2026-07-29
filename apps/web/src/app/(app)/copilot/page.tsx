@@ -131,6 +131,14 @@ export default function CopilotPage() {
         </div>
       </PageHeader>
 
+      {/* Copilot Actionable Guidance Banner */}
+      <div className="glass-card rounded-2xl p-3.5 border border-indigo-500/20 bg-indigo-950/10 mb-4 flex items-center justify-between text-xs text-slate-300">
+        <div className="flex items-center gap-2.5">
+          <Sparkles size={16} className="text-indigo-400" />
+          <span><strong>AI Copilot Guidance</strong>: Ask for instant market analysis, portfolio risk reviews, or strategy explanations. Try typing <em>"What is the BTC/USD signal confidence?"</em></span>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 flex-1 min-h-0">
         <div className="hidden lg:block space-y-4">
           <div className="glass-card rounded-2xl p-4">

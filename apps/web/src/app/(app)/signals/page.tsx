@@ -192,6 +192,35 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         </button>
       </div>
 
+      {/* Actionable Next Steps & Insights Guidance Banner */}
+      <div className="bg-slate-900/80 p-3 rounded-xl border border-purple-500/20 text-xs text-slate-300 flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <span className="font-bold uppercase text-[10px] tracking-wider text-purple-400 flex items-center gap-1">
+            💡 Pro Trader Actionable Insights
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono">Recommended Execution</span>
+        </div>
+        <div className="text-[11px] text-slate-200 font-medium leading-relaxed">
+          {isBuy 
+            ? `Place Buy Limit at $${signal.entry}. Set Stop Loss at $${signal.stopLoss}. Move SL to Break-Even once TP1 ($${signal.tp1}) is reached.` 
+            : `Place Sell Limit at $${signal.entry}. Set Stop Loss at $${signal.stopLoss}. Move SL to Break-Even once TP1 ($${signal.tp1}) is reached.`}
+        </div>
+        <div className="flex gap-2 mt-1">
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(`Entry: ${signal.entry} | SL: ${signal.stopLoss} | TP1: ${signal.tp1} | TP2: ${signal.tp2}`);
+              toast.success(`Copied trade parameters for ${signal.symbol} to clipboard! Paste into MT4/MT5.`, {
+                icon: '📋',
+                duration: 5000
+              });
+            }}
+            className="text-[10px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+          >
+            📋 Copy MT4/MT5 Levels
+          </button>
+        </div>
+      </div>
+
       {/* Expanded Analysis */}
       <AnimatePresence>
         {expanded && (
@@ -742,7 +771,7 @@ export default function SignalsPage() {
             <span className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
               <Clock size={14} /> Live Economic News Feed & Protection
             </span>
-            <Badge variant="success" size="sm">Active Polling</Badge>
+            <Badge variant="green" size="sm">Active Polling</Badge>
           </div>
           <div className="flex items-center justify-between bg-slate-900/60 p-2.5 rounded-xl border border-white/5 text-xs text-slate-300">
             <div>
