@@ -226,6 +226,45 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               </div>
             ))}
 
+            {/* 14-Module Institutional Quantitative Index Breakdown */}
+            {(signal.marketBreadth || signal.optionsGex || signal.mag7Heatmap) && (
+              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
+                <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                  🏛️ Institutional Index Engine & Microstructure Breakdown
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+                  {signal.marketBreadth?.trin_arms_index && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-amber-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-amber-400 block mb-1">📊 Market Breadth (TRIN & TICK)</span>
+                      <div>TRIN Index: <strong>{signal.marketBreadth.trin_arms_index}</strong></div>
+                      <div>TICK: <strong>{signal.marketBreadth.tick_index}</strong></div>
+                      <div>A/D Ratio: <strong>{signal.marketBreadth.advance_decline_ratio}</strong></div>
+                    </div>
+                  )}
+                  {signal.optionsGex?.dealer_gamma_exposure && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-purple-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-purple-400 block mb-1">⚡ Options GEX & Dealer Hedging</span>
+                      <div>GEX Status: <strong>{signal.optionsGex.dealer_gamma_exposure}</strong></div>
+                      <div>Max Pain: <strong>${signal.optionsGex.max_pain_price}</strong></div>
+                      <div>Put/Call Ratio: <strong>{signal.optionsGex.put_call_ratio}</strong></div>
+                    </div>
+                  )}
+                  {signal.mag7Heatmap?.ai_weight_bias && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-cyan-500/20 text-slate-300 col-span-1 sm:col-span-2">
+                      <span className="font-bold uppercase text-cyan-400 block mb-1">🤖 Mag 7 & Tech Concentration Heatmap</span>
+                      <div className="flex flex-wrap gap-3 text-[10px]">
+                        <span>NVDA: <strong className="text-emerald-400">{signal.mag7Heatmap.nvda_momentum}</strong></span>
+                        <span>MSFT: <strong className="text-emerald-400">{signal.mag7Heatmap.msft_momentum}</strong></span>
+                        <span>AAPL: <strong className="text-emerald-400">{signal.mag7Heatmap.aapl_momentum}</strong></span>
+                        <span>META: <strong className="text-emerald-400">{signal.mag7Heatmap.meta_momentum}</strong></span>
+                      </div>
+                      <div className="mt-1 text-slate-400 italic">{signal.mag7Heatmap.ai_weight_bias}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Indicator Verdicts Breakdown */}
             {signal.indicatorVerdicts && Object.keys(signal.indicatorVerdicts).length > 0 && (
               <div className="border-t border-white/5 pt-2.5">

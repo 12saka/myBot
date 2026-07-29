@@ -151,7 +151,11 @@ export function mapSignal(item: any): AISignal {
     reasoning: explanation,
     indicatorVerdicts,
     tradingviewIdea,
-    categoryScores
+    categoryScores,
+    marketBreadth: reasoning.market_breadth || reasoning.marketBreadth || {},
+    optionsGex: reasoning.options_gex || reasoning.optionsGex || {},
+    mag7Heatmap: reasoning.mag7_heatmap || reasoning.mag7Heatmap || {},
+    earningsSchedule: reasoning.earnings_schedule || reasoning.earningsSchedule || {}
   };
 }
 

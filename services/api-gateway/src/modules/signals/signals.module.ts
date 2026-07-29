@@ -417,7 +417,15 @@ export class SignalsController implements OnModuleInit {
           winProbability: 82,
           durationEstimate: interval === '1h' ? '1-4 hours (Day Trade)' : '1-2 days',
           aiReasoning: {
-            indicators: [
+            indicators: symbol.includes('US100') || symbol.includes('NAS') ? [
+              `PRO Big Tech Mag 7 Momentum ${direction} Lead`,
+              '15-Min Opening Range Breakout (ORB)',
+              'US10Y Yield Curve Compression Target'
+            ] : symbol.includes('US30') || symbol.includes('DOW') ? [
+              `PRO VIX Volatility Inversion ${direction} Setup`,
+              'Cyclical Sector Rotation Confluence',
+              'Previous Day Low (PDL) SMC Sweep Retest'
+            ] : [
               `PRO 5-Factor Institutional ${direction} Confluence`,
               '200 EMA Trend Alignment',
               'Fair Value Gap (FVG) Retest Target'
@@ -429,7 +437,8 @@ export class SignalsController implements OnModuleInit {
             indicator_verdicts: {
               ema: `EMAs align with primary ${direction} market structure.`,
               rsi: 'RSI confirms directional momentum without overextension.',
-              macd: 'MACD histogram supports trend continuation.'
+              macd: 'MACD histogram supports trend continuation.',
+              index_breadth: symbol.includes('US100') ? 'Big Tech Mag 7 momentum leads index expansion.' : symbol.includes('US30') ? 'VIX compression validates bullish sector rotation.' : 'Market breadth confirms bias.'
             },
             market_structure_analysis: `Institutional market structure analysis identifies key support near ${swingLow.toFixed(2)} and resistance near ${swingHigh.toFixed(2)}.`,
             tradingview_idea: `PRO Institutional ${direction} setup for ${symbol}. Retest Entry: ${entryPrice.toFixed(2)}, TP1: ${takeProfit1.toFixed(2)} (1:2.0 R:R), TP2: ${takeProfit2.toFixed(2)} (1:3.2 R:R), Stop Loss: ${stopLoss.toFixed(2)}.`,

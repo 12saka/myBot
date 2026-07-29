@@ -32,6 +32,10 @@ export interface AISignal {
   indicatorVerdicts?: Record<string, string>;
   tradingviewIdea?: string;
   categoryScores?: Record<string, number>;
+  marketBreadth?: Record<string, any>;
+  optionsGex?: Record<string, any>;
+  mag7Heatmap?: Record<string, any>;
+  earningsSchedule?: Record<string, any>;
 }
 
 interface AIState {
