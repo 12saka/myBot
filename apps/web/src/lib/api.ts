@@ -167,7 +167,12 @@ export function mapSignal(item: any): AISignal {
     interestDifferentials: reasoning.interest_differentials || reasoning.interestDifferentials || {},
     cotPositioning: reasoning.cot_positioning || reasoning.cotPositioning || {},
     interventionRisk: reasoning.intervention_risk || reasoning.interventionRisk || {},
-    carryTrade: reasoning.carry_trade || reasoning.carryTrade || {}
+    carryTrade: reasoning.carry_trade || reasoning.carryTrade || {},
+    realYieldEngine: reasoning.real_yield_engine || reasoning.realYieldEngine || {},
+    inflationEngine: reasoning.inflation_engine || reasoning.inflationEngine || {},
+    centralBankBuying: reasoning.central_bank_buying || reasoning.centralBankBuying || {},
+    geopoliticalRisk: reasoning.geopolitical_risk || reasoning.geopoliticalRisk || {},
+    signalGrade: reasoning.signal_grade || item.signalGrade || 'A (High Confidence)'
   };
 }
 

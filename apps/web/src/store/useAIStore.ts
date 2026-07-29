@@ -48,6 +48,11 @@ export interface AISignal {
   cotPositioning?: Record<string, any>;
   interventionRisk?: Record<string, any>;
   carryTrade?: Record<string, any>;
+  realYieldEngine?: Record<string, any>;
+  inflationEngine?: Record<string, any>;
+  centralBankBuying?: Record<string, any>;
+  geopoliticalRisk?: Record<string, any>;
+  signalGrade?: string;
 }
 
 interface AIState {

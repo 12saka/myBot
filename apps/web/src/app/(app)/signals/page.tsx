@@ -329,6 +329,40 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               </div>
             )}
 
+            {/* Gold 6-Layer Real Yield & Central Bank Physical Buying Breakdown */}
+            {(signal.realYieldEngine || signal.centralBankBuying || signal.signalGrade) && (
+              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider">
+                    🌟 Gold 6-Layer Real Yield, Central Bank Reserves & Signal Grade
+                  </div>
+                  {signal.signalGrade && (
+                    <div className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+                      {signal.signalGrade}
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+                  {signal.realYieldEngine?.us10y_real_yield && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-yellow-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-yellow-400 block mb-1">📈 US 10Y Real Yield Rate of Change</span>
+                      <div>US10Y Real Yield: <strong className="text-emerald-400">{signal.realYieldEngine.us10y_real_yield}</strong></div>
+                      <div>10Y Inflation Breakeven: <strong>{signal.realYieldEngine.inflation_breakeven_10y}</strong></div>
+                      <div>Real Yield Trend: <strong>{signal.realYieldEngine.real_yield_trend}</strong></div>
+                    </div>
+                  )}
+                  {signal.centralBankBuying?.pboc_china_reserves && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-amber-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-amber-400 block mb-1">🏛️ Central Bank Physical Reserve Purchases</span>
+                      <div>PBoC China Reserves: <strong className="text-emerald-400">{signal.centralBankBuying.pboc_china_reserves}</strong></div>
+                      <div>RBI India Reserves: <strong>{signal.centralBankBuying.rbi_india_reserves}</strong></div>
+                      <div>De-Dollarization Net Flow: <strong>{signal.centralBankBuying.central_bank_net_flow}</strong></div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Indicator Verdicts Breakdown */}
             {signal.indicatorVerdicts && Object.keys(signal.indicatorVerdicts).length > 0 && (
               <div className="border-t border-white/5 pt-2.5">
