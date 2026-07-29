@@ -23,7 +23,6 @@ import { CotModule } from './modules/cot/cot.module';
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
-    HealthModule,
     AuthModule,
     UsersModule,
     MarketsModule,

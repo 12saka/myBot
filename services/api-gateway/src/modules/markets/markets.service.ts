@@ -235,6 +235,8 @@ export class MarketsService implements OnModuleInit {
             };
           }
         }
+      } catch (err) {}
+
       // High-availability Stooq quoter for Indices & Commodities
       try {
         const stooqRes = await this.fetchWithTimeout('https://stooq.com/q/l/?s=^dji,^ndx,^gspc,^dax,cl.f&f=sd2t2ohlcv&h&e=json');

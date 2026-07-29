@@ -406,7 +406,7 @@ export class SignalsController implements OnModuleInit {
           data: { expiresAt: new Date() },
         });
       } catch (err: any) {
-        this.logger.warn(`Prisma updateNotice: ${err.message}`);
+        console.warn(`Prisma notice: ${err.message}`);
       }
 
       let signal: any = null;
@@ -458,7 +458,7 @@ export class SignalsController implements OnModuleInit {
         }
       });
       } catch (e: any) {
-        this.logger.warn(`Prisma signal create notice: ${e.message}`);
+        console.warn(`Prisma signal create notice: ${e.message}`);
         signal = {
           id: `sig-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           symbol,
