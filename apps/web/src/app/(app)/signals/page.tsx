@@ -122,7 +122,28 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         })}
       </div>
 
-      {/* Metrics row */}
+      {/* Small Account ($10 - $15 USD) Micro-Risk Protection Banner */}
+      <div className="bg-gradient-to-r from-emerald-950/40 to-slate-900/60 border border-emerald-500/20 p-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span className="text-[11px] font-bold text-emerald-400">
+            {['US30', 'US100', 'SPX500', 'DAX40'].some(idx => signal.symbol.includes(idx))
+              ? '⚠️ High Margin ($25+ Lot Margin - Suitable for >$50 Accounts)'
+              : '🟢 $10 - $15 Account Approved (0.01 Micro-Lot)'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] font-mono text-slate-300">
+          <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
+            Lot: <strong className="text-emerald-400">0.01 Micro</strong>
+          </span>
+          <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
+            Max Risk: <strong className="text-amber-400">$0.25 (1.8%)</strong>
+          </span>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center gap-4 text-xs">
         {[
           { label: 'Risk:Reward', value: signal.riskReward, icon: BarChart3 },

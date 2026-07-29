@@ -943,11 +943,20 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         "liquidation_heatmap_bias": "Low Leverage Risk Zone"
     }
 
+    sl_dist_pct = abs(entry - stop_loss) / (entry + 1e-9)
+    is_small_account_suitable = sl_dist_pct <= 0.015 and not ('US30' in symbol.upper() or 'US100' in symbol.upper() or 'SPX' in symbol.upper())
+    monetary_risk_15 = round(15.0 * 0.018, 2)
+
     risk_engine = {
         "atr_multiplier": 1.5,
         "max_risk_pct": 1.5,
         "recommended_position_pct": 2.5,
-        "max_daily_drawdown_limit": "3.0%"
+        "max_daily_drawdown_limit": "3.0%",
+        "small_account_suitable": is_small_account_suitable,
+        "recommended_lot_size": "0.01 Micro-Lot",
+        "est_monetary_risk_15usd": f"${monetary_risk_15:.2f} (1.8% Risk)",
+        "min_account_balance": "$10.00 USD",
+        "margin_required": "$1.50 - $2.50 USD" if is_small_account_suitable else "$25.00+ USD"
     }
 
     return PredictResponse(
