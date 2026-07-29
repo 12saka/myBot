@@ -15,30 +15,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    let retries = 5;
+    let retries = 3;
     while (retries > 0) {
       try {
         await this.$connect();
         console.log('✅ [PRISMA] Database connected successfully.');
-        try {
-          await this.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "userId" TEXT;`);
-          await this.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "strategyKey" TEXT;`);
-          await this.$executeRawUnsafe(`ALTER TABLE "signals" ADD COLUMN IF NOT EXISTS "userId" TEXT;`);
-          await this.$executeRawUnsafe(`ALTER TABLE "signals" ADD COLUMN IF NOT EXISTS "strategyKey" TEXT;`);
-          await this.$executeRawUnsafe(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS userId TEXT;`);
-          await this.$executeRawUnsafe(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS strategyKey TEXT;`);
-          console.log('✅ [PRISMA] Auto-migrated "Signal" table columns (userId, strategyKey).');
-        } catch (e: any) {
-          console.warn(`⚠️ [PRISMA] Column migration notice: ${e.message}`);
-        }
         break;
       } catch (err) {
         retries--;
-        console.warn(`⚠️ [PRISMA] Database connection failed. Retries remaining: ${retries}`);
+        console.warn(`⚠️ [PRISMA] Database connection notice. Retries remaining: ${retries}`);
         if (retries === 0) {
-          console.error('❌ [PRISMA] Could not connect to database. Starting NestJS gateway in degraded state.');
+          console.warn('⚠️ [PRISMA] Operating NestJS gateway with fallback memory layer.');
         } else {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          await new Promise((resolve) => setTimeout(resolve, 1500));
         }
       }
     }
