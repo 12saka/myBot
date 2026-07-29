@@ -731,6 +731,7 @@ export default function SignalsPage() {
           >
             <Plus size={14} /> Manual Creator
           </button>
+        </div>
       </PageHeader>
 
       {/* Live Economic News Protection Banner & CFTC COT Summary */}
