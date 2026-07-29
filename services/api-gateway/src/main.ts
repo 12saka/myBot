@@ -29,6 +29,12 @@ async function bootstrap() {
   // Global validation
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
 
+  // Expose root health check endpoint for Render cloud health probes (returns HTTP 200 OK)
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.get(['/', '/health', '/api/v2/health'], (req: any, res: any) => {
+    res.status(200).json({ status: 'ok', service: 'api-gateway', timestamp: new Date() });
+  });
+
   // API prefix
   app.setGlobalPrefix('api/v2');
 
