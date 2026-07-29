@@ -155,7 +155,19 @@ export function mapSignal(item: any): AISignal {
     marketBreadth: reasoning.market_breadth || reasoning.marketBreadth || {},
     optionsGex: reasoning.options_gex || reasoning.optionsGex || {},
     mag7Heatmap: reasoning.mag7_heatmap || reasoning.mag7Heatmap || {},
-    earningsSchedule: reasoning.earnings_schedule || reasoning.earningsSchedule || {}
+    earningsSchedule: reasoning.earnings_schedule || reasoning.earningsSchedule || {},
+    onchainAnalytics: reasoning.onchain_analytics || reasoning.onchainAnalytics || {},
+    etfFlows: reasoning.etf_flows || reasoning.etfFlows || {},
+    stablecoinLiquidity: reasoning.stablecoin_liquidity || reasoning.stablecoinLiquidity || {},
+    whaleEngine: reasoning.whale_engine || reasoning.whaleEngine || {},
+    sessionEngine: reasoning.session_engine || reasoning.sessionEngine || {},
+    executionQuality: reasoning.execution_quality || reasoning.executionQuality || {},
+    dxyEngine: reasoning.dxy_engine || reasoning.dxyEngine || {},
+    yieldMatrix: reasoning.yield_matrix || reasoning.yieldMatrix || {},
+    interestDifferentials: reasoning.interest_differentials || reasoning.interestDifferentials || {},
+    cotPositioning: reasoning.cot_positioning || reasoning.cotPositioning || {},
+    interventionRisk: reasoning.intervention_risk || reasoning.interventionRisk || {},
+    carryTrade: reasoning.carry_trade || reasoning.carryTrade || {}
   };
 }
 

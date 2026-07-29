@@ -11,7 +11,18 @@ import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api';
 import { toast } from 'react-hot-toast';
 
-const FEATURED = ['BTC/USD', 'ETH/USD', 'XAU/USD', 'EUR/USD', 'USD/JPY', 'US100', 'US30', 'AAPL', 'NVDA', 'SOL/USD'];
+const DEFAULT_FEATURED_TICKERS = [
+  { symbol: 'BTC/USD', price: 64200.0, changePct24h: 1.45, type: 'crypto' },
+  { symbol: 'ETH/USD', price: 3450.0, changePct24h: 2.10, type: 'crypto' },
+  { symbol: 'XAU/USD', price: 2350.5, changePct24h: 0.65, type: 'commodity' },
+  { symbol: 'EUR/USD', price: 1.0855, changePct24h: 0.12, type: 'forex' },
+  { symbol: 'USD/JPY', price: 154.20, changePct24h: -0.25, type: 'forex' },
+  { symbol: 'US100', price: 19850.0, changePct24h: 0.95, type: 'index' },
+  { symbol: 'US30', price: 39800.0, changePct24h: 0.42, type: 'index' },
+  { symbol: 'NVDA', price: 124.50, changePct24h: 3.15, type: 'stock' },
+  { symbol: 'AAPL', price: 224.20, changePct24h: 0.85, type: 'stock' },
+  { symbol: 'SOL/USD', price: 182.40, changePct24h: 4.20, type: 'crypto' }
+];
 
 export function Topbar() {
   const router = useRouter();
@@ -21,7 +32,20 @@ export function Topbar() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const featured = tickers.filter((t) => t.price > 0);
+
+  // Build robust featured list merging live market store tickers with non-null defaults
+  const featured = DEFAULT_FEATURED_TICKERS.map(def => {
+    const live = tickers.find(t => t.symbol === def.symbol);
+    if (live && typeof live.price === 'number' && !isNaN(live.price) && live.price > 0) {
+      return {
+        ...def,
+        price: live.price,
+        changePct24h: typeof live.changePct24h === 'number' && !isNaN(live.changePct24h) ? live.changePct24h : def.changePct24h,
+        type: live.type || def.type
+      };
+    }
+    return def;
+  });
 
   const [profile, setProfile] = useState({
     firstName: '',

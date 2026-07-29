@@ -265,6 +265,70 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               </div>
             )}
 
+            {/* BTC On-Chain & Spot ETF Intelligence Breakdown */}
+            {(signal.onchainAnalytics || signal.etfFlows || signal.stablecoinLiquidity) && (
+              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
+                <div className="text-[10px] font-bold text-orange-400 uppercase tracking-wider">
+                  🪙 Bitcoin On-Chain, ETF & Stablecoin Liquidity Matrix
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+                  {signal.onchainAnalytics?.exchange_net_flow && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-orange-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-orange-400 block mb-1">⛓️ On-Chain & Whale Movements</span>
+                      <div>Net Flow: <strong className="text-emerald-400">{signal.onchainAnalytics.exchange_net_flow}</strong></div>
+                      <div>MVRV Ratio: <strong>{signal.onchainAnalytics.mvrv_ratio}</strong></div>
+                      <div>NUPL Phase: <strong>{signal.onchainAnalytics.nupl_status}</strong></div>
+                    </div>
+                  )}
+                  {signal.etfFlows?.daily_net_inflow_usd && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-emerald-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-emerald-400 block mb-1">🏦 Spot Bitcoin ETF Inflows</span>
+                      <div>Daily ETF Inflow: <strong className="text-emerald-400">{signal.etfFlows.daily_net_inflow_usd}</strong></div>
+                      <div>Custody Flow: <strong>{signal.etfFlows.custody_movements}</strong></div>
+                      <div>ETF Confluence: <strong>{signal.etfFlows.etf_bullish_weight}</strong></div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Forex Yield Spread, DXY & BoJ Intervention Risk Breakdown */}
+            {(signal.dxyEngine || signal.yieldMatrix || signal.interventionRisk) && (
+              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
+                <div className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">
+                  💱 Forex Yield Matrix, DXY Dollar Inversion & BoJ Risk Guard
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
+                  {signal.dxyEngine?.dxy_trend && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-blue-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-blue-400 block mb-1">💵 DXY Dollar Index Engine</span>
+                      <div>DXY Trend: <strong className="text-emerald-400">{signal.dxyEngine.dxy_trend}</strong></div>
+                      <div>DXY RSI: <strong>{signal.dxyEngine.dxy_rsi}</strong></div>
+                      <div>DXY Weight: <strong>{signal.dxyEngine.dxy_correlation_weight}</strong></div>
+                    </div>
+                  )}
+                  {signal.yieldMatrix?.us10y_yield && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-indigo-500/20 text-slate-300">
+                      <span className="font-bold uppercase text-indigo-400 block mb-1">🏛️ Multi-Country Bond Yield Spreads</span>
+                      <div>US10Y Yield: <strong>{signal.yieldMatrix.us10y_yield}</strong></div>
+                      <div>DE10Y Bund: <strong>{signal.yieldMatrix.de10y_bund_yield}</strong> │ JP10Y JGB: <strong>{signal.yieldMatrix.jp10y_jgb_yield}</strong></div>
+                      <div>Yield Spread: <strong className="text-emerald-400">{signal.yieldMatrix.us_de_spread || signal.yieldMatrix.us_jp_spread}</strong></div>
+                    </div>
+                  )}
+                  {signal.interventionRisk?.boj_intervention_risk && (
+                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-red-500/20 text-slate-300 col-span-1 sm:col-span-2">
+                      <span className="font-bold uppercase text-red-400 block mb-1">🇯🇵 Bank of Japan (BoJ) FX Intervention Risk Guard</span>
+                      <div className="flex flex-wrap gap-4 text-[10px]">
+                        <span>Intervention Risk: <strong className="text-amber-400">{signal.interventionRisk.boj_intervention_risk}</strong></span>
+                        <span>Probability: <strong>{signal.interventionRisk.intervention_probability}</strong></span>
+                        <span>Risk Sizer: <strong className="text-emerald-400">{signal.interventionRisk.recommended_position_sizer}</strong></span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Indicator Verdicts Breakdown */}
             {signal.indicatorVerdicts && Object.keys(signal.indicatorVerdicts).length > 0 && (
               <div className="border-t border-white/5 pt-2.5">

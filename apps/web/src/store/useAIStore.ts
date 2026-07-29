@@ -36,6 +36,18 @@ export interface AISignal {
   optionsGex?: Record<string, any>;
   mag7Heatmap?: Record<string, any>;
   earningsSchedule?: Record<string, any>;
+  onchainAnalytics?: Record<string, any>;
+  etfFlows?: Record<string, any>;
+  stablecoinLiquidity?: Record<string, any>;
+  whaleEngine?: Record<string, any>;
+  sessionEngine?: Record<string, any>;
+  executionQuality?: Record<string, any>;
+  dxyEngine?: Record<string, any>;
+  yieldMatrix?: Record<string, any>;
+  interestDifferentials?: Record<string, any>;
+  cotPositioning?: Record<string, any>;
+  interventionRisk?: Record<string, any>;
+  carryTrade?: Record<string, any>;
 }
 
 interface AIState {
