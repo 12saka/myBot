@@ -20,8 +20,7 @@ import { AnimatePresence } from 'framer-motion';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
 import { apiFetch } from '@/lib/api';
 
-const btcData = [61200, 62400, 63100, 62800, 64318];
-const ethData = [3050, 3120, 3090, 3200, 3182];
+
 
 const CONTAINER = {
   hidden: { opacity: 0 },
@@ -242,7 +241,13 @@ export default function DashboardPage() {
                       </td>
                       <td className="hidden lg:table-cell" style={{ width: 100 }}>
                         <MiniSparkline
-                          data={ticker.symbol.startsWith('ETH') ? ethData : btcData}
+                          data={[
+                            ticker.price * (1 - (ticker.changePct24h * 0.008)),
+                            ticker.price * (1 - (ticker.changePct24h * 0.005)),
+                            ticker.price * (1 - (ticker.changePct24h * 0.003)),
+                            ticker.price * (1 - (ticker.changePct24h * 0.001)),
+                            ticker.price
+                          ]}
                           color={ticker.changePct24h >= 0 ? '#10b981' : '#ef4444'}
                           height={36}
                         />

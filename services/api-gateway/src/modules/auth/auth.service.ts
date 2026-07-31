@@ -177,7 +177,7 @@ export class AuthService {
       await tx.wallet.create({
         data: {
           userId: user.id,
-          balance: 1000.0, // Default demo balance
+          balance: 0.0,
           currency: 'USD',
         },
       });

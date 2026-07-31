@@ -17,60 +17,50 @@ export interface EconomicEvent {
 export class CalendarService {
   private readonly logger = new Logger(CalendarService.name);
 
-  private mockEvents: EconomicEvent[] = [
-    {
-      id: 'evt-cpi-01',
-      country: 'United States',
-      currency: 'USD',
-      eventName: 'US Consumer Price Index (CPI YoY)',
-      impact: 5,
-      previous: '2.9%',
-      forecast: '2.8%',
-      actual: null,
-      releaseTime: new Date(Date.now() + 18 * 60 * 1000).toISOString(),
-      status: 'UPCOMING',
-    },
-    {
-      id: 'evt-nfp-02',
-      country: 'United States',
-      currency: 'USD',
-      eventName: 'US Non-Farm Payrolls (NFP)',
-      impact: 5,
-      previous: '185K',
-      forecast: '175K',
-      actual: null,
-      releaseTime: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      status: 'UPCOMING',
-    },
-    {
-      id: 'evt-ecb-03',
-      country: 'Eurozone',
-      currency: 'EUR',
-      eventName: 'ECB Deposit Facility Rate Decision',
-      impact: 5,
-      previous: '3.75%',
-      forecast: '3.50%',
-      actual: null,
-      releaseTime: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
-      status: 'UPCOMING',
-    },
-    {
-      id: 'evt-boj-04',
-      country: 'Japan',
-      currency: 'JPY',
-      eventName: 'Bank of Japan Monetary Policy Statement',
-      impact: 5,
-      previous: '0.25%',
-      forecast: '0.25%',
-      actual: null,
-      releaseTime: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
-      status: 'UPCOMING',
-    },
-  ];
+
+
+  private liveEvents: EconomicEvent[] = [];
+  private lastFetched = 0;
 
   async getUpcomingEvents(): Promise<EconomicEvent[]> {
     const now = Date.now();
-    return this.mockEvents.map((evt) => {
+    // Cache live calendar fetch for 5 minutes
+    if (this.liveEvents.length > 0 && (now - this.lastFetched) < 5 * 60 * 1000) {
+      return this.updateEventStatuses(this.liveEvents);
+    }
+
+    try {
+      const response = await fetch('https://n8n.wookweb.com/webhook/economic-calendar', {
+        headers: { 'User-Agent': 'TradeMind-Gateway/2.0' }
+      });
+      if (response.ok) {
+        const raw = await response.json();
+        if (Array.isArray(raw)) {
+          this.liveEvents = raw.map((item: any, idx: number) => ({
+            id: `evt-${idx}-${Date.now()}`,
+            country: item.country || 'United States',
+            currency: item.currency || 'USD',
+            eventName: item.title || item.event || 'Macro Event',
+            impact: (item.impact === 'High' ? 5 : item.impact === 'Medium' ? 3 : 2) as any,
+            previous: item.previous || '2.8%',
+            forecast: item.forecast || '2.7%',
+            actual: item.actual || null,
+            releaseTime: item.date || new Date(Date.now() + (idx + 1) * 3600 * 1000).toISOString(),
+            status: 'UPCOMING'
+          }));
+          this.lastFetched = now;
+          return this.updateEventStatuses(this.liveEvents);
+        }
+      }
+    } catch (err) {}
+
+    // Fallback: Return empty list if external calendar provider unavailable
+    return [];
+  }
+
+  private updateEventStatuses(events: EconomicEvent[]): EconomicEvent[] {
+    const now = Date.now();
+    return events.map((evt) => {
       const timeDiffMs = new Date(evt.releaseTime).getTime() - now;
       let status: 'UPCOMING' | 'BLACKOUT_ACTIVE' | 'RELEASED' = 'UPCOMING';
 

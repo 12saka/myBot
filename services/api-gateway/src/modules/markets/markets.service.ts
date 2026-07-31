@@ -5,25 +5,25 @@ import { Interval } from '@nestjs/schedule';
 @Injectable()
 export class MarketsService implements OnModuleInit {
   private readonly symbols = [
-    { name: 'BTC',    type: 'crypto', binanceSymbol: 'BTCUSDT',  defaultPrice: 64200,   volatility: 50 },
-    { name: 'ETH',    type: 'crypto', binanceSymbol: 'ETHUSDT',  defaultPrice: 3180,    volatility: 8 },
-    { name: 'SOL',    type: 'crypto', binanceSymbol: 'SOLUSDT',  defaultPrice: 184,     volatility: 1.5 },
-    { name: 'BNB',    type: 'crypto', binanceSymbol: 'BNBUSDT',  defaultPrice: 412,     volatility: 1.5 },
-    { name: 'XRP',    type: 'crypto', binanceSymbol: 'XRPUSDT',  defaultPrice: 0.62,    volatility: 0.005 },
-    { name: 'AAPL',   type: 'stock',  binanceSymbol: null,       defaultPrice: 197,     volatility: 0.6 },
-    { name: 'TSLA',   type: 'stock',  binanceSymbol: null,       defaultPrice: 248,     volatility: 1.2 },
-    { name: 'NVDA',   type: 'stock',  binanceSymbol: null,       defaultPrice: 875,     volatility: 3.0 },
-    { name: 'MSFT',   type: 'stock',  binanceSymbol: null,       defaultPrice: 415,     volatility: 1.0 },
-    { name: 'AMZN',   type: 'stock',  binanceSymbol: null,       defaultPrice: 185,     volatility: 0.8 },
-    { name: 'US30',   type: 'index',  binanceSymbol: null,       defaultPrice: 39200,   volatility: 80 },
-    { name: 'US100',  type: 'index',  binanceSymbol: null,       defaultPrice: 18400,   volatility: 60 },
-    { name: 'SPX500', type: 'index',  binanceSymbol: null,       defaultPrice: 5300,    volatility: 15 },
-    { name: 'DAX40',  type: 'index',  binanceSymbol: null,       defaultPrice: 18700,   volatility: 70 },
-    { name: 'GOLD',   type: 'commodity', binanceSymbol: null,    defaultPrice: 2350,    volatility: 5.0 },
-    { name: 'OIL',    type: 'commodity', binanceSymbol: null,    defaultPrice: 78.5,    volatility: 0.4 },
-    { name: 'EUR/USD', type: 'forex', binanceSymbol: null,       defaultPrice: 1.085,   volatility: 0.0005 },
-    { name: 'GBP/USD', type: 'forex', binanceSymbol: null,       defaultPrice: 1.271,   volatility: 0.0005 },
-    { name: 'USD/JPY', type: 'forex', binanceSymbol: null,       defaultPrice: 151.4,   volatility: 0.05 },
+    { name: 'BTC/USD', type: 'crypto', binanceSymbol: 'BTCUSDT',  volatility: 50 },
+    { name: 'ETH/USD', type: 'crypto', binanceSymbol: 'ETHUSDT',  volatility: 8 },
+    { name: 'SOL/USD', type: 'crypto', binanceSymbol: 'SOLUSDT',  volatility: 1.5 },
+    { name: 'BNB/USD', type: 'crypto', binanceSymbol: 'BNBUSDT',  volatility: 1.5 },
+    { name: 'XRP/USD', type: 'crypto', binanceSymbol: 'XRPUSDT',  volatility: 0.005 },
+    { name: 'XAU/USD', type: 'commodity', binanceSymbol: 'PAXGUSDT', volatility: 5.0 },
+    { name: 'AAPL',    type: 'stock',  binanceSymbol: null,       volatility: 0.6 },
+    { name: 'TSLA',    type: 'stock',  binanceSymbol: null,       volatility: 1.2 },
+    { name: 'NVDA',    type: 'stock',  binanceSymbol: null,       volatility: 3.0 },
+    { name: 'MSFT',    type: 'stock',  binanceSymbol: null,       volatility: 1.0 },
+    { name: 'AMZN',    type: 'stock',  binanceSymbol: null,       volatility: 0.8 },
+    { name: 'US30',    type: 'index',  binanceSymbol: null,       volatility: 80 },
+    { name: 'US100',   type: 'index',  binanceSymbol: null,       volatility: 60 },
+    { name: 'SPX500',  type: 'index',  binanceSymbol: null,       volatility: 15 },
+    { name: 'DAX40',   type: 'index',  binanceSymbol: null,       volatility: 70 },
+    { name: 'OIL',     type: 'commodity', binanceSymbol: null,    volatility: 0.4 },
+    { name: 'EUR/USD', type: 'forex', binanceSymbol: null,       volatility: 0.0005 },
+    { name: 'GBP/USD', type: 'forex', binanceSymbol: null,       volatility: 0.0005 },
+    { name: 'USD/JPY', type: 'forex', binanceSymbol: null,       volatility: 0.05 },
   ];
 
   private tickerCache: Record<string, { price: number; changePct24h: number; volume24h: number }> = {};
@@ -288,9 +288,14 @@ export class MarketsService implements OnModuleInit {
         }
 
         if (currentPrice <= 0) {
-          currentPrice = asset.defaultPrice;
-          changePct24h = 0.15;
+          try {
+            const existing = await this.prisma.marketData.findUnique({ where: { symbol: asset.name } });
+            if (existing && Number(existing.bidPrice) > 0) {
+              currentPrice = Number(existing.bidPrice);
+            }
+          } catch (e) {}
         }
+        if (currentPrice <= 0) continue;
  
         const bidPrice = parseFloat(currentPrice.toFixed(4));
         const askPrice = parseFloat((currentPrice * 1.0005).toFixed(4)); // 0.05% spread

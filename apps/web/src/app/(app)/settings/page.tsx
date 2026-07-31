@@ -38,6 +38,32 @@ export default function SettingsPage() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [isClient, setIsClient] = useState(false);
 
+  const [portfolioStats, setPortfolioStats] = useState({
+    totalTrades: 0,
+    winRate: 0,
+    signalsFollowed: 0,
+    aiAccuracy: 0,
+    totalProfit: 0
+  });
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const stats = await apiFetch<any>('/api/v2/portfolio/stats');
+        if (stats) {
+          setPortfolioStats({
+            totalTrades: stats.totalTrades || 0,
+            winRate: stats.winRate || 0,
+            signalsFollowed: stats.signalsFollowed || 0,
+            aiAccuracy: stats.aiAccuracy || 0,
+            totalProfit: stats.totalProfit || 0
+          });
+        }
+      } catch (err) {}
+    };
+    fetchStats();
+  }, []);
+
   useEffect(() => {
     setIsClient(true);
     const handleUrlChange = () => {
@@ -1810,10 +1836,10 @@ export default function SettingsPage() {
             </h4>
             <div className="grid grid-cols-2 gap-3 text-xs">
               {[
-                { label: 'Total Trades', val: '1,424' },
-                { label: 'Win Rate', val: '68.2%' },
-                { label: 'Signals Followed', val: '890' },
-                { label: 'AI Accuracy', val: '86%' },
+                { label: 'Total Trades', val: portfolioStats.totalTrades.toLocaleString() },
+                { label: 'Win Rate', val: `${portfolioStats.winRate}%` },
+                { label: 'Signals Followed', val: portfolioStats.signalsFollowed.toLocaleString() },
+                { label: 'AI Accuracy', val: `${portfolioStats.aiAccuracy}%` },
               ].map(stat => (
                 <div key={stat.label} className="p-3 rounded-xl border border-white/5 bg-slate-900/30">
                   <div className="font-semibold text-slate-200 text-sm">{stat.val}</div>
@@ -1821,9 +1847,11 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
-            <div className="p-3.5 rounded-xl border border-emerald-500/10 bg-emerald-500/5 text-xs text-emerald-400 flex justify-between items-center">
+            <div className="p-3.5 rounded-xl border border-white/5 bg-white/2 text-xs text-slate-400 flex justify-between items-center">
               <span>Total Profit Growth:</span>
-              <span className="font-black">+$42,150.20</span>
+              <span className={cn("font-bold font-mono", portfolioStats.totalProfit >= 0 ? "text-emerald-400" : "text-red-400")}>
+                {portfolioStats.totalProfit >= 0 ? '+' : ''}${portfolioStats.totalProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </span>
             </div>
           </div>
 

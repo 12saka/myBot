@@ -15,6 +15,10 @@ import { CopilotModule } from './modules/copilot/copilot.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { CalendarModule } from './modules/calendar/calendar.module';
 import { CotModule } from './modules/cot/cot.module';
+import { BrokersModule } from './modules/brokers/brokers.module';
+import { AcademyModule } from './modules/academy/academy.module';
+import { StrategiesModule } from './modules/strategies/strategies.module';
+import { AutomationModule } from './modules/automation/automation.module';
 
 @Module({
   imports: [
@@ -34,6 +38,10 @@ import { CotModule } from './modules/cot/cot.module';
     NotificationsModule,
     CalendarModule,
     CotModule,
+    BrokersModule,
+    AcademyModule,
+    StrategiesModule,
+    AutomationModule,
   ],
 })
 export class AppModule {}

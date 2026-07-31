@@ -148,6 +148,48 @@ export class MarketsController {
     ];
   }
 
+  @Get('summary')
+  async getMarketSummary() {
+    const list = await this.prisma.marketData.findMany();
+    const stats = this.marketsService.getTickerStats();
+
+    if (list.length === 0) {
+      return {
+        totalMarketCap: 0,
+        totalVolume24h: 0,
+        btcDominance: null,
+        activeMarkets: 0,
+        gainers: 0,
+        losers: 0,
+        lastUpdated: new Date().toISOString(),
+        source: 'unavailable',
+        message: 'No market data available from live providers.',
+      };
+    }
+
+    let totalVolume24h = 0;
+    let gainers = 0;
+    let losers = 0;
+
+    list.forEach(item => {
+      const cache = stats[item.symbol] || { price: item.bidPrice, changePct24h: 0.0, volume24h: item.volume24h };
+      totalVolume24h += cache.volume24h || 0;
+      if (cache.changePct24h > 0) gainers++;
+      else if (cache.changePct24h < 0) losers++;
+    });
+
+    return {
+      totalMarketCap: 0,
+      totalVolume24h: Math.round(totalVolume24h),
+      btcDominance: null,
+      activeMarkets: list.length,
+      gainers,
+      losers,
+      lastUpdated: new Date().toISOString(),
+      source: 'live' as const
+    };
+  }
+
   @Get('orderbook/:symbol')
   async getOrderBook(@Param('symbol') symbol: string) {
     const cleanSymbol = symbol.toUpperCase().replace('/USD', '').trim();
@@ -162,30 +204,30 @@ export class MarketsController {
           const data = await response.json();
           const bids = (data.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) }));
           const asks = (data.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) }));
-          return { symbol: symbol.toUpperCase(), bids, asks };
+          return { symbol: symbol.toUpperCase(), bids, asks, source: 'binance' };
         }
       } catch (err) {}
     }
 
-    // Fallback/Non-crypto: generate high-fidelity spread-based bids/asks around active market price
+    // Non-crypto: deterministic spread-based bids/asks around active market price
     const item = await this.prisma.marketData.findUnique({
       where: { symbol: symbol.toUpperCase() },
     });
     const bidPrice = item ? item.bidPrice : 100.0;
     const askPrice = item ? item.askPrice : 100.05;
-    const spread = askPrice - bidPrice;
+    const step = (askPrice - bidPrice) || (bidPrice * 0.0005);
     
     const bids = Array.from({ length: 5 }, (_, i) => ({
-      price: parseFloat((bidPrice - i * (spread * 0.5) - Math.random() * (spread * 0.1)).toFixed(4)),
-      size: parseFloat((Math.random() * 2 + 0.1).toFixed(2))
+      price: parseFloat((bidPrice - i * step).toFixed(4)),
+      size: parseFloat((1.5 + i * 0.2).toFixed(2))
     }));
     
     const asks = Array.from({ length: 5 }, (_, i) => ({
-      price: parseFloat((askPrice + i * (spread * 0.5) + Math.random() * (spread * 0.1)).toFixed(4)),
-      size: parseFloat((Math.random() * 2 + 0.1).toFixed(2))
+      price: parseFloat((askPrice + i * step).toFixed(4)),
+      size: parseFloat((1.5 + i * 0.2).toFixed(2))
     }));
 
-    return { symbol: symbol.toUpperCase(), bids, asks };
+    return { symbol: symbol.toUpperCase(), bids, asks, source: 'market_quote' };
   }
 }
 

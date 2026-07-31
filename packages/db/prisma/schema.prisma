@@ -40,6 +40,8 @@ model User {
   transactions       Transaction[]
   wallet             Wallet?
   signals            Signal[]
+  brokerProfile      UserBrokerProfile?
+  liveSessionRegistrations LiveSessionRegistration[]
 
   @@index([createdAt])
 }
@@ -309,6 +311,31 @@ model Certificate {
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model LiveSession {
+  id              String                     @id @default(uuid())
+  title           String
+  instructor      String
+  startTime       DateTime
+  durationMinutes Int
+  category        String
+  meetingUrl      String?
+  isActive        Boolean                    @default(true)
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  registrations   LiveSessionRegistration[]
+}
+
+model LiveSessionRegistration {
+  id        String      @id @default(uuid())
+  userId    String
+  sessionId String
+  createdAt DateTime    @default(now())
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sessionId])
+}
+
 model Notification {
   id        String   @id @default(uuid())
   userId    String
@@ -564,4 +591,29 @@ enum SubscriptionStatus {
   ACTIVE
   EXPIRED
   CANCELLED
+}
+
+model UserBrokerProfile {
+  id                        String    @id @default(uuid())
+  userId                    String    @unique
+  user                      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brokerType                String    @default("fbs")
+  platform                  String    @default("mt5")
+  accountLogin              String
+  server                    String
+  connectionMode            String    @default("read_only")
+  status                    String    @default("pending")
+  encryptedInvestorPassword String
+  encryptedTradingPassword  String?
+  balance                   Float     @default(0.0)
+  equity                    Float     @default(0.0)
+  margin                    Float     @default(0.0)
+  freeMargin                Float     @default(0.0)
+  leverage                  String    @default("1:500")
+  currency                  String    @default("USD")
+  lastSyncedAt              DateTime?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  @@index([userId])
 }

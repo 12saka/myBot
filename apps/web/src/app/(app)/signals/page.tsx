@@ -62,12 +62,20 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       {/* Header */}
       <div className="flex items-start justify-between pr-4">
         <div>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="font-display font-bold text-white text-lg">{signal.symbol}</span>
             <Badge variant={isBuy ? 'buy' : 'sell'}>{signal.direction}</Badge>
             <Badge variant="neutral" size="xs">{signal.type}</Badge>
+            <Badge variant={signal.aiReasoning?.entry_type === 'MARKET_NOW' ? 'buy' : 'blue'} size="xs">
+              {signal.aiReasoning?.entry_type === 'MARKET_NOW' ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
+            </Badge>
           </div>
-          <span className="text-[10px] text-slate-500">{signal.strategy}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-slate-500">{signal.strategy}</span>
+            <span className="text-[10px] text-cyan-400 font-mono flex items-center gap-1 bg-cyan-950/40 px-1.5 py-0.5 rounded border border-cyan-500/20">
+              <Clock size={10} /> Generated {signal.createdAt ? new Date(signal.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Just now'}
+            </span>
+          </div>
         </div>
         <ProgressRing
           value={signal.confidence}
@@ -515,7 +523,13 @@ export default function SignalsPage() {
     try {
       const raw = await apiFetch<any[]>('/api/v2/signals');
       if (Array.isArray(raw)) {
-        setSignals(raw.map(mapSignal));
+        const nowMs = Date.now();
+        const activeOnly = raw.map(mapSignal).filter(s => {
+          if (s.expiresAt && new Date(s.expiresAt).getTime() < nowMs) return false;
+          if (s.status === 'EXPIRED' || s.status === 'CLOSED') return false;
+          return true;
+        });
+        setSignals(activeOnly);
       }
     } catch (err) {
       console.warn('Initial signals fetch skipped:', err);
@@ -528,7 +542,13 @@ export default function SignalsPage() {
     try {
       const raw = await apiFetch<any[]>('/api/v2/signals');
       if (Array.isArray(raw)) {
-        setSignals(raw.map(mapSignal));
+        const nowMs = Date.now();
+        const activeOnly = raw.map(mapSignal).filter(s => {
+          if (s.expiresAt && new Date(s.expiresAt).getTime() < nowMs) return false;
+          if (s.status === 'EXPIRED' || s.status === 'CLOSED') return false;
+          return true;
+        });
+        setSignals(activeOnly);
         toast.success('AI signals list updated successfully!', { id: toastId });
       }
     } catch (err: any) {

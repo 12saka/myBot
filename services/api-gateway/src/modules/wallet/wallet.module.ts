@@ -132,13 +132,14 @@ export class WalletController {
           }
         }
       } else if (profile.brokerType.toLowerCase() === 'mt5') {
-        // Sync with simulated MT5 account balance
-        const brokerBalance = 10540.20;
-        wallet.balance = brokerBalance;
-        await this.prisma.wallet.update({
-          where: { id: wallet.id },
-          data: { balance: brokerBalance },
-        });
+        const brokerProf = await (this.prisma as any).userBrokerProfile.findUnique({ where: { userId: userPayload.userId } });
+        if (brokerProf && brokerProf.status === 'connected') {
+          wallet.balance = brokerProf.balance;
+          await this.prisma.wallet.update({
+            where: { id: wallet.id },
+            data: { balance: brokerProf.balance },
+          });
+        }
       }
     }
 

@@ -33,9 +33,9 @@ export function Topbar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
 
-  // Build robust featured list merging live market store tickers with non-null defaults
+  // Build robust featured list merging live market store tickers with non-null defaults (strictly XAU/USD, zero GOLD duplicates)
   const featured = DEFAULT_FEATURED_TICKERS.map(def => {
-    const live = tickers.find(t => t.symbol === def.symbol);
+    const live = tickers.find(t => t.symbol === def.symbol || (t.symbol === 'GOLD' && def.symbol === 'XAU/USD'));
     if (live && typeof live.price === 'number' && !isNaN(live.price) && live.price > 0) {
       return {
         ...def,
@@ -45,7 +45,7 @@ export function Topbar() {
       };
     }
     return def;
-  });
+  }).filter((item, index, self) => index === self.findIndex(t => t.symbol === item.symbol));
 
   const [profile, setProfile] = useState({
     firstName: '',
@@ -156,6 +156,41 @@ export function Topbar() {
     const interval = setInterval(fetchNotifications, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Continuous live market price polling for topbar ticker tape (every 2.5 seconds)
+  const setTickers = useMarketStore(s => s.setTickers);
+  useEffect(() => {
+    const pollLivePrices = async () => {
+      try {
+        const rawMarkets = await apiFetch<any[]>('/api/v2/markets');
+        if (Array.isArray(rawMarkets)) {
+          const mapped = rawMarkets.map(m => {
+            const price = Number(m.bidPrice || m.price || 0);
+            const changePct24h = Number(m.changePct24h || 0.0);
+            const change24h = Number(m.change24h || (price * (changePct24h / 100)));
+            return {
+              symbol: m.symbol === 'GOLD' ? 'XAU/USD' : m.symbol,
+              name: m.name || m.symbol,
+              price,
+              change24h,
+              changePct24h,
+              high24h: Number(m.high24h || price * 1.01),
+              low24h: Number(m.low24h || price * 0.99),
+              volume24h: Number(m.volume24h || 0),
+              marketCap: Number(m.marketCap || 0),
+              type: (m.type || 'forex') as any
+            };
+          }).filter(m => m.price > 0);
+          if (mapped.length > 0) {
+            setTickers(mapped);
+          }
+        }
+      } catch (err) {}
+    };
+    pollLivePrices();
+    const interval = setInterval(pollLivePrices, 2500);
+    return () => clearInterval(interval);
+  }, [setTickers]);
 
   // Close dropdown on click outside
   useEffect(() => {

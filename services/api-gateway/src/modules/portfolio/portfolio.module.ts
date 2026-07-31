@@ -138,34 +138,14 @@ export class PortfolioController {
       const wallet = await this.prisma.wallet.findUnique({
         where: { userId: userPayload.userId },
       });
-      const endBalance = wallet ? wallet.balance : 10000.0;
-
-      const seededRecords = [];
-      const now = new Date();
-      for (let i = 29; i >= 0; i--) {
-        const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-        const progress = (30 - i) / 30;
-        const baseline = endBalance - 600 + (progress * 600);
-        const randomVariance = (Math.random() - 0.48) * 100;
-        const balance = Math.round((baseline + randomVariance) * 100) / 100;
-
-        seededRecords.push({
-          portfolioId: portfolio.id,
-          balance,
-          profit: balance - 9500.0,
-          drawdown: Math.max(0, 10000.0 - balance),
-          timestamp: date,
-        });
-      }
-
-      await this.prisma.performance.createMany({
-        data: seededRecords,
-      });
-
-      records = await this.prisma.performance.findMany({
-        where: { portfolioId: portfolio.id },
-        orderBy: { timestamp: 'desc' },
-      });
+      const currentBal = wallet ? wallet.balance : 0.0;
+      return [{
+        portfolioId: portfolio.id,
+        balance: currentBal,
+        profit: 0.0,
+        drawdown: 0.0,
+        timestamp: new Date()
+      }];
     }
 
     return records;
@@ -536,12 +516,37 @@ export class PortfolioController {
 
     if (profile.brokerType.toLowerCase() === 'mt5') {
       const statsData = await this.getStats(req);
+      const brokerProfile = await (this.prisma as any).userBrokerProfile.findUnique({
+        where: { userId: userPayload.userId },
+      });
+
+      if (!brokerProfile || brokerProfile.status !== 'connected') {
+        return {
+          connected: false,
+          broker: 'MetaTrader 5',
+          accountId: profile.brokerKey || 'N/A',
+          balance: 0,
+          equity: 0,
+          totalTrades: statsData.totalTrades,
+          winRate: statsData.winRate,
+          signalsFollowed: statsData.signalsFollowed,
+          aiAccuracy: statsData.aiAccuracy,
+          message: 'MT5 broker is not connected.',
+        };
+      }
+
       return {
         connected: true,
         broker: 'MetaTrader 5',
-        accountId: profile.brokerKey || 'N/A',
-        balance: 10540.20,
-        equity: 10540.20,
+        accountId: brokerProfile.accountLogin,
+        server: brokerProfile.server,
+        balance: brokerProfile.balance,
+        equity: brokerProfile.equity,
+        margin: brokerProfile.margin,
+        freeMargin: brokerProfile.freeMargin,
+        currency: brokerProfile.currency,
+        leverage: brokerProfile.leverage,
+        lastSyncedAt: brokerProfile.lastSyncedAt,
         totalTrades: statsData.totalTrades,
         winRate: statsData.winRate,
         signalsFollowed: statsData.signalsFollowed,

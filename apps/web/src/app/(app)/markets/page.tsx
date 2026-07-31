@@ -45,6 +45,28 @@ export default function MarketsPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
 
+  const [summary, setSummary] = useState({
+    totalMarketCap: 0,
+    totalVolume24h: 0,
+    btcDominance: null as number | null,
+    activeMarkets: 0,
+    gainers: 0,
+    losers: 0,
+    source: 'unavailable'
+  });
+
+  useEffect(() => {
+    const fetchSummary = async () => {
+      try {
+        const data = await apiFetch<any>('/api/v2/markets/summary');
+        if (data) {
+          setSummary(data);
+        }
+      } catch (err) {}
+    };
+    fetchSummary();
+  }, []);
+
   const closeDrawer = () => {
     setSelectedSymbol(null);
     setIsFullscreen(false);
@@ -191,10 +213,10 @@ export default function MarketsPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total Market Cap', value: '$2.84T', change: '+1.8%', positive: true },
-          { label: 'BTC Dominance',    value: '44.3%',  change: '+0.4%', positive: true },
-          { label: '24h Volume',        value: '$98.6B', change: '-3.2%', positive: false },
-          { label: 'Active Markets',    value: '10,248', change: '+12',   positive: true },
+          { label: 'Total Market Cap', value: summary.totalMarketCap > 0 ? `$${(summary.totalMarketCap / 1e12).toFixed(2)}T` : 'Unavailable', change: summary.source === 'live' ? 'Live' : 'No live cap', positive: summary.source === 'live' },
+          { label: 'BTC Dominance',    value: summary.btcDominance !== null ? `${summary.btcDominance}%` : 'Unavailable',  change: summary.btcDominance !== null ? 'Live' : 'No provider', positive: summary.btcDominance !== null },
+          { label: '24h Volume',        value: summary.totalVolume24h > 0 ? `$${(summary.totalVolume24h / 1e9).toFixed(1)}B` : 'Unavailable', change: summary.totalVolume24h > 0 ? 'Live' : 'No volume', positive: summary.totalVolume24h > 0 },
+          { label: 'Active Markets',    value: `${summary.activeMarkets} Live`, change: summary.activeMarkets > 0 ? 'Live' : 'No feed',   positive: summary.activeMarkets > 0 },
         ].map(({ label, value, change, positive }) => (
           <div key={label} className="glass-card rounded-2xl p-4">
             <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-2">{label}</div>

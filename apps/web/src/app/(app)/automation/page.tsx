@@ -1,71 +1,135 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   Cpu, Zap, Shield, Play, Pause, Settings,
-  AlertTriangle, RefreshCw, BarChart3, Sliders, Info
+  AlertTriangle, RefreshCw, BarChart3, Sliders, Info, Plus
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { StatCard } from '@/components/ui/StatCard';
 import { Badge } from '@/components/ui/Badge';
-import { useAIStore } from '@/store/useAIStore';
 import { toast } from 'react-hot-toast';
+import { apiFetch } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
-const MOCK_STRATEGIES = [
-  { id: 'strat1', name: 'Trend Following AI', type: 'Trend', description: 'Leverages EMA-200 and RSI crossovers to capture mid-term momentum breakouts.', accuracy: '88%' },
-  { id: 'strat2', name: 'Smart Money Flow', type: 'Liquidity', description: 'Tracks institutional block trades and dark pool orders in key supply/demand zones.', accuracy: '84%' },
-  { id: 'strat3', name: 'Breakout AI', type: 'Volatility', description: 'Targets rapid price breakouts from ascending/descending channel resistance.', accuracy: '82%' },
-  { id: 'strat4', name: 'Mean Reversion AI', type: 'Reversal', description: 'Detects overbought/oversold extremes using Bollinger Bands and regression.', accuracy: '78%' },
-];
+type LoadState = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
+
+interface StrategyTemplate {
+  id: string;
+  name: string;
+  description: string;
+  historicalReturn: number;
+  winRate: number;
+  riskScore: number;
+  maxDrawdown: number;
+}
+
+interface AutomationRule {
+  id: string;
+  name: string;
+  strategy: string;
+  allocation: number;
+  riskLimit: number;
+  maxDrawdown: number;
+  isActive: boolean;
+}
 
 export default function AutomationPage() {
-  const { 
-    autonomousActive, 
-    setAutonomous, 
-    aiMode, 
-    setAIMode,
-    allocation,
-    setAllocation,
-    riskLimit,
-    setRiskLimit,
-    maxDrawdown,
-    setMaxDrawdown
-  } = useAIStore();
-  const [selectedStrat, setSelectedStrat] = useState('strat1');
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [strategies, setStrategies] = useState<StrategyTemplate[]>([]);
+  const [userRules, setUserRules] = useState<AutomationRule[]>([]);
+  
+  const [selectedStratName, setSelectedStratName] = useState('Smart Money Concept (SMC)');
+  const [ruleName, setRuleName] = useState('SMC Scalper Bot');
+  const [allocation, setAllocation] = useState(1000);
+  const [riskLimit, setRiskLimit] = useState(1.0);
+  const [maxDrawdown, setMaxDrawdown] = useState(5.0);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleToggleAutonomous = () => {
-    const nextState = !autonomousActive;
-    setAutonomous(nextState);
-    if (nextState) {
-      toast.success('Autonomous AI Execution Enabled! The bot will now place trades matching your parameters.');
-    } else {
-      toast('Autonomous execution paused. Current positions remain active with manual controls.');
+  const fetchAutomationData = async () => {
+    setLoadState('loading');
+    setErrorMessage('');
+    try {
+      const [stratRes, rulesRes] = await Promise.allSettled([
+        apiFetch<StrategyTemplate[]>('/api/v2/strategies'),
+        apiFetch<AutomationRule[]>('/api/v2/automation/rules')
+      ]);
+
+      if (stratRes.status === 'fulfilled' && Array.isArray(stratRes.value)) {
+        setStrategies(stratRes.value);
+        if (stratRes.value.length > 0) {
+          setSelectedStratName(stratRes.value[0].name);
+        }
+      }
+
+      if (rulesRes.status === 'fulfilled' && Array.isArray(rulesRes.value)) {
+        setUserRules(rulesRes.value);
+      }
+
+      setLoadState('ready');
+    } catch (err: any) {
+      console.warn('[Automation] Load notice:', err);
+      setErrorMessage(err.message || 'Cannot reach API Gateway at http://localhost:4000');
+      setLoadState('error');
     }
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchAutomationData();
+  }, []);
+
+  const activeRule = userRules.find(r => r.isActive);
+
+  const handleToggleRule = async (rule: AutomationRule) => {
+    const toastId = toast.loading(`${rule.isActive ? 'Pausing' : 'Starting'} automation rule "${rule.name}"...`);
+    try {
+      const res = await apiFetch<any>(`/api/v2/automation/rules/${rule.id}/toggle`, { method: 'PATCH' });
+      setUserRules(prev => prev.map(r => r.id === rule.id ? { ...r, isActive: !r.isActive } : r));
+      toast.success(res.message || 'Rule status updated in DB!', { id: toastId });
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to toggle rule state.', { id: toastId });
+    }
+  };
+
+  const handleSaveRule = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success('Strategy parameters updated successfully!');
+    setIsSaving(true);
+    const toastId = toast.loading('Saving automation rule to backend database...');
+    try {
+      const created = await apiFetch<AutomationRule>('/api/v2/automation/rules', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: ruleName,
+          strategy: selectedStratName,
+          allocation: Number(allocation),
+          riskLimit: Number(riskLimit),
+          maxDrawdown: Number(maxDrawdown),
+          isActive: true
+        })
+      });
+      setUserRules(prev => [created, ...prev]);
+      toast.success(`Automation rule "${created.name}" created and saved to DB!`, { id: toastId });
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save automation rule.', { id: toastId });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
     <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
       <PageHeader
-        title="Automation Center"
-        subtitle="Manage strategy presets, risk constraints, and toggle autonomous execution."
+        title="Automation Engine & Strategy Rules"
+        subtitle="Configure server-side automated execution rules, risk caps, and strategy templates."
         icon={Cpu}
       >
         <button
-          onClick={handleToggleAutonomous}
-          className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all hover:scale-105 ${
-            autonomousActive
-              ? 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-500/20'
-              : 'bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10'
-          }`}
+          onClick={fetchAutomationData}
+          className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+          title="Refresh Rules & Strategies"
         >
-          {autonomousActive ? <Pause size={14} /> : <Play size={14} />}
-          {autonomousActive ? 'Pause Autonomous Bot' : 'Start Autonomous Bot'}
+          <RefreshCw size={14} className={cn(loadState === 'loading' && "animate-spin")} />
         </button>
       </PageHeader>
 
@@ -73,143 +137,190 @@ export default function AutomationPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="glass-card rounded-2xl p-5 flex flex-col justify-between h-36">
+            <div className="glass-card rounded-2xl p-5 flex flex-col justify-between h-36 border border-white/5">
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Engine Status</span>
                 <h3 className="text-xl font-display font-bold text-white mt-1 flex items-center gap-2">
-                  <span className={`h-2.5 w-2.5 rounded-full ${autonomousActive ? 'bg-purple-400 animate-ping' : 'bg-slate-600'}`} />
-                  {autonomousActive ? 'Autonomous Bot Running' : 'Engine Standing By'}
+                  <span className={`h-2.5 w-2.5 rounded-full ${activeRule ? 'bg-purple-400 animate-ping' : 'bg-slate-600'}`} />
+                  {activeRule ? `Bot Running (${activeRule.name})` : 'Engine Standing By'}
                 </h3>
               </div>
               <p className="text-xs text-slate-500 leading-normal">
-                {autonomousActive ? 'Engine is active and listening to live WebSockets. Trades will be executed instantly.' : 'System in monitoring mode. AI signals will generate notifications only.'}
+                {activeRule ? 'Active server-side rule listening to live market signals.' : 'No active automation rules running. Select a strategy to launch.'}
               </p>
             </div>
-            <div className="glass-card rounded-2xl p-5 flex flex-col justify-between h-36">
+            <div className="glass-card rounded-2xl p-5 flex flex-col justify-between h-36 border border-white/5">
               <div>
-                <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Risk Profile Mode</span>
-                <div className="flex gap-2 mt-2">
-                  {(['CONSERVATIVE', 'BALANCED', 'AGGRESSIVE'] as const).map(mode => (
-                    <button
-                      key={mode}
-                      onClick={() => setAIMode(mode)}
-                      className={`text-[10px] font-bold px-2 py-1.5 rounded-lg border uppercase ${
-                        aiMode === mode
-                          ? 'bg-purple-500 text-white border-purple-600'
-                          : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
+                <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Active Strategy Allocation</span>
+                <h3 className="text-xl font-display font-bold text-purple-400 mt-1">
+                  ${activeRule ? activeRule.allocation.toLocaleString() : '0.00'}
+                </h3>
               </div>
               <p className="text-xs text-slate-500 leading-normal">
-                Adjusts leverage, win probability thresholds, and stop-loss widths.
+                Max risk per trade cap: {activeRule ? activeRule.riskLimit : 1.0}% | Drawdown limit: {activeRule ? activeRule.maxDrawdown : 5.0}%
               </p>
             </div>
           </div>
 
-          {/* Strategies selection */}
-          <div className="glass-card rounded-2xl p-5">
-            <h3 className="font-display font-bold text-white mb-4">Select AI Strategy</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {MOCK_STRATEGIES.map((strat) => (
-                <div
-                  key={strat.id}
-                  onClick={() => setSelectedStrat(strat.id)}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    selectedStrat === strat.id
-                      ? 'border-purple-500/40 bg-purple-500/5'
-                      : 'border-white/5 bg-white/2 hover:border-white/10 hover:bg-white/3'
-                  }`}
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="font-bold text-sm text-slate-200">{strat.name}</div>
-                    <Badge variant="purple" size="xs">{strat.type}</Badge>
+          {/* Active Rules List */}
+          <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
+            <h3 className="font-display font-bold text-white text-sm">Configured Automation Rules</h3>
+            {userRules.length === 0 ? (
+              <p className="text-xs text-slate-500 italic">No saved automation rules yet. Use the form below to configure a new strategy rule.</p>
+            ) : (
+              <div className="space-y-3">
+                {userRules.map(rule => (
+                  <div key={rule.id} className="p-4 rounded-xl border border-white/5 bg-white/2 flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white text-xs">{rule.name}</span>
+                        <Badge variant={rule.isActive ? 'buy' : 'neutral'} size="xs">
+                          {rule.isActive ? 'ACTIVE' : 'PAUSED'}
+                        </Badge>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Strategy: <span className="text-purple-300 font-semibold">{rule.strategy}</span> | Capital: ${rule.allocation.toLocaleString()} | Risk: {rule.riskLimit}%
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleToggleRule(rule)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer",
+                        rule.isActive
+                          ? "bg-purple-600 hover:bg-purple-700 text-white"
+                          : "bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10"
+                      )}
+                    >
+                      {rule.isActive ? <Pause size={12} /> : <Play size={12} />}
+                      {rule.isActive ? 'Pause' : 'Start'}
+                    </button>
                   </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed mb-3">{strat.description}</p>
-                  <div className="flex justify-between items-center text-[10px] border-t border-white/5 pt-2">
-                    <span className="text-slate-600 uppercase font-bold tracking-wider">Confidence Level</span>
-                    <span className="text-purple-400 font-bold">{strat.accuracy} Accuracy</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Strategies Catalog */}
+          <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
+            <h3 className="font-display font-bold text-white text-sm">Select Institutional Strategy Template</h3>
+            {loadState === 'loading' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="glass-card rounded-2xl p-4 h-32 animate-pulse bg-white/3" />
+                ))}
+              </div>
+            )}
+
+            {loadState === 'ready' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {strategies.map((strat) => {
+                  const isSelected = selectedStratName === strat.name;
+                  return (
+                    <div
+                      key={strat.id}
+                      onClick={() => setSelectedStratName(strat.name)}
+                      className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        isSelected
+                          ? 'border-purple-500 bg-purple-500/10'
+                          : 'border-white/5 bg-white/2 hover:border-white/20'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <h4 className="font-bold text-white text-xs">{strat.name}</h4>
+                          <span className="text-[10px] text-emerald-400 font-mono font-bold">Win Rate {strat.winRate}%</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 line-clamp-2 leading-relaxed mb-2">{strat.description}</p>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 pt-2 border-t border-white/5">
+                        <span>Hist. Return: +{strat.historicalReturn}%</span>
+                        <span>Max DD: {strat.maxDrawdown}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Configuration settings panel */}
-        <div className="glass-card rounded-2xl p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Sliders size={18} className="text-purple-400" />
-            <h3 className="font-display font-bold text-white">Bot Parameters</h3>
-          </div>
+        {/* Configuration Form Sidebar */}
+        <div>
+          <form onSubmit={handleSaveRule} className="glass-card rounded-2xl p-5 border border-white/5 space-y-4 sticky top-6">
+            <h3 className="font-display font-bold text-white text-sm flex items-center gap-2">
+              <Sliders size={16} className="text-purple-400" />
+              Configure Bot Rule
+            </h3>
 
-          <form onSubmit={handleSaveSettings} className="space-y-5 text-xs">
-            <div>
-              <div className="flex justify-between text-slate-400 mb-2 font-semibold">
-                <span>Asset Allocation</span>
-                <span className="text-white font-bold">{allocation}%</span>
-              </div>
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400">Rule Name</label>
               <input
-                type="range"
-                min="5"
-                max="100"
+                type="text"
+                value={ruleName}
+                onChange={e => setRuleName(e.target.value)}
+                className="input-glass w-full px-3 py-2 text-xs rounded-xl"
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400">Selected Strategy Template</label>
+              <input
+                type="text"
+                value={selectedStratName}
+                readOnly
+                className="input-glass w-full px-3 py-2 text-xs rounded-xl bg-white/3 text-purple-300 font-semibold cursor-not-allowed"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400">Capital Allocation ($)</label>
+              <input
+                type="number"
                 value={allocation}
                 onChange={e => setAllocation(Number(e.target.value))}
-                className="w-full accent-purple-500 bg-white/10 h-1.5 rounded-lg appearance-none cursor-pointer"
+                className="input-glass w-full px-3 py-2 text-xs rounded-xl font-mono"
+                min={50}
+                required
               />
-              <span className="text-[10px] text-slate-600 mt-1 block">Max portfolio funds to assign to this strategy.</span>
             </div>
 
-            <div>
-              <div className="flex justify-between text-slate-400 mb-2 font-semibold">
-                <span>Risk per Trade</span>
-                <span className="text-white font-bold">{riskLimit}%</span>
-              </div>
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400">Max Risk per Trade (%)</label>
               <input
-                type="range"
-                min="0.5"
-                max="5"
-                step="0.5"
+                type="number"
+                step="0.1"
                 value={riskLimit}
                 onChange={e => setRiskLimit(Number(e.target.value))}
-                className="w-full accent-purple-500 bg-white/10 h-1.5 rounded-lg appearance-none cursor-pointer"
+                className="input-glass w-full px-3 py-2 text-xs rounded-xl font-mono"
+                min={0.1}
+                max={5.0}
+                required
               />
-              <span className="text-[10px] text-slate-600 mt-1 block">Capital at risk per executed order block.</span>
             </div>
 
-            <div>
-              <div className="flex justify-between text-slate-400 mb-2 font-semibold">
-                <span>Maximum Drawdown Limit</span>
-                <span className="text-white font-bold">{maxDrawdown}%</span>
-              </div>
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-bold text-slate-400">Max Daily Drawdown Cap (%)</label>
               <input
-                type="range"
-                min="5"
-                max="25"
+                type="number"
+                step="0.5"
                 value={maxDrawdown}
                 onChange={e => setMaxDrawdown(Number(e.target.value))}
-                className="w-full accent-purple-500 bg-white/10 h-1.5 rounded-lg appearance-none cursor-pointer"
+                className="input-glass w-full px-3 py-2 text-xs rounded-xl font-mono"
+                min={1.0}
+                max={20.0}
+                required
               />
-              <span className="text-[10px] text-slate-600 mt-1 block">Circuit breaker halts trading if account drops this much.</span>
             </div>
 
             <button
               type="submit"
-              className="w-full btn-primary py-3 rounded-xl font-bold text-xs"
+              disabled={isSaving}
+              className="w-full py-3 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-xs transition-all cursor-pointer shadow-lg shadow-purple-500/10 flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
-              Update Parameters
+              <Plus size={14} /> Save & Activate Rule
             </button>
           </form>
-
-          <div className="mt-5 p-3.5 rounded-xl border border-amber-500/10 bg-amber-500/5 text-[10px] text-amber-300 leading-normal flex items-start gap-2.5">
-            <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
-            <span>
-              <strong>Caution:</strong> Enable autonomous mode only if you fully comprehend the volatility of underlying assets. Use paper trading options inside Settings first to evaluate.
-            </span>
-          </div>
         </div>
       </div>
     </motion.div>
