@@ -184,7 +184,6 @@
   .glass-card:hover {
     background: rgba(255,255,255,0.045);
     border-color: rgba(255,255,255,0.12);
-    transform: translateY(-2px);
     box-shadow: 0 20px 40px rgba(0,0,0,0.3), 0 0 0 1px rgba(139,92,246,0.08);
   }
 
@@ -439,4 +438,13 @@
   .animate-float    { animation: float   6s ease-in-out infinite; }
   .animate-neural   { animation: neural  4s ease-in-out infinite; }
   .animate-glow-pulse { animation: glowPulse 3s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }

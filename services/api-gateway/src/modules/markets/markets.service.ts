@@ -214,9 +214,24 @@ export class MarketsService implements OnModuleInit {
         if (forexRes.ok) {
           const fxData = await forexRes.json();
           const rates = fxData?.rates || {};
-          if (rates.EUR) yahooPriceMap['EURUSD=X'] = { price: parseFloat((1 / rates.EUR).toFixed(4)), changePct: 0.05, volume: 500000 };
-          if (rates.GBP) yahooPriceMap['GBPUSD=X'] = { price: parseFloat((1 / rates.GBP).toFixed(4)), changePct: 0.12, volume: 450000 };
-          if (rates.JPY) yahooPriceMap['USDJPY=X'] = { price: parseFloat(rates.JPY.toFixed(2)), changePct: -0.08, volume: 600000 };
+          if (rates.EUR) {
+            const currentP = parseFloat((1 / rates.EUR).toFixed(4));
+            const prevP = yahooPriceMap['EURUSD=X']?.price;
+            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : null;
+            yahooPriceMap['EURUSD=X'] = { price: currentP, changePct: changePct as any, volume: 500000 };
+          }
+          if (rates.GBP) {
+            const currentP = parseFloat((1 / rates.GBP).toFixed(4));
+            const prevP = yahooPriceMap['GBPUSD=X']?.price;
+            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : null;
+            yahooPriceMap['GBPUSD=X'] = { price: currentP, changePct: changePct as any, volume: 450000 };
+          }
+          if (rates.JPY) {
+            const currentP = parseFloat(rates.JPY.toFixed(2));
+            const prevP = yahooPriceMap['USDJPY=X']?.price;
+            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : null;
+            yahooPriceMap['USDJPY=X'] = { price: currentP, changePct: changePct as any, volume: 600000 };
+          }
         }
       } catch (err: any) {
         console.warn(`[MarketsService] Forex open.er-api.com connection notice: ${err.message}`);

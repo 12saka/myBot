@@ -44,16 +44,25 @@ export class MarketsController {
 
     return list.map(item => {
       const info = meta[item.symbol] || { name: item.symbol, marketCap: 0, type: 'crypto' as const };
-      const cache = stats[item.symbol] || { price: item.bidPrice, changePct24h: 0.0, volume24h: item.volume24h };
+      const cache = stats[item.symbol];
+      const isCrypto = info.type === 'crypto';
+      const isForex = info.type === 'forex';
+      const ageMs = Date.now() - new Date(item.lastUpdated).getTime();
+      const isLive = ageMs < 90_000;
+
+      const source = isCrypto ? 'binance' : isForex ? 'open-er-api' : isLive ? 'stooq' : 'stale-cache';
 
       return {
         symbol: item.symbol,
+        name: info.name,
         price: item.bidPrice,
-        changePct24h: cache.changePct24h,
-        volume24h: cache.volume24h,
+        changePct24h: cache ? (cache.changePct24h ?? null) : null,
+        volume24h: cache ? cache.volume24h : item.volume24h,
         marketCap: info.marketCap,
         type: info.type,
-        name: info.name,
+        source,
+        isLive,
+        lastUpdated: item.lastUpdated ? new Date(item.lastUpdated).toISOString() : new Date().toISOString()
       };
     });
   }

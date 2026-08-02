@@ -12,16 +12,16 @@ import { apiFetch } from '@/lib/api';
 import { toast } from 'react-hot-toast';
 
 const DEFAULT_FEATURED_TICKERS = [
-  { symbol: 'BTC/USD', price: 64200.0, changePct24h: 1.45, type: 'crypto' },
-  { symbol: 'ETH/USD', price: 3450.0, changePct24h: 2.10, type: 'crypto' },
-  { symbol: 'XAU/USD', price: 2350.5, changePct24h: 0.65, type: 'commodity' },
-  { symbol: 'EUR/USD', price: 1.0855, changePct24h: 0.12, type: 'forex' },
-  { symbol: 'USD/JPY', price: 154.20, changePct24h: -0.25, type: 'forex' },
-  { symbol: 'US100', price: 19850.0, changePct24h: 0.95, type: 'index' },
-  { symbol: 'US30', price: 39800.0, changePct24h: 0.42, type: 'index' },
-  { symbol: 'NVDA', price: 124.50, changePct24h: 3.15, type: 'stock' },
-  { symbol: 'AAPL', price: 224.20, changePct24h: 0.85, type: 'stock' },
-  { symbol: 'SOL/USD', price: 182.40, changePct24h: 4.20, type: 'crypto' }
+  { symbol: 'BTC/USD', price: 0, changePct24h: 0, type: 'crypto' },
+  { symbol: 'ETH/USD', price: 0, changePct24h: 0, type: 'crypto' },
+  { symbol: 'XAU/USD', price: 0, changePct24h: 0, type: 'commodity' },
+  { symbol: 'EUR/USD', price: 0, changePct24h: 0, type: 'forex' },
+  { symbol: 'USD/JPY', price: 0, changePct24h: 0, type: 'forex' },
+  { symbol: 'US100', price: 0, changePct24h: 0, type: 'index' },
+  { symbol: 'US30', price: 0, changePct24h: 0, type: 'index' },
+  { symbol: 'NVDA', price: 0, changePct24h: 0, type: 'stock' },
+  { symbol: 'AAPL', price: 0, changePct24h: 0, type: 'stock' },
+  { symbol: 'SOL/USD', price: 0, changePct24h: 0, type: 'crypto' }
 ];
 
 export function Topbar() {
@@ -162,7 +162,7 @@ export function Topbar() {
   useEffect(() => {
     const pollLivePrices = async () => {
       try {
-        const rawMarkets = await apiFetch<any[]>('/api/v2/markets');
+        const rawMarkets = await apiFetch<any[]>('/api/v2/markets/tickers');
         if (Array.isArray(rawMarkets)) {
           const mapped = rawMarkets.map(m => {
             const price = Number(m.bidPrice || m.price || 0);
@@ -241,19 +241,25 @@ export function Topbar() {
             <div key={i} className="flex items-center gap-2 text-xs whitespace-nowrap">
               <span className="text-slate-400 font-medium">{ticker.symbol}</span>
               <span className="font-bold text-slate-200">
-                {ticker.symbol.includes('JPY') ? ticker.price.toFixed(2)
+                {ticker.price === 0 ? (
+                  <span className="text-slate-500 font-mono text-[10px]">Loading...</span>
+                ) : ticker.symbol.includes('JPY') ? ticker.price.toFixed(2)
                   : ticker.symbol.includes('EUR') || ticker.symbol.includes('GBP') ? ticker.price.toFixed(4)
                   : ticker.symbol.includes('XAU') || ticker.symbol.includes('GOLD') ? `$${ticker.price.toFixed(2)}`
                   : ticker.price > 1000 ? `$${ticker.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                   : `$${ticker.price.toFixed(2)}`}
               </span>
-              <span className={cn(
-                'flex items-center gap-0.5 font-semibold',
-                ticker.changePct24h >= 0 ? 'text-emerald-400' : 'text-red-400'
-              )}>
-                {ticker.changePct24h >= 0 ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                {Math.abs(ticker.changePct24h).toFixed(2)}%
-              </span>
+              {ticker.price > 0 && ticker.changePct24h !== null && ticker.changePct24h !== undefined ? (
+                <span className={cn(
+                  'flex items-center gap-0.5 font-semibold',
+                  ticker.changePct24h >= 0 ? 'text-emerald-400' : 'text-red-400'
+                )}>
+                  {ticker.changePct24h >= 0 ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                  {Math.abs(ticker.changePct24h).toFixed(2)}%
+                </span>
+              ) : ticker.price > 0 ? (
+                <span className="text-[10px] text-slate-500 font-mono">Live</span>
+              ) : null}
             </div>
           ))}
         </div>

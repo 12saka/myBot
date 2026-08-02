@@ -60,7 +60,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         // Execute parallel fast requests for Binance Crypto + Gateway Markets simultaneously
         const [binanceRes, gatewayRes] = await Promise.allSettled([
           fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]'),
-          fetch(`${apiUrl}/api/v2/markets`)
+          fetch(`${apiUrl}/api/v2/markets/tickers`)
         ]);
 
         if (binanceRes.status === 'fulfilled' && binanceRes.value.ok) {
@@ -157,12 +157,12 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
               const mapped = stooqMap[s.symbol?.toLowerCase()];
               if (mapped && isMounted) {
                 const price = parseFloat(s.close || 0);
-                const open = parseFloat(s.open || price);
-                const changePct = open > 0 ? ((price - open) / open) * 100 : 0;
+                const open = parseFloat(s.open || 0);
+                const changePct = open > 0 && price !== open ? parseFloat((((price - open) / open) * 100).toFixed(2)) : null;
                 if (price > 0) {
                   updateTicker(mapped.symbol, {
                     price,
-                    changePct24h: parseFloat(changePct.toFixed(2)),
+                    changePct24h: changePct as any,
                     high24h: parseFloat(s.high || price * 1.005),
                     low24h: parseFloat(s.low || price * 0.995),
                     type: mapped.type
