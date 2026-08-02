@@ -213,8 +213,9 @@ export class AuthService {
     | { requires2fa: true; email: string }
     | { requires2fa: false; accessToken: string; expiresIn: number; user?: any }
   > {
+    const normalizedEmail = email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
       include: { profile: true },
     });
 
@@ -243,8 +244,9 @@ export class AuthService {
     ipAddress: string,
     userAgent: string
   ): Promise<{ requires2fa: false; accessToken: string; expiresIn: number; user?: any }> {
+    const normalizedEmail = email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
       include: { profile: true },
     });
 

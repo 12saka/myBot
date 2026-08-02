@@ -1,3 +1,21 @@
+const fs = require('fs');
+const path = require('path');
+
+if (!process.env.DATABASE_URL) {
+  try {
+    const envPath = path.resolve(__dirname, '../../../.env');
+    if (fs.existsSync(envPath)) {
+      const envLines = fs.readFileSync(envPath, 'utf8').split('\n');
+      for (const line of envLines) {
+        const [k, ...v] = line.split('=');
+        if (k && v.length > 0) {
+          process.env[k.trim()] = v.join('=').trim().replace(/^["']|["']$/g, '');
+        }
+      }
+    }
+  } catch (e) {}
+}
+
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 
@@ -29,7 +47,7 @@ async function main() {
       email,
       phone,
       passwordHash,
-      role: 'SUPER_ADMIN',
+      role: 'ADMIN',
       profile: {
         create: {
           firstName: 'Timothy',

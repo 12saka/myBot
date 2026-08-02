@@ -1,3 +1,21 @@
+const fs = require('fs');
+const path = require('path');
+
+if (!process.env.DATABASE_URL) {
+  try {
+    const envPath = path.resolve(__dirname, '../../../.env');
+    if (fs.existsSync(envPath)) {
+      const envLines = fs.readFileSync(envPath, 'utf8').split('\n');
+      for (const line of envLines) {
+        const [k, ...v] = line.split('=');
+        if (k && v.length > 0) {
+          process.env[k.trim()] = v.join('=').trim().replace(/^["']|["']$/g, '');
+        }
+      }
+    }
+  } catch (e) {}
+}
+
 const { PrismaClient } = require('@prisma/client');
 
 const prisma = new PrismaClient();
@@ -26,7 +44,7 @@ async function main() {
     data: {
       email: 'admin@trademind.ai',
       passwordHash: DEFAULT_PASSWORD_HASH,
-      role: 'SUPER_ADMIN',
+      role: 'ADMIN',
       profile: {
         create: {
           firstName: 'System',
@@ -132,6 +150,7 @@ async function main() {
   // 4. Create Market Data
   console.log('Creating market data...');
   await prisma.marketData.createMany({
+    skipDuplicates: true,
     data: [
       { symbol: 'BTC', bidPrice: 64200.0, askPrice: 64205.0, volume24h: 31000000000.0 },
       { symbol: 'ETH', bidPrice: 3250.0, askPrice: 3251.0, volume24h: 18000000000.0 },
