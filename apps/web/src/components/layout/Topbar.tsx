@@ -12,16 +12,16 @@ import { apiFetch } from '@/lib/api';
 import { toast } from 'react-hot-toast';
 
 const DEFAULT_FEATURED_TICKERS = [
-  { symbol: 'BTC/USD', price: 0, changePct24h: 0, type: 'crypto' },
-  { symbol: 'ETH/USD', price: 0, changePct24h: 0, type: 'crypto' },
-  { symbol: 'XAU/USD', price: 0, changePct24h: 0, type: 'commodity' },
-  { symbol: 'EUR/USD', price: 0, changePct24h: 0, type: 'forex' },
-  { symbol: 'USD/JPY', price: 0, changePct24h: 0, type: 'forex' },
-  { symbol: 'US100', price: 0, changePct24h: 0, type: 'index' },
-  { symbol: 'US30', price: 0, changePct24h: 0, type: 'index' },
-  { symbol: 'NVDA', price: 0, changePct24h: 0, type: 'stock' },
-  { symbol: 'AAPL', price: 0, changePct24h: 0, type: 'stock' },
-  { symbol: 'SOL/USD', price: 0, changePct24h: 0, type: 'crypto' }
+  { symbol: 'BTC/USD', type: 'crypto' },
+  { symbol: 'ETH/USD', type: 'crypto' },
+  { symbol: 'XAU/USD', type: 'commodity' },
+  { symbol: 'EUR/USD', type: 'forex' },
+  { symbol: 'USD/JPY', type: 'forex' },
+  { symbol: 'US100', type: 'index' },
+  { symbol: 'US30', type: 'index' },
+  { symbol: 'TSLA', type: 'stock' },
+  { symbol: 'NVDA', type: 'stock' },
+  { symbol: 'SOL/USD', type: 'crypto' }
 ];
 
 export function Topbar() {
@@ -33,18 +33,29 @@ export function Topbar() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
 
-  // Build robust featured list merging live market store tickers with non-null defaults (strictly XAU/USD, zero GOLD duplicates)
+  // Build the ticker tape from live store data. Defaults are symbol placeholders only.
   const featured = DEFAULT_FEATURED_TICKERS.map(def => {
-    const live = tickers.find(t => t.symbol === def.symbol || (t.symbol === 'GOLD' && def.symbol === 'XAU/USD'));
+    const live = tickers.find(t =>
+      t.symbol === def.symbol ||
+      (t.symbol === 'GOLD' && def.symbol === 'XAU/USD') ||
+      (t.symbol === 'BTC' && def.symbol === 'BTC/USD') ||
+      (t.symbol === 'ETH' && def.symbol === 'ETH/USD') ||
+      (t.symbol === 'SOL' && def.symbol === 'SOL/USD')
+    );
     if (live && typeof live.price === 'number' && !isNaN(live.price) && live.price > 0) {
+      const hasRealChange =
+        typeof live.changePct24h === 'number' &&
+        Number.isFinite(live.changePct24h) &&
+        (Math.abs(live.changePct24h) >= 0.005 || Math.abs(live.change24h || 0) > 0);
+
       return {
         ...def,
         price: live.price,
-        changePct24h: typeof live.changePct24h === 'number' && !isNaN(live.changePct24h) ? live.changePct24h : def.changePct24h,
+        changePct24h: hasRealChange ? live.changePct24h : null,
         type: live.type || def.type
       };
     }
-    return def;
+    return { ...def, price: null, changePct24h: null };
   }).filter((item, index, self) => index === self.findIndex(t => t.symbol === item.symbol));
 
   const [profile, setProfile] = useState({
@@ -238,10 +249,10 @@ export function Topbar() {
       <div className="border-b border-white/4 overflow-hidden bg-black/20">
         <div className="flex gap-8 px-4 py-1.5 ticker-tape" style={{ width: 'max-content' }}>
           {[...featured, ...featured].map((ticker, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs whitespace-nowrap">
+            <div key={i} className="flex items-center gap-2 text-xs whitespace-nowrap min-w-max">
               <span className="text-slate-400 font-medium">{ticker.symbol}</span>
               <span className="font-bold text-slate-200">
-                {ticker.price === 0 ? (
+                {!ticker.price ? (
                   <span className="text-slate-500 font-mono text-[10px]">Loading...</span>
                 ) : ticker.symbol.includes('JPY') ? ticker.price.toFixed(2)
                   : ticker.symbol.includes('EUR') || ticker.symbol.includes('GBP') ? ticker.price.toFixed(4)
@@ -249,7 +260,7 @@ export function Topbar() {
                   : ticker.price > 1000 ? `$${ticker.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                   : `$${ticker.price.toFixed(2)}`}
               </span>
-              {ticker.price > 0 && ticker.changePct24h !== null && ticker.changePct24h !== undefined ? (
+              {ticker.price && ticker.changePct24h !== null && ticker.changePct24h !== undefined ? (
                 <span className={cn(
                   'flex items-center gap-0.5 font-semibold',
                   ticker.changePct24h >= 0 ? 'text-emerald-400' : 'text-red-400'
@@ -257,8 +268,8 @@ export function Topbar() {
                   {ticker.changePct24h >= 0 ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                   {Math.abs(ticker.changePct24h).toFixed(2)}%
                 </span>
-              ) : ticker.price > 0 ? (
-                <span className="text-[10px] text-slate-500 font-mono">Live</span>
+              ) : ticker.price ? (
+                <span className="text-[10px] text-emerald-400/80 font-mono">Live</span>
               ) : null}
             </div>
           ))}

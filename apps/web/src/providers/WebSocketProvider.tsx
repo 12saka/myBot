@@ -179,9 +179,9 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           if (fxRes.ok && isMounted) {
             const data = await fxRes.json();
             const rates = data?.rates || {};
-            if (rates.EUR) updateTicker('EUR/USD', { price: parseFloat((1 / rates.EUR).toFixed(4)), changePct24h: 0.05, type: 'forex' });
-            if (rates.GBP) updateTicker('GBP/USD', { price: parseFloat((1 / rates.GBP).toFixed(4)), changePct24h: 0.12, type: 'forex' });
-            if (rates.JPY) updateTicker('USD/JPY', { price: parseFloat(rates.JPY.toFixed(2)), changePct24h: -0.08, type: 'forex' });
+            if (rates.EUR) updateTicker('EUR/USD', { price: parseFloat((1 / rates.EUR).toFixed(4)), type: 'forex' });
+            if (rates.GBP) updateTicker('GBP/USD', { price: parseFloat((1 / rates.GBP).toFixed(4)), type: 'forex' });
+            if (rates.JPY) updateTicker('USD/JPY', { price: parseFloat(rates.JPY.toFixed(2)), type: 'forex' });
           }
         } catch (e) {}
 
