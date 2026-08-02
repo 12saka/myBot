@@ -229,6 +229,7 @@ export class AuthController {
       message: 'Authentication successful',
       accessToken: loginResult.accessToken,
       expiresIn: loginResult.expiresIn,
+      user: loginResult.user,
     };
   }
 
@@ -299,6 +300,7 @@ export class AuthController {
       message: '2FA verification successful',
       accessToken: loginResult.accessToken,
       expiresIn: loginResult.expiresIn,
+      user: loginResult.user,
     };
   }
 

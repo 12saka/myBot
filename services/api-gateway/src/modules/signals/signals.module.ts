@@ -391,6 +391,7 @@ export class SignalsController implements OnModuleInit {
       }
 
       const atr = this.calcATR(cachedCandles, 14);
+      const prevAtr = this.calcATR(cachedCandles.slice(0, -1), 14);
       const rsi14 = this.calcRSI(closes, 14);
       const ema20 = this.calcEMA(closes, 20);
       const ema50 = this.calcEMA(closes, 50);
@@ -460,53 +461,26 @@ export class SignalsController implements OnModuleInit {
             entry_type: entryType,
             evidence: evidence,
             confidence_breakdown: evidence.calculatedScores || evidence,
-            indicators: symbol.includes('US100') || symbol.includes('NAS') ? [
-              `PRO Big Tech Mag 7 Momentum ${direction} Lead`,
-              '15-Min Opening Range Breakout (ORB)',
-              'US10Y Yield Curve Compression Target'
-            ] : symbol.includes('US30') || symbol.includes('DOW') ? [
-              `PRO VIX Volatility Inversion ${direction} Setup`,
-              'Cyclical Sector Rotation Confluence',
-              'Previous Day Low (PDL) SMC Sweep Retest'
-            ] : symbol.includes('SPX') || symbol.includes('500') ? [
-              `PRO S&P 500 Breadth & Gamma Exposure ${direction}`,
-              'Market Market-Cap Weighted Rebalance',
-              'Institutional Dark Pool Flow Alignment'
-            ] : symbol.includes('TSLA') || symbol.includes('NVDA') || symbol.includes('AAPL') || symbol.includes('MSFT') || symbol.includes('AMZN') ? [
-              `PRO Equity Relative Volume (RVOL > 1.8x) ${direction}`,
-              'Earnings & Gamma Squeeze Structural Break',
-              'Options Chain Delta Neutral Realignment'
-            ] : symbol.includes('EUR') || symbol.includes('GBP') || symbol.includes('JPY') ? [
-              `PRO Central Bank Rate Differential ${direction}`,
-              'DXY Dollar Index Liquidity Divergence',
-              'London/New York Session Overlap FVG Sweep'
-            ] : symbol.includes('XAU') || symbol.includes('GOLD') ? [
-              `PRO US Real Yields & Inflation Swap ${direction}`,
-              'Central Bank Reserve Inflow Confluence',
-              'Asian High/Low Sweep Liquidity Hunt'
-            ] : symbol.includes('BTC') || symbol.includes('ETH') || symbol.includes('SOL') ? [
-              `PRO Spot ETF Net Inflows ${direction} Acceleration`,
-              'On-Chain Miner Reserve & Hashrate Trend',
-              'Perpetual Swap Funding Rate Mean Reversion'
-            ] : [
-              `PRO 5-Factor Institutional ${direction} Confluence`,
-              '200 EMA Trend Alignment',
-              'Fair Value Gap (FVG) Retest Target'
+            indicators: [
+              `EMA-20 (${ema20.toFixed(2)}) ${ema20 >= ema50 ? '>' : '<'} EMA-50 (${ema50.toFixed(2)}) — ${ema20 >= ema50 ? 'Bullish' : 'Bearish'} trend`,
+              `RSI-14: ${rsi14.toFixed(1)} — ${rsi14 > 70 ? 'Overbought' : rsi14 < 30 ? 'Oversold' : rsi14 > 55 ? 'Bullish momentum' : rsi14 < 45 ? 'Bearish momentum' : 'Neutral'}`,
+              `ATR-14: ${atr.toFixed(4)} — ${atr > prevAtr ? 'Expanding' : 'Contracting'} volatility`,
+              `VWAP: ${vwap.toFixed(2)} — Price ${entryPrice > vwap ? 'above' : 'below'} VWAP (${entryPrice > vwap ? 'bullish' : 'bearish'} bias)`
             ],
             explanation: `Evidence-based quantitative engine confirmed high-probability ${direction} setup for ${symbol} backed by EMA 20/50/200, RSI-14 (${rsi14.toFixed(1)}), and VWAP alignment.`,
             technicals: { rsi14, trend: direction === 'BUY' ? 'Bullish' : 'Bearish', atr: parseFloat(atr.toFixed(4)), vwap: parseFloat(vwap.toFixed(2)), ema20: parseFloat(ema20.toFixed(2)), ema50: parseFloat(ema50.toFixed(2)), ema200: parseFloat(ema200.toFixed(2)) },
             structure: { fvg_detected: true, order_block_detected: true, support: stopLoss, resistance: takeProfit1 },
             scores: { bullish: direction === 'BUY' ? calculatedWinProb : 100 - calculatedWinProb, bearish: direction === 'BUY' ? 100 - calculatedWinProb : calculatedWinProb, momentum: 80, volume: 75, trend: 85 },
             indicator_verdicts: {
-              ema: `EMAs align with primary ${direction} market structure.`,
-              rsi: `RSI (${rsi14}) confirms directional momentum without overextension.`,
-              macd: 'MACD histogram supports trend continuation.',
-              index_breadth: symbol.includes('US100') ? 'Big Tech Mag 7 momentum leads index expansion.' : symbol.includes('US30') ? 'VIX compression validates bullish sector rotation.' : 'Market breadth confirms bias.'
+              ema: `EMA-20 (${ema20.toFixed(2)}) is ${ema20 > ema50 ? 'above' : 'below'} EMA-50 (${ema50.toFixed(2)}), indicating ${ema20 > ema50 ? 'bullish' : 'bearish'} structure.`,
+              rsi: `RSI-14 is at ${rsi14.toFixed(1)}, showing ${rsi14 > 60 ? 'bullish momentum' : rsi14 < 40 ? 'bearish momentum' : 'neutral momentum'}.`,
+              macd: `ATR-14 is ${atr.toFixed(4)}, defining risk parameters.`,
+              index_breadth: `VWAP at ${vwap.toFixed(2)} acts as dynamic ${entryPrice > vwap ? 'support' : 'resistance'}.`
             },
-            market_structure_analysis: `Institutional market structure analysis identifies key support near ${stopLoss.toFixed(2)} and resistance near ${takeProfit1.toFixed(2)}.`,
+            market_structure_analysis: `Price is ${entryPrice > ema200 ? 'above' : 'below'} the 200 EMA (${ema200.toFixed(2)}), confirming long-term ${entryPrice > ema200 ? 'uptrend' : 'downtrend'}. VWAP is at ${vwap.toFixed(2)}.`,
             tradingview_idea: `PRO Institutional ${direction} setup for ${symbol}. Retest Entry: ${entryPrice.toFixed(2)}, TP1: ${takeProfit1.toFixed(2)} (1:1.6 R:R), TP2: ${takeProfit2.toFixed(2)} (1:2.8 R:R), Stop Loss: ${stopLoss.toFixed(2)}.`,
             category_scores: { technical: 0.85, fundamental: 0.80, sentiment: 0.78, correlation: 0.82, volume: 0.80, on_chain: 0.75 },
-            macro_context: 'Macroeconomic backdrop and liquidity conditions favor trade setup.',
+            macro_context: 'Computed from technical indicators only — no live macro data feed.',
             correlation_analysis: 'Cross-market correlation coefficients validate target boundaries.',
             timeframe: interval,
             status: 'ACTIVE'
@@ -852,6 +826,28 @@ export class SignalsController implements OnModuleInit {
 
   // ─── DEDICATED QUANTITATIVE STRATEGY ENGINES ───
 
+  private calculateWinProb(ema20: number, ema50: number, ema200: number, rsi: number, vwap: number, entryPrice: number, direction: string): number {
+    let winProb = 50;
+    if (ema20 > ema50 && direction === 'BUY') winProb += 10;
+    if (ema20 < ema50 && direction === 'SELL') winProb += 10;
+    if (ema50 > ema200 && direction === 'BUY') winProb += 8;
+    if (ema50 < ema200 && direction === 'SELL') winProb += 8;
+    if (rsi > 55 && direction === 'BUY') winProb += 6;
+    if (rsi < 45 && direction === 'SELL') winProb += 6;
+    if (entryPrice > vwap && direction === 'BUY') winProb += 5;
+    if (entryPrice < vwap && direction === 'SELL') winProb += 5;
+    return Math.min(92, Math.max(55, winProb));
+  }
+
+  private getComputedEvidence(ema20: number, ema50: number, rsi: number, atr: number, vwap: number, entryPrice: number, stopLoss: number, direction: string, dp: number) {
+    return {
+      trend: `EMA-20 (${ema20.toFixed(dp)}) ${ema20 >= ema50 ? '>' : '<'} EMA-50 (${ema50.toFixed(dp)}) — ${direction} trend alignment`,
+      momentum: `RSI-14 at ${rsi.toFixed(1)} — ${rsi > 60 ? 'Strong bullish momentum' : rsi < 40 ? 'Strong bearish momentum' : 'Moderate momentum'}`,
+      volatility: `ATR-14: ${atr.toFixed(dp)} — SL distance: ${Math.abs(entryPrice - stopLoss).toFixed(dp)}`,
+      volume: `VWAP: ${vwap.toFixed(dp)} — Price ${entryPrice > vwap ? 'above' : 'below'} institutional average`
+    };
+  }
+
   private btcStrategyEngine(candles: any[], symbol: string) {
     const closes = candles.map(c => Number(c.close));
     const entryPrice = closes[closes.length - 1];
@@ -859,6 +855,8 @@ export class SignalsController implements OnModuleInit {
     const rsi = this.calcRSI(closes, 14);
     const ema20 = this.calcEMA(closes, 20);
     const ema50 = this.calcEMA(closes, 50);
+    const ema200 = this.calcEMA(closes, 200);
+    const vwap = this.calcVWAP(candles);
 
     const isChop = rsi >= 48 && rsi <= 52;
     if (isChop) {
@@ -881,13 +879,8 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: Math.round(82 + (rsi > 60 ? 4 : 0)),
-      evidence: {
-        trend: `Spot ETF Net Inflow Lead | EMA-20 (${ema20.toFixed(2)}) ${ema20 >= ema50 ? '>' : '<'} EMA-50 (${ema50.toFixed(2)})`,
-        momentum: `RSI-14 at ${rsi.toFixed(1)} confirms perpetual swap funding rate alignment`,
-        liquidity: 'Liquidation clusters cleared near structural bounds',
-        risk: `ATR-14 (${atr.toFixed(2)}) supports tight stop loss`
-      }
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }
 
@@ -898,6 +891,8 @@ export class SignalsController implements OnModuleInit {
     const rsi = this.calcRSI(closes, 14);
     const ema20 = this.calcEMA(closes, 20);
     const ema50 = this.calcEMA(closes, 50);
+    const ema200 = this.calcEMA(closes, 200);
+    const vwap = this.calcVWAP(candles);
 
     const direction = ema20 >= ema50 ? 'BUY' : 'SELL';
     const stopLoss = direction === 'BUY' ? entryPrice - (atr * 1.25) : entryPrice + (atr * 1.25);
@@ -911,13 +906,8 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: 86,
-      evidence: {
-        trend: `Big Tech Mag 7 Momentum ${direction} Lead | EMA-20 (${ema20.toFixed(2)}) vs EMA-50 (${ema50.toFixed(2)})`,
-        momentum: `15-Min Opening Range Breakout (ORB) | RSI-14 at ${rsi.toFixed(1)}`,
-        structure: 'US10Y Yield Curve Compression Target achieved',
-        risk: `ATR-14 (${atr.toFixed(2)}) supports 1:1.8 R:R TP1`
-      }
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }
 
@@ -928,6 +918,8 @@ export class SignalsController implements OnModuleInit {
     const rsi = this.calcRSI(closes, 14);
     const ema20 = this.calcEMA(closes, 20);
     const ema50 = this.calcEMA(closes, 50);
+    const ema200 = this.calcEMA(closes, 200);
+    const vwap = this.calcVWAP(candles);
 
     const direction = ema20 >= ema50 ? 'BUY' : 'SELL';
     const stopLoss = direction === 'BUY' ? entryPrice - (atr * 1.2) : entryPrice + (atr * 1.2);
@@ -941,12 +933,8 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: 84,
-      evidence: {
-        trend: `VIX Volatility Inversion ${direction} Setup | EMA-20 (${ema20.toFixed(2)})`,
-        momentum: `Cyclical Sector Rotation Confluence | RSI-14 at ${rsi.toFixed(1)}`,
-        structure: 'Previous Day Low (PDL) SMC Sweep Retest verified'
-      }
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }
 
@@ -957,6 +945,8 @@ export class SignalsController implements OnModuleInit {
     const rsi = this.calcRSI(closes, 14);
     const ema20 = this.calcEMA(closes, 20);
     const ema50 = this.calcEMA(closes, 50);
+    const ema200 = this.calcEMA(closes, 200);
+    const vwap = this.calcVWAP(candles);
 
     const isChop = rsi >= 49 && rsi <= 51;
     if (isChop) {
@@ -980,12 +970,8 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(precision)),
       takeProfit1: parseFloat(takeProfit1.toFixed(precision)),
       takeProfit2: parseFloat(takeProfit2.toFixed(precision)),
-      calculatedWinProb: 85,
-      evidence: {
-        trend: `Central Bank Rate Differential ${direction} | EMA-20 (${ema20.toFixed(precision)})`,
-        momentum: `DXY Dollar Index Divergence | RSI-14 at ${rsi.toFixed(1)}`,
-        structure: 'London/New York Session Overlap FVG Sweep'
-      }
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, precision)
     };
   }
 
@@ -996,6 +982,8 @@ export class SignalsController implements OnModuleInit {
     const rsi = this.calcRSI(closes, 14);
     const ema20 = this.calcEMA(closes, 20);
     const ema50 = this.calcEMA(closes, 50);
+    const ema200 = this.calcEMA(closes, 200);
+    const vwap = this.calcVWAP(candles);
 
     const direction = ema20 >= ema50 ? 'BUY' : 'SELL';
     const stopLoss = direction === 'BUY' ? entryPrice - (atr * 1.2) : entryPrice + (atr * 1.2);
@@ -1009,12 +997,8 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: 88,
-      evidence: {
-        trend: `US Real Yields & Inflation Swap ${direction} Confluence | EMA-20 (${ema20.toFixed(2)})`,
-        momentum: `Central Bank Reserve Inflow Lead | RSI-14 at ${rsi.toFixed(1)}`,
-        structure: 'Asian High/Low Sweep Liquidity Hunt'
-      }
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }
 
@@ -1123,7 +1107,31 @@ export class SignalsController implements OnModuleInit {
               }
             }
           });
-          console.log(`[SIGNAL OUTCOME RESOLVED] Signal ${sig.id} (${sig.symbol} ${sig.direction}) resolved to ${outcome} at price ${livePrice}`);
+          
+          let winRateText = '0.0%';
+          try {
+            const lastSignals = await this.prisma.signal.findMany({
+              where: { symbol: sig.symbol },
+              orderBy: { createdAt: 'desc' },
+              take: 50
+            });
+            const resolvedSignals = lastSignals.filter(s => {
+               const res = (s.aiReasoning as any)?.outcomeResolution;
+               return res && res !== '';
+            }).slice(0, 20);
+            
+            if (resolvedSignals.length > 0) {
+              const wins = resolvedSignals.filter(s => {
+                 const res = (s.aiReasoning as any)?.outcomeResolution;
+                 return res === 'HIT_TP1' || res === 'HIT_TP2';
+              }).length;
+              winRateText = ((wins / resolvedSignals.length) * 100).toFixed(1) + '%';
+            }
+          } catch (e) {
+            // Ignore DB errors during calibration
+          }
+          
+          console.log(`[SIGNAL OUTCOME RESOLVED] Signal ${sig.id} (${sig.symbol} ${sig.direction}) resolved to ${outcome} at price ${livePrice}. Historical Win Rate (last 20): ${winRateText}`);
         }
       }
     } catch (err: any) {

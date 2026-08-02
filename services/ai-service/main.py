@@ -94,6 +94,7 @@ class PredictRequest(BaseModel):
     candles: Optional[List[CandleItem]] = None
     news: Optional[List[NewsItem]] = None
     session: Optional[str] = None
+    historical_outcomes: Optional[List[dict]] = None
 
 class PredictResponse(BaseModel):
     symbol: str
@@ -371,6 +372,82 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
         "liquidity_sweep": sweep_bullish or sweep_bearish
     }
 
+def analyze_multi_timeframe(candles: List[CandleItem]) -> dict:
+    if not candles or len(candles) < 24:
+        return {"alignment_score": 0.5, "4h_trend": "Neutral", "1d_trend": "Neutral"}
+    try:
+        df = pd.DataFrame([c.dict() for c in candles])
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.set_index('timestamp')
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = df[col].astype(float)
+        
+        df_4h = df.resample('4h').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
+        df_1d = df.resample('1d').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}).dropna()
+        
+        def get_trend(resampled_df):
+            if len(resampled_df) < 5: return "Neutral"
+            ema50 = resampled_df['close'].ewm(span=min(50, len(resampled_df)), adjust=False).mean().iloc[-1]
+            return "Bullish" if resampled_df['close'].iloc[-1] > ema50 else "Bearish"
+            
+        trend_4h = get_trend(df_4h)
+        trend_1d = get_trend(df_1d)
+        
+        score = 0.5
+        if trend_4h == "Bullish" and trend_1d == "Bullish": score = 0.9
+        elif trend_4h == "Bearish" and trend_1d == "Bearish": score = 0.1
+        elif trend_4h == "Bullish" or trend_1d == "Bullish": score = 0.7
+        elif trend_4h == "Bearish" or trend_1d == "Bearish": score = 0.3
+        
+        return {"alignment_score": score, "4h_trend": trend_4h, "1d_trend": trend_1d}
+    except Exception:
+        return {"alignment_score": 0.5, "4h_trend": "Neutral", "1d_trend": "Neutral"}
+
+def detect_trading_session() -> dict:
+    now = datetime.utcnow()
+    hour = now.hour
+    
+    is_asia = 0 <= hour < 8
+    is_london = 7 <= hour < 16
+    is_ny = 13 <= hour < 22
+    
+    active_sessions = []
+    if is_asia: active_sessions.append("Asia")
+    if is_london: active_sessions.append("London")
+    if is_ny: active_sessions.append("New York")
+    
+    is_weekend = now.weekday() >= 5
+    
+    return {
+        "active_session": ", ".join(active_sessions) if active_sessions else "Off-hours",
+        "overlap": (is_london and is_ny) or (is_asia and is_london),
+        "weekend_gap_risk": "High" if is_weekend else "Low"
+    }
+
+def build_computed_explanation(symbol, indicators, structure, current_price, rule_direction) -> str:
+    trend = indicators.get("trend", "Neutral")
+    rsi = indicators.get("rsi14") or 50
+    macd = indicators.get("macd") or 0
+    macd_sig = indicators.get("macd_signal") or 0
+    ob_bull = structure.get("order_block_bullish", False)
+    ob_bear = structure.get("order_block_bearish", False)
+    fvg_bull = structure.get("fvg_bullish", False)
+    fvg_bear = structure.get("fvg_bearish", False)
+    
+    macd_status = "bullish" if macd > macd_sig else "bearish"
+    
+    explanation = f"Computed setup for {symbol}: Direction is {rule_direction}. The current trend is {trend}. "
+    explanation += f"RSI is at {rsi:.1f}. MACD is {macd_status}. "
+        
+    if rule_direction == "BUY":
+        if ob_bull: explanation += "Entry near Bullish Order Block. "
+        if fvg_bull: explanation += "Bullish FVG supports entry. "
+    elif rule_direction == "SELL":
+        if ob_bear: explanation += "Entry near Bearish Order Block. "
+        if fvg_bear: explanation += "Bearish FVG supports entry. "
+        
+    return explanation
+
 # --- Routes ---
 
 @app.get("/health")
@@ -393,10 +470,14 @@ async def get_prediction(
     timeframe = req.timeframe or "1h"   # bind early for prompt interpolation
     indicators = calculate_technical_indicators(candles)
     structure = detect_market_structure(candles)
+    mtf = analyze_multi_timeframe(candles)
+    session_engine = detect_trading_session()
     
-    # Base fallback values
-    direction = "BUY"
-    confidence = 0.82
+    win_rate = 0.5
+    if req.historical_outcomes:
+        hits = sum(1 for o in req.historical_outcomes if o.get('outcome') == 'HIT_TP1')
+        total = len(req.historical_outcomes)
+        if total > 0: win_rate = hits / total
     
     # Determine fallback price based on symbol category if no candles are present
     fallback_price = 100.0  # default for stocks
@@ -514,13 +595,11 @@ async def get_prediction(
     cor_weight_bull = 5.0; cor_weight_bear = 5.0
     sym_upper = symbol.upper()
     if 'US100' in sym_upper or 'NAS' in sym_upper:
-        # NASDAQ 100 Big Tech Mag 7 & US10Y Yield Sensitivity Engine
         if trend_score_bull > trend_score_bear:
             cor_weight_bull = 9.5; cor_weight_bear = 0.5
         else:
             cor_weight_bear = 9.5; cor_weight_bull = 0.5
     elif 'US30' in sym_upper or 'DOW' in sym_upper:
-        # US30 VIX Inversion & Cyclical Sector Rotation Engine
         if rvol > 1.1:
             cor_weight_bull = 9.0; cor_weight_bear = 1.0
         else:
@@ -549,13 +628,10 @@ async def get_prediction(
     vol_module = 85.0 if indicators.get("rvol", 1.0) > 1.25 else 70.0
 
     if 'BTC' in sym_upper or 'ETH' in sym_upper or 'SOL' in sym_upper:
-        # Crypto Weights: On-Chain/Derivatives 20%, SMC 15%, Trend 15%, Volume 15%, Macro 15%, Risk 10%, Execution 10%
         weighted_raw = (smc_module * 0.15) + (trend_module * 0.15) + (flow_module * 0.20) + (macro_module * 0.20) + (vol_module * 0.10) + (88.0 * 0.10) + (92.0 * 0.10)
     elif 'EUR' in sym_upper or 'GBP' in sym_upper or 'JPY' in sym_upper:
-        # Forex Weights: SMC 15%, DXY 12%, Rates 10%, Yields 10%, Trend 12%, Flow 10%, News 8%, Session 8%, Risk 8%, Execution 7%
         weighted_raw = (smc_module * 0.15) + (trend_module * 0.12) + (flow_module * 0.10) + (macro_module * 0.18) + (vol_module * 0.10) + (90.0 * 0.20) + (92.0 * 0.15)
     else:
-        # Indices & Commodities Weights: Breadth 20%, Trend 20%, Macro 20%, SMC 15%, Vol 15%, Risk 10%
         weighted_raw = (smc_module * 0.15) + (trend_module * 0.20) + (flow_module * 0.15) + (macro_module * 0.20) + (vol_module * 0.15) + (90.0 * 0.15)
 
     # Step 4: Direction Agreement Factor (0.90 to 1.05)
@@ -570,15 +646,29 @@ async def get_prediction(
     if rvol < 0.8: risk_penalty += 4.0  # Low liquidity penalty
     if 'JPY' in sym_upper and current_price > 155.0: risk_penalty += 6.0  # BoJ Intervention risk penalty
 
-    # Step 10: Master AI Mathematical Confidence & Calibration
-    raw_confidence = (weighted_raw * agreement_factor * regime_factor) - risk_penalty
-    confidence = float(round(min(0.96, max(0.78, raw_confidence / 100.0)), 2))
+    total_bull_score = trend_score_bull + struct_score_bull + smc_score_bull + macro_weight_bull + liq_weight_bull + vol_weight_bull + cor_weight_bull + pat_weight_bull
+    total_bear_score = trend_score_bear + struct_score_bear + smc_score_bear + macro_weight_bear + liq_weight_bear + vol_weight_bear + cor_weight_bear + pat_weight_bear
 
     if total_bull_score >= total_bear_score:
         rule_direction = "BUY"
     else:
         rule_direction = "SELL"
 
+    # Step 10: Master AI Mathematical Confidence & Calibration
+    raw_confidence = (weighted_raw * agreement_factor * regime_factor) - risk_penalty
+    
+    if rule_direction == "BUY" and mtf["alignment_score"] > 0.5: raw_confidence += 5
+    elif rule_direction == "SELL" and mtf["alignment_score"] < 0.5: raw_confidence += 5
+    if session_engine.get("overlap"): raw_confidence += 5
+    
+    raw_confidence = raw_confidence * (0.8 + 0.4 * win_rate)
+    
+    confidence = float(round(min(0.96, max(0.35, raw_confidence / 100.0)), 2))
+    if confidence < 0.55:
+        rule_direction = "WAIT"
+
+    direction = rule_direction
+    
     entry = current_price
     stop_loss = entry * (0.99 if direction == "BUY" else 1.01)
     tp1 = entry * (1.02 if direction == "BUY" else 0.98)
@@ -625,64 +715,24 @@ async def get_prediction(
     if not detected_signals:
         detected_signals = [f"EMA {indicators.get('trend', 'Structure')} Alignment", "Price Action Confluence"]
 
-    # Asset-Specific Fallback Content (Guarantees zero shared text across assets)
-    symbol_upper = symbol.upper()
-    is_btc = 'BTC' in symbol_upper
-    is_eth = 'ETH' in symbol_upper
-    is_gold = 'XAU' in symbol_upper or 'GOLD' in symbol_upper
-    is_eur = 'EUR' in symbol_upper
-    is_jpy = 'JPY' in symbol_upper
-    is_nas100 = 'US100' in symbol_upper or 'NAS' in symbol_upper
-    is_us30 = 'US30' in symbol_upper or 'DOW' in symbol_upper
+    ai_explanation = build_computed_explanation(symbol, indicators, structure, current_price, rule_direction)
+    macro_context = "Computed macro context not available."
+    correlation_analysis = "Computed cross-asset correlations not available."
+    tradingview_idea = f"{symbol} Setup: Entry at {entry:.2f}. Target TP1: {tp1:.2f}. SL: {stop_loss:.2f}."
 
-    if is_btc:
-        ai_explanation = f"BTC/USD On-Chain & Order Block Retest: 20 EMA trend velocity aligned with 24/7 liquidity sweep of swing low. Retest entry at {entry:.2f}."
-        macro_context = "Bitcoin on-chain exchange reserves decreasing with steady whale accumulation. High correlation with global crypto liquidity."
-        correlation_analysis = "Positive correlation with NASDAQ (US100); inverse correlation with US Dollar Index (DXY)."
-        tradingview_idea = f"BTC/USD Bullish Setup: Enter at Demand Order Block zone ({entry:.2f}). Target TP1: {tp1:.2f}, TP2: {tp2:.2f}. SL: {stop_loss:.2f}."
-    elif is_eth:
-        ai_explanation = f"ETH/USD Layer-2 TVL & BTC Beta Setup: Reversal structure into 4H Fair Value Gap (FVG) at {entry:.2f}."
-        macro_context = "Ethereum Layer-2 Total Value Locked (TVL) expanding alongside staking inflow growth."
-        correlation_analysis = "High 0.92 correlation with BTC/USD directional momentum."
-        tradingview_idea = f"ETH/USD Reversal Setup: Retest of FVG zone at {entry:.2f}. Target TP1: {tp1:.2f}. SL: {stop_loss:.2f}."
-    elif is_gold:
-        ai_explanation = f"XAU/USD Real Yields & Safe-Haven Reversal: Price bouncing off Demand Order Block at {entry:.2f}. Inverse real yield target {tp1:.2f}."
-        macro_context = "Geopolitical safe-haven demand combined with softening US real interest rate yields supporting Gold bullion accumulation."
-        correlation_analysis = "Inverse correlation against US Dollar Index (DXY) and US 10-Yr Real Bond Yields."
-        tradingview_idea = f"XAU/USD Bullish Reversal: Enter at Order Block ({entry:.2f}). Target TP1: {tp1:.2f}. SL: {stop_loss:.2f}."
-    elif is_jpy:
-        ai_explanation = f"USD/JPY 10Y Bond Yield Vector: Price tracking US 10-Yr Treasury Yield expansion. Long setup at {entry:.3f} with ATR stop loss at {stop_loss:.3f}."
-        macro_context = "Bank of Japan maintains dovish rate stance while US Treasury yields remain elevated. Watch BoJ intervention levels."
-        correlation_analysis = "Strong 0.88 positive correlation with US 10-Year Treasury Yields."
-        tradingview_idea = f"USD/JPY Yield Vector Setup: Long entry at {entry:.3f}. Target TP1: {tp1:.3f}. SL: {stop_loss:.3f}."
-    elif is_eur:
-        ai_explanation = f"EUR/USD London Judas Swing Sweep: Liquidity grab below Asian session low into 4H Fair Value Gap. Retest entry at {entry:.4f}."
-        macro_context = "ECB interest rate path divergence against Federal Reserve. Sensitivity to US CPI inflation & NFP employment data."
-        correlation_analysis = "Inverse 0.94 correlation against US Dollar Index (DXY)."
-        tradingview_idea = f"EUR/USD Judas Swing Setup: Long entry at FVG retest ({entry:.4f}). Target TP1: {tp1:.4f}. SL: {stop_loss:.4f}."
-    elif is_nas100:
-        ai_explanation = f"US100 Tech Earnings Breakout: 4H trend continuation with 15M FVG retest entry at {entry:.2f}. RVOL surge target {tp1:.2f}."
-        macro_context = "Mega-cap tech corporate earnings momentum and AI sector tailwinds supporting NASDAQ 100 expansion."
-        correlation_analysis = "Inverse correlation with VIX volatility index and 10-Yr Bond Yield spikes."
-        tradingview_idea = f"US100 Tech Momentum: Enter at FVG retest ({entry:.2f}). Target TP1: {tp1:.2f}. SL: {stop_loss:.2f}."
-    elif is_us30:
-        ai_explanation = f"US30 Industrial Pullback Retest: Support/Resistance retest into NY session open at {entry:.2f}. 1:2.0 R:R target {tp1:.2f}."
-        macro_context = "US GDP growth resilience and industrial sector earnings supporting Dow Jones blue-chip momentum."
-        correlation_analysis = "Positive correlation with broader US economic growth and manufacturing PMI."
-        tradingview_idea = f"US30 Pullback Setup: Enter at S/R retest ({entry:.2f}). Target TP1: {tp1:.2f}. SL: {stop_loss:.2f}."
-    else:
-        ai_explanation = f"Institutional Confluence Setup: Directional bias for {symbol_upper} based on multi-indicator structure."
-        macro_context = "Macroeconomic environment aligned with directional volatility."
-        correlation_analysis = "Cross-asset relationships within normal quantitative bounds."
-        tradingview_idea = f"Trade Setup for {symbol_upper}: Entry at {entry:.2f}. Target {tp1:.2f}."
+    tech_score = 0.5
+    if indicators.get("trend") == "Bullish" and rule_direction == "BUY": tech_score += 0.2
+    elif indicators.get("trend") == "Bearish" and rule_direction == "SELL": tech_score += 0.2
+    if indicators.get("macd_hist", 0) > 0 and rule_direction == "BUY": tech_score += 0.1
+    if indicators.get("macd_hist", 0) < 0 and rule_direction == "SELL": tech_score += 0.1
 
     category_scores = {
-        "technical": round(confidence * 0.9, 2),
-        "fundamental": round(confidence * 0.85, 2),
-        "sentiment": round(confidence * 0.88, 2),
-        "correlation": round(confidence * 0.82, 2),
-        "volume": round(confidence * 0.92, 2),
-        "on_chain": round(confidence * 0.90 if is_btc or is_eth else 0.50, 2)
+        "technical": min(1.0, round(tech_score, 2)),
+        "fundamental": round(macro_weight_bull / 20.0 if rule_direction == "BUY" else macro_weight_bear / 20.0, 2),
+        "sentiment": round(macro_weight_bull / 20.0 if rule_direction == "BUY" else macro_weight_bear / 20.0, 2),
+        "correlation": min(1.0, round(cor_weight_bull / 10.0 if rule_direction == "BUY" else cor_weight_bear / 10.0, 2)),
+        "volume": min(1.0, round(indicators.get("rvol", 1.0) / 2.0, 2)),
+        "on_chain": None
     }
 
     # Gemini generation integration (new SDK)
@@ -850,20 +900,14 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
                 indicator_verdicts = {}
                 market_structure_analysis = ""
                 tradingview_idea = ""
-                category_scores = {}
-                macro_context = ""
-                correlation_analysis = ""
         except Exception as e:
             print(f"[AI-Service] ERROR: Gemini signal generation failed entirely, using heuristic: {str(e)}")
             indicator_verdicts = {}
             market_structure_analysis = ""
             tradingview_idea = ""
-            category_scores = {}
-            macro_context = ""
-            correlation_analysis = ""
 
-    # Respect the AI ensemble forecast direction directly unless confidence is below 50%
-    if confidence >= 0.50:
+    # Respect the AI ensemble forecast direction directly unless confidence is below 55%
+    if confidence >= 0.55:
         rule_direction = direction
     else:
         rule_direction = "WAIT"
@@ -998,170 +1042,27 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         "rvol": float(indicators.get("rvol", 1.0))
     }
     
-    derivatives_matrix = {
-        "open_interest_delta": "+3.45% (Institutional Exposure)",
-        "funding_rate": "+0.0082% (Balanced Market)",
-        "liquidation_heatmap_bias": "Low Leverage Risk Zone"
-    }
-
     sl_dist_pct = abs(entry - stop_loss) / (entry + 1e-9)
-    is_small_account_suitable = sl_dist_pct <= 0.015 and not ('US30' in symbol.upper() or 'US100' in symbol.upper() or 'SPX' in symbol.upper())
-    monetary_risk_15 = round(15.0 * 0.018, 2)
-
     risk_engine = {
         "atr_multiplier": 1.5,
         "max_risk_pct": 1.5,
         "recommended_position_pct": 2.5,
-        "max_daily_drawdown_limit": "3.0%",
-        "small_account_suitable": is_small_account_suitable,
-        "recommended_lot_size": "0.01 Micro-Lot",
-        "est_monetary_risk_15usd": f"${monetary_risk_15:.2f} (1.8% Risk)",
-        "min_account_balance": "$10.00 USD",
-        "margin_required": "$1.50 - $2.50 USD" if is_small_account_suitable else "$25.00+ USD"
-    }
-
-    market_breadth = {
-        "trin_arms_index": 0.76 if rule_direction == "BUY" else 1.24,
-        "tick_index": "+680 (Institutional Buying)" if rule_direction == "BUY" else "-540 (Institutional Selling)",
-        "advance_decline_ratio": "78% Advances" if rule_direction == "BUY" else "72% Declines",
-        "up_down_volume_ratio": "3.85x Up Volume" if rule_direction == "BUY" else "3.20x Down Volume"
-    }
-
-    options_gex = {
-        "dealer_gamma_exposure": "+$2.4B Positive GEX (Volatility Suppressed)" if rule_direction == "BUY" else "-$1.8B Negative GEX (Volatility Accelerated)",
-        "max_pain_price": float(round(entry * 0.995 if rule_direction == "BUY" else entry * 1.005, 2)),
-        "put_call_ratio": 0.68 if rule_direction == "BUY" else 1.34,
-        "dealer_hedging_bias": "Long Gamma Accumulation" if rule_direction == "BUY" else "Short Gamma Protection"
-    }
-
-    mag7_heatmap = {
-        "nvda_momentum": "+2.85% (Semiconductor Lead)",
-        "msft_momentum": "+1.42% (Cloud Momentum)",
-        "aapl_momentum": "+0.95% (Stable Inflows)",
-        "meta_momentum": "+1.88% (Ad Volume Expansion)",
-        "ai_weight_bias": "Bullish Tech Expansion (94% Weight)" if rule_direction == "BUY" else "Bearish Tech Pullback (88% Weight)"
-    }
-
-    earnings_schedule = {
-        "earnings_hazard": "LOW (No Mega-Cap Earnings in Next 4 Hours)",
-        "hazard_lockout_active": False,
-        "next_major_release": "AAPL in 3 Days (Post-Market)"
-    }
-
-    onchain_analytics = {
-        "exchange_net_flow": "-18,450 BTC (Cold Storage Withdrawal)" if rule_direction == "BUY" else "+12,300 BTC (Exchange Inflow)",
-        "mvrv_ratio": 2.14,
-        "sopr_ratio": 1.025,
-        "nupl_status": "Belief / Denial Phase (Bullish Accumulation)" if rule_direction == "BUY" else "Distribution Phase",
-        "realized_cap_growth": "+3.8% (Institutional Capital Inflow)"
-    }
-
-    etf_flows = {
-        "daily_net_inflow_usd": "+$645.2M (BlackRock IBIT Lead)" if rule_direction == "BUY" else "-$180.4M (Outflow)",
-        "custody_movements": "Institutional Accumulation Active",
-        "etf_bullish_weight": "+12.0 Confluence Points"
-    }
-
-    stablecoin_liquidity = {
-        "usdt_supply_change": "+$1.2B Minted (Dry Powder Surge)",
-        "exchange_stablecoin_deposits": "+$850M Active Buying Power",
-        "stablecoin_dominance": "5.45% (Buying Capacity High)"
-    }
-
-    whale_engine = {
-        "tier1_whale_wallets_1k_btc": "Accumulating (+14 Wallets Past 48h)",
-        "dormant_coin_movement": "Low (Long-Term Holders HODLing)",
-        "otc_desk_liquidity": "Tight Supply On OTC Desks"
-    }
-
-    session_engine = {
-        "active_session": "London / New York Overlap (Peak Institutional Liquidity)",
-        "weekend_gap_risk": "Low (High Volume Mid-Week Execution)",
-        "monday_opening_range": "Holding Above Monday Low (Bullish Base)"
-    }
-
-    execution_quality = {
-        "estimated_slippage": "0.008% (Ultra-Low Slippage Zone)",
-        "spread_tightness": "0.01% (Optimal Execution)",
-        "news_blackout_active": False
-    }
-
-    dxy_engine = {
-        "dxy_trend": "Trading Below 20 EMA & Daily VWAP (Dollar Weakness)" if rule_direction == "BUY" and "EUR" in symbol.upper() else "Trading Above 20 EMA (Dollar Strength)",
-        "dxy_rsi": 42.1,
-        "dxy_correlation_weight": "+18.0 Confluence Points"
-    }
-
-    yield_matrix = {
-        "us10y_yield": "4.18%",
-        "de10y_bund_yield": "2.35%",
-        "jp10y_jgb_yield": "1.02%",
-        "us_de_spread": "+1.83% Spread (Yield Alignment)" if "EUR" in symbol.upper() else "+3.16% US-Japan Spread",
-        "us_jp_spread": "+3.16% Spread (Yield Expansion)"
-    }
-
-    interest_differentials = {
-        "fed_target_rate": "5.25% - 5.50%",
-        "ecb_deposit_rate": "3.75%",
-        "boj_policy_rate": "0.25%",
-        "ois_swap_bias": "Fed Expected 2 Cuts / ECB 1 Cut" if "EUR" in symbol.upper() else "BoJ Hawkish Shift Watch"
-    }
-
-    cot_positioning = {
-        "leveraged_funds_net": "+48,200 Contracts Long" if rule_direction == "BUY" else "-32,100 Contracts Short",
-        "commercial_hedgers": "Positioned For Mean-Reversion",
-        "positioning_bias": "Bullish Institutional Accumulation" if rule_direction == "BUY" else "Bearish Institutional Distribution"
-    }
-
-    is_jpy = "JPY" in symbol.upper()
-    intervention_risk = {
-        "boj_intervention_risk": "MODERATE (Level: 154.20 / Threshold: 158.00)" if is_jpy else "LOW (Not Applicable)",
-        "intervention_probability": "28%" if is_jpy else "0%",
-        "recommended_position_sizer": "Standard 1.5% Risk" if not is_jpy or float(entry) < 155.0 else "50% Reduced Sizing (BoJ Guard)"
-    }
-
-    carry_trade = {
-        "global_risk_sentiment": "VIX 14.8 (Risk-On Active)",
-        "carry_trade_attractiveness": "HIGH (Interest Differential 4.90%)" if is_jpy else "MODERATE",
-        "yen_funding_cost": "Low JPY Cost Basis"
-    }
-
-    real_yield_engine = {
-        "us10y_real_yield": "1.82% (-14 bps Daily Rate of Change)" if rule_direction == "BUY" else "1.96% (+8 bps Rate of Change)",
-        "inflation_breakeven_10y": "2.36%",
-        "real_yield_trend": "Falling Real Yields (Bullish Gold Inflows)" if rule_direction == "BUY" else "Rising Real Yields",
-        "confluence_weight": "+18.0 Points (Highest Priority)"
-    }
-
-    inflation_engine = {
-        "us_cpi_yoy": "3.1%",
-        "pce_price_index": "2.6%",
-        "inflation_trend": "Sticky Inflation + Falling Real Yields (Stagflationary Gold Demand)"
-    }
-
-    central_bank_buying = {
-        "pboc_china_reserves": "+18.5 Tonnes Added (18th Consecutive Month)",
-        "rbi_india_reserves": "+8.2 Tonnes Added",
-        "central_bank_net_flow": "Strong Physical De-Dollarization Accumulation (+12pt Boost)"
-    }
-
-    geopolitical_risk = {
-        "conflict_severity_index": "HIGH (Middle East & Eastern Europe Stress)",
-        "safe_haven_premium": "+$32.50 / oz Safe-Haven Inflow",
-        "sovereign_debt_stress": "Elevated Debt Servicing Risk"
+        "sl_distance_pct": float(round(sl_dist_pct * 100, 2))
     }
 
     # Signal Quality Grading (Grade A+ to D)
-    if confidence >= 0.94:
+    if confidence >= 0.88:
         signal_grade = "A+ (Strong Institutional Setup)"
-    elif confidence >= 0.90:
+    elif confidence >= 0.78:
         signal_grade = "A (High Confidence)"
-    elif confidence >= 0.85:
+    elif confidence >= 0.68:
         signal_grade = "B+ (Good Setup)"
-    elif confidence >= 0.80:
+    elif confidence >= 0.58:
         signal_grade = "B (Moderate Confidence)"
-    else:
+    elif confidence >= 0.48:
         signal_grade = "C (Aggressive Trade)"
+    else:
+        signal_grade = "D (Low Confidence)"
 
     return PredictResponse(
         symbol=symbol,
@@ -1186,28 +1087,28 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         regime_detection=regime_detection,
         liquidity_profile=liquidity_profile,
         volume_profile=volume_profile,
-        derivatives_matrix=derivatives_matrix,
+        derivatives_matrix=None,
         risk_engine=risk_engine,
-        market_breadth=market_breadth,
-        options_gex=options_gex,
-        mag7_heatmap=mag7_heatmap,
-        earnings_schedule=earnings_schedule,
-        onchain_analytics=onchain_analytics,
-        etf_flows=etf_flows,
-        stablecoin_liquidity=stablecoin_liquidity,
-        whale_engine=whale_engine,
+        market_breadth=None,
+        options_gex=None,
+        mag7_heatmap=None,
+        earnings_schedule=None,
+        onchain_analytics=None,
+        etf_flows=None,
+        stablecoin_liquidity=None,
+        whale_engine=None,
         session_engine=session_engine,
-        execution_quality=execution_quality,
-        dxy_engine=dxy_engine,
-        yield_matrix=yield_matrix,
-        interest_differentials=interest_differentials,
-        cot_positioning=cot_positioning,
-        intervention_risk=intervention_risk,
-        carry_trade=carry_trade,
-        real_yield_engine=real_yield_engine,
-        inflation_engine=inflation_engine,
-        central_bank_buying=central_bank_buying,
-        geopolitical_risk=geopolitical_risk,
+        execution_quality=None,
+        dxy_engine=None,
+        yield_matrix=None,
+        interest_differentials=None,
+        cot_positioning=None,
+        intervention_risk=None,
+        carry_trade=None,
+        real_yield_engine=None,
+        inflation_engine=None,
+        central_bank_buying=None,
+        geopolitical_risk=None,
         signal_grade=signal_grade
     )
 
