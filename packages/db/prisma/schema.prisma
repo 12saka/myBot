@@ -521,10 +521,12 @@ model Subscription {
 }
 
 enum Role {
+  SUPER_ADMIN
   ADMIN
   COMPLIANCE_OFFICER
   SUPPORT_AGENT
   TRADER
+  USER
   INVESTOR
   GUEST
   AI_AGENT

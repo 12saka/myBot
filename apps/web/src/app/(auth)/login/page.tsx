@@ -26,6 +26,13 @@ export default function LoginPage() {
     requires2fa?: boolean;
     devOtp?: string;
     deliveryMode?: string;
+    user?: {
+      id: string;
+      email: string;
+      role?: string;
+      firstName?: string;
+      lastName?: string;
+    };
   };
 
   useEffect(() => {
@@ -66,9 +73,18 @@ export default function LoginPage() {
         if (data.accessToken) {
           localStorage.setItem('trademind_token', data.accessToken);
         }
+        if (data.user) {
+          localStorage.setItem('trademind_profile', JSON.stringify({ profileData: data.user, role: data.user.role }));
+        }
+
+        const role = data.user?.role;
         toast.success('Successfully authenticated! Redirecting to command center...');
         setTimeout(() => {
-          router.push('/dashboard');
+          if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
+            router.push('/superadmin/dashboard');
+          } else {
+            router.push('/dashboard');
+          }
         }, 1000);
       }
     } catch (err: any) {

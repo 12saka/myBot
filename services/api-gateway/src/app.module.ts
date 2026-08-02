@@ -19,6 +19,7 @@ import { BrokersModule } from './modules/brokers/brokers.module';
 import { AcademyModule } from './modules/academy/academy.module';
 import { StrategiesModule } from './modules/strategies/strategies.module';
 import { AutomationModule } from './modules/automation/automation.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { AutomationModule } from './modules/automation/automation.module';
     AcademyModule,
     StrategiesModule,
     AutomationModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

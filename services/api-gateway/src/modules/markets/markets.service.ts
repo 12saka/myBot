@@ -157,30 +157,29 @@ export class MarketsService implements OnModuleInit {
       const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
       let fetchedFromTwelveData = false;
 
-      if (twelveDataKey) {
-        try {
-          const symbolsQuery = nonCryptoSymbols.map(s => this.getTwelveDataSymbol(s.name)).join(',');
-          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbolsQuery)}&apikey=${twelveDataKey}`);
-          if (response.ok) {
-            const data = await response.json();
-            for (const asset of nonCryptoSymbols) {
-              const tdSym = this.getTwelveDataSymbol(asset.name);
-              const tdData = data[tdSym] || data; // Handle both multi-symbol dictionary and single-symbol objects
-              if (tdData && tdData.price) {
-                const yahooTicker = this.getYahooTicker(asset.name);
-                yahooPriceMap[yahooTicker] = {
-                  price: parseFloat(tdData.price),
-                  changePct: parseFloat(tdData.percent_change || 0),
-                  volume: parseFloat(tdData.volume || 100000)
-                };
-              }
+      const apiKeyParam = twelveDataKey ? `apikey=${twelveDataKey}` : 'apikey=demo';
+      try {
+        const symbolsQuery = nonCryptoSymbols.map(s => this.getTwelveDataSymbol(s.name)).join(',');
+        const response = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbolsQuery)}&${apiKeyParam}`);
+        if (response.ok) {
+          const data = await response.json();
+          for (const asset of nonCryptoSymbols) {
+            const tdSym = this.getTwelveDataSymbol(asset.name);
+            const tdData = data[tdSym] || (data.symbol === tdSym ? data : null);
+            if (tdData && (tdData.price || tdData.close)) {
+              const yahooTicker = this.getYahooTicker(asset.name);
+              yahooPriceMap[yahooTicker] = {
+                price: parseFloat(tdData.price || tdData.close),
+                changePct: parseFloat(tdData.percent_change || tdData.change_percent || 0),
+                volume: parseFloat(tdData.volume || 100000)
+              };
             }
-            fetchedFromTwelveData = true;
-            console.log('[MarketsService] Live prices updated successfully using Twelve Data API.');
           }
-        } catch (err: any) {
-          console.warn(`[MarketsService] Twelve Data quotes API failed: ${err.message}. Falling back to Yahoo Finance.`);
+          fetchedFromTwelveData = true;
+          console.log('[MarketsService] Live prices updated successfully using Twelve Data API.');
         }
+      } catch (err: any) {
+        console.warn(`[MarketsService] Twelve Data quotes API failed: ${err.message}. Falling back to Yahoo Finance.`);
       }
 
       if (!fetchedFromTwelveData) {

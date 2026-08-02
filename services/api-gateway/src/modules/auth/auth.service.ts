@@ -211,7 +211,7 @@ export class AuthService {
     userAgent: string
   ): Promise<
     | { requires2fa: true; email: string }
-    | { requires2fa: false; accessToken: string; expiresIn: number }
+    | { requires2fa: false; accessToken: string; expiresIn: number; user?: any }
   > {
     const user = await this.prisma.user.findUnique({
       where: { email },
@@ -242,7 +242,7 @@ export class AuthService {
     email: string,
     ipAddress: string,
     userAgent: string
-  ): Promise<{ requires2fa: false; accessToken: string; expiresIn: number }> {
+  ): Promise<{ requires2fa: false; accessToken: string; expiresIn: number; user?: any }> {
     const user = await this.prisma.user.findUnique({
       where: { email },
       include: { profile: true },
@@ -260,7 +260,7 @@ export class AuthService {
     ipAddress: string,
     userAgent: string,
     method: string
-  ): Promise<{ requires2fa: false; accessToken: string; expiresIn: number }> {
+  ): Promise<{ requires2fa: false; accessToken: string; expiresIn: number; user?: any }> {
     const sessionId = randomUUID();
     const ttlSeconds = 3600; // 1 hour session
 
@@ -302,6 +302,13 @@ export class AuthService {
       requires2fa: false,
       accessToken,
       expiresIn: ttlSeconds,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role || 'TRADER',
+        firstName: user.profile?.firstName || '',
+        lastName: user.profile?.lastName || '',
+      },
     };
   }
 
