@@ -29,7 +29,7 @@ async function main() {
       email,
       phone,
       passwordHash,
-      role: 'TRADER',
+      role: 'SUPER_ADMIN',
       profile: {
         create: {
           firstName: 'Timothy',

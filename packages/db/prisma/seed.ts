@@ -26,7 +26,7 @@ async function main() {
     data: {
       email: 'admin@trademind.ai',
       passwordHash: DEFAULT_PASSWORD_HASH,
-      role: 'ADMIN',
+      role: 'SUPER_ADMIN',
       profile: {
         create: {
           firstName: 'System',
