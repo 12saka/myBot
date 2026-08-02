@@ -25,7 +25,7 @@ async function main() {
   console.log('🌱 Starting custom seed for user Timothy...');
   const email = 'sakatimoz7@gmail.com';
   const phone = '0748877746';
-  const passwordPlain = 'Timo77';
+  const passwordPlain = 'Timo7777';
   const passwordHash = bcrypt.hashSync(passwordPlain, 10);
 
   // 1. Delete user if exists to avoid duplication

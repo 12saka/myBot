@@ -223,12 +223,15 @@ export class AdminService {
     return this.prisma.course.findMany({
       orderBy: { title: 'asc' },
       include: {
-        lessons: { select: { id: true, title: true, orderIndex: true } },
+        lessons: {
+          orderBy: { orderIndex: 'asc' },
+          select: { id: true, title: true, content: true, orderIndex: true }
+        },
       },
     });
   }
 
-  async createCourse(adminUserId: string, payload: { title: string; description: string; category: string; level: string; isPublished?: boolean }) {
+  async createCourse(adminUserId: string, payload: { title: string; description: string; category: string; level: string; imageUrl?: string; isPublished?: boolean }) {
     const course = await this.prisma.course.create({
       data: {
         title: payload.title,
@@ -246,6 +249,56 @@ export class AdminService {
     });
 
     return course;
+  }
+
+  async addLessonToCourse(adminUserId: string, courseId: string, payload: { title: string; content: string; videoUrl?: string; orderIndex?: number }) {
+    const course = await this.prisma.course.findUnique({ where: { id: courseId } });
+    if (!course) throw new NotFoundException('Course not found');
+
+    const existingLessonsCount = await this.prisma.lesson.count({ where: { courseId } });
+    const orderIndex = payload.orderIndex ?? existingLessonsCount + 1;
+
+    // Attach video URL to content if provided
+    let finalContent = payload.content;
+    if (payload.videoUrl) {
+      finalContent = `[VIDEO_URL:${payload.videoUrl.trim()}]\n\n${payload.content}`;
+    }
+
+    const lesson = await this.prisma.lesson.create({
+      data: {
+        courseId,
+        title: payload.title,
+        content: finalContent,
+        orderIndex,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'LESSON_CREATED',
+        details: { courseId, lessonId: lesson.id, title: lesson.title },
+      },
+    });
+
+    return lesson;
+  }
+
+  async deleteLesson(adminUserId: string, lessonId: string) {
+    const lesson = await this.prisma.lesson.findUnique({ where: { id: lessonId } });
+    if (!lesson) throw new NotFoundException('Lesson not found');
+
+    await this.prisma.lesson.delete({ where: { id: lessonId } });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'LESSON_DELETED',
+        details: { lessonId, title: lesson.title },
+      },
+    });
+
+    return { success: true };
   }
 
   async deleteCourse(adminUserId: string, courseId: string) {

@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User } from 'lucide-react';
+import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User, ShieldAlert } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { useMarketStore } from '@/store/useMarketStore';
 import { cn } from '@/lib/utils';
@@ -61,7 +61,8 @@ export function Topbar() {
   const [profile, setProfile] = useState({
     firstName: '',
     lastName: '',
-    photo: ''
+    photo: '',
+    role: ''
   });
 
   const allAssets = [
@@ -111,7 +112,8 @@ export function Topbar() {
           setProfile({
             firstName: parsed.profileData?.firstName || '',
             lastName: parsed.profileData?.lastName || '',
-            photo: parsed.profilePhoto || ''
+            photo: parsed.profilePhoto || '',
+            role: parsed.role || parsed.profileData?.role || ''
           });
         } catch (e) {
           console.error(e);
@@ -301,6 +303,16 @@ export function Topbar() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Admin Back Link Button for Superadmins */}
+          {(profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
+            <Link href="/superadmin/dashboard">
+              <button className="px-3 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/50 text-purple-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-purple-500/10 transition-all cursor-pointer">
+                <ShieldAlert size={14} className="text-purple-400" />
+                <span className="hidden xs:inline">Admin Panel</span>
+              </button>
+            </Link>
+          )}
+
           {/* AI Status Badge */}
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
             <span className="relative flex h-2 w-2">

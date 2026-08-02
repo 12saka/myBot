@@ -8,6 +8,7 @@ import { AdminTopbar } from '@/components/admin/AdminTopbar';
 export default function SuperadminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [authorized, setAuthorized] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('trademind_token');
@@ -25,11 +26,10 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
         if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
           setAuthorized(true);
         } else {
-          // If a trader tries accessing superadmin, redirect to trader dashboard
           router.push('/dashboard');
         }
       } catch (e) {
-        setAuthorized(true); // Allow fallback if parsed profile token is valid
+        setAuthorized(true);
       }
     } else {
       setAuthorized(true);
@@ -49,10 +49,13 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
 
   return (
     <div className="min-h-dvh bg-slate-950 text-slate-100 flex overflow-hidden">
-      <AdminSidebar />
+      <AdminSidebar
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
+      />
       <div className="flex-1 flex flex-col min-w-0 h-dvh overflow-y-auto">
-        <AdminTopbar />
-        <main className="p-6 flex-1">{children}</main>
+        <AdminTopbar onOpenMobile={() => setMobileMenuOpen(true)} />
+        <main className="p-4 md:p-6 flex-1 overflow-x-hidden">{children}</main>
       </div>
     </div>
   );

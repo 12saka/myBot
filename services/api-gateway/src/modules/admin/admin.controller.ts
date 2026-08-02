@@ -63,8 +63,20 @@ export class AdminController {
 
   @Post('academy/courses')
   @ApiOperation({ summary: 'Create new course in LMS' })
-  async createCourse(@Req() req: any, @Body() body: { title: string; description: string; category: string; level: string; isPublished?: boolean }) {
+  async createCourse(@Req() req: any, @Body() body: { title: string; description: string; category: string; level: string; imageUrl?: string; isPublished?: boolean }) {
     return this.adminService.createCourse(req.user.userId, body);
+  }
+
+  @Post('academy/courses/:id/lessons')
+  @ApiOperation({ summary: 'Add a new lesson with video/image media to a course' })
+  async addLessonToCourse(@Req() req: any, @Param('id') courseId: string, @Body() body: { title: string; content: string; videoUrl?: string; orderIndex?: number }) {
+    return this.adminService.addLessonToCourse(req.user.userId, courseId, body);
+  }
+
+  @Delete('academy/lessons/:id')
+  @ApiOperation({ summary: 'Delete a lesson from LMS' })
+  async deleteLesson(@Req() req: any, @Param('id') lessonId: string) {
+    return this.adminService.deleteLesson(req.user.userId, lessonId);
   }
 
   @Delete('academy/courses/:id')

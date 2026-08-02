@@ -68,20 +68,53 @@ export const useMarketStore = create<MarketState>()((set) => ({
     set((s) => {
       const idx = s.tickers.findIndex((t) => t.symbol === symbol);
       if (idx >= 0) {
+        const existing = s.tickers[idx];
+        const updated: Ticker = { ...existing };
+
+        if (typeof data.price === 'number' && !isNaN(data.price) && data.price > 0) {
+          updated.price = data.price;
+        }
+        if (typeof data.change24h === 'number' && !isNaN(data.change24h)) {
+          updated.change24h = data.change24h;
+        }
+        if (typeof data.changePct24h === 'number' && !isNaN(data.changePct24h)) {
+          updated.changePct24h = data.changePct24h;
+        }
+        if (typeof data.volume24h === 'number' && !isNaN(data.volume24h) && data.volume24h > 0) {
+          updated.volume24h = data.volume24h;
+        }
+        if (typeof data.high24h === 'number' && !isNaN(data.high24h) && data.high24h > 0) {
+          updated.high24h = Math.max(existing.high24h || 0, data.high24h);
+        }
+        if (typeof data.low24h === 'number' && !isNaN(data.low24h) && data.low24h > 0) {
+          updated.low24h = existing.low24h > 0 ? Math.min(existing.low24h, data.low24h) : data.low24h;
+        }
+        if (data.name) updated.name = data.name;
+        if (data.type) updated.type = data.type;
+
+        // Skip re-render if nothing meaningful changed
+        if (
+          existing.price === updated.price &&
+          existing.changePct24h === updated.changePct24h
+        ) {
+          return s;
+        }
+
         const next = [...s.tickers];
-        next[idx] = { ...next[idx], ...data };
+        next[idx] = updated;
         return { tickers: next };
       } else {
+        const price = (typeof data.price === 'number' && !isNaN(data.price)) ? data.price : 0;
         const newTicker: Ticker = {
           symbol,
           name: data.name || symbol,
-          price: data.price || 0,
-          change24h: data.change24h || 0,
-          changePct24h: data.changePct24h || 0,
-          volume24h: data.volume24h || 0,
-          marketCap: data.marketCap || 0,
-          high24h: data.high24h || (data.price ? data.price * 1.005 : 0),
-          low24h: data.low24h || (data.price ? data.price * 0.995 : 0),
+          price,
+          change24h: (typeof data.change24h === 'number' && !isNaN(data.change24h)) ? data.change24h : 0,
+          changePct24h: (typeof data.changePct24h === 'number' && !isNaN(data.changePct24h)) ? data.changePct24h : 0,
+          volume24h: (typeof data.volume24h === 'number' && !isNaN(data.volume24h)) ? data.volume24h : 0,
+          marketCap: (typeof data.marketCap === 'number' && !isNaN(data.marketCap)) ? data.marketCap : 0,
+          high24h: (typeof data.high24h === 'number' && !isNaN(data.high24h)) ? data.high24h : (price ? price * 1.005 : 0),
+          low24h: (typeof data.low24h === 'number' && !isNaN(data.low24h)) ? data.low24h : (price ? price * 0.995 : 0),
           type: data.type || 'crypto'
         };
         return { tickers: [...s.tickers, newTicker] };

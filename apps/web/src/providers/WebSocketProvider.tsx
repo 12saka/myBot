@@ -51,159 +51,20 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       };
     } catch (err) {}
 
-    // High-speed Universal Parallel Poller for ALL Assets (Crypto, Forex, Indices, Commodities)
+    // 2. High-speed Unified Price Synchronizer
     const fetchLivePrices = async () => {
       if (!isMounted) return;
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
         
-        // Execute parallel fast requests for Binance Crypto + Gateway Markets simultaneously
-        const [binanceRes, gatewayRes] = await Promise.allSettled([
-          fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]'),
-          fetch(`${apiUrl}/api/v2/markets/tickers`)
-        ]);
+        // Fetch from API Gateway as Single Source of Truth for all markets
+        const gatewayRes = await fetch(`${apiUrl}/api/v2/markets/tickers`).catch(() => null);
 
-        if (binanceRes.status === 'fulfilled' && binanceRes.value.ok) {
-          const cryptoData = await binanceRes.value.json();
-          if (Array.isArray(cryptoData)) {
-            cryptoData.forEach((t: any) => {
-              const symMap: Record<string, string> = {
-                'BTCUSDT': 'BTC/USD',
-                'ETHUSDT': 'ETH/USD',
-                'SOLUSDT': 'SOL/USD',
-                'BNBUSDT': 'BNB/USD',
-                'XRPUSDT': 'XRP/USD'
-              };
-              const mapped = symMap[t.symbol];
-              if (mapped && isMounted) {
-                updateTicker(mapped, {
-                  price: parseFloat(t.lastPrice),
-                  changePct24h: parseFloat(t.priceChangePercent),
-                  high24h: parseFloat(t.highPrice),
-                  low24h: parseFloat(t.lowPrice),
-                  volume24h: parseFloat(t.quoteVolume),
-                  type: 'crypto'
-                });
-              }
-            });
-          }
-        }
-
-        // 2. Direct Browser Fetch for Indices, Forex, Commodities & Stocks (bypasses server IP blocks)
-        try {
-          const yahooSymbols = '^DJI,^NDX,^GSPC,^GDAXI,GC=F,CL=F,EURUSD=X,GBPUSD=X,USDJPY=X,AAPL,TSLA,NVDA,MSFT,AMZN';
-          const yahooRes = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSymbols)}`);
-          if (yahooRes.ok) {
-            const yData = await yahooRes.json();
-            const results = yData?.quoteResponse?.result || [];
-            const symbolMap: Record<string, { symbol: string; type: 'crypto' | 'forex' | 'stock' | 'index' | 'commodity' }> = {
-              '^DJI': { symbol: 'US30', type: 'index' },
-              '^NDX': { symbol: 'US100', type: 'index' },
-              '^GSPC': { symbol: 'SPX500', type: 'index' },
-              '^GDAXI': { symbol: 'DAX40', type: 'index' },
-              'GC=F': { symbol: 'XAU/USD', type: 'commodity' },
-              'CL=F': { symbol: 'OIL', type: 'commodity' },
-              'EURUSD=X': { symbol: 'EUR/USD', type: 'forex' },
-              'GBPUSD=X': { symbol: 'GBP/USD', type: 'forex' },
-              'USDJPY=X': { symbol: 'USD/JPY', type: 'forex' },
-              'AAPL': { symbol: 'AAPL', type: 'stock' },
-              'TSLA': { symbol: 'TSLA', type: 'stock' },
-              'NVDA': { symbol: 'NVDA', type: 'stock' },
-              'MSFT': { symbol: 'MSFT', type: 'stock' },
-              'AMZN': { symbol: 'AMZN', type: 'stock' },
-            };
-
-            results.forEach((q: any) => {
-              const mapped = symbolMap[q.symbol];
-              if (mapped && isMounted) {
-                const price = parseFloat(q.regularMarketPrice || q.postMarketPrice || q.preMarketPrice || 0);
-                const changePct = parseFloat(q.regularMarketChangePercent || 0);
-                if (price > 0) {
-                  updateTicker(mapped.symbol, {
-                    price,
-                    changePct24h: parseFloat(changePct.toFixed(2)),
-                    high24h: parseFloat(q.regularMarketDayHigh || price * 1.005),
-                    low24h: parseFloat(q.regularMarketDayLow || price * 0.995),
-                    type: mapped.type
-                  });
-                }
-              }
-            });
-          }
-        } catch (e) {}
-
-        // Direct Browser Stooq Fallback for Indices, Forex & Commodities
-        try {
-          const stooqRes = await fetch('https://stooq.com/q/l/?s=^dji,^ndx,^gspc,^dax,gc.f,cl.f,eurusd,gbpusd,usdjpy,aapl.us,tsla.us,nvda.us&f=sd2t2ohlcv&h&e=json');
-          if (stooqRes.ok) {
-            const sData = await stooqRes.json();
-            const symbolsList = sData?.symbols || [];
-            const stooqMap: Record<string, { symbol: string; type: 'crypto' | 'forex' | 'stock' | 'index' | 'commodity' }> = {
-              '^dji': { symbol: 'US30', type: 'index' },
-              '^ndx': { symbol: 'US100', type: 'index' },
-              '^gspc': { symbol: 'SPX500', type: 'index' },
-              '^dax': { symbol: 'DAX40', type: 'index' },
-              'gc.f': { symbol: 'XAU/USD', type: 'commodity' },
-              'cl.f': { symbol: 'OIL', type: 'commodity' },
-              'eurusd': { symbol: 'EUR/USD', type: 'forex' },
-              'gbpusd': { symbol: 'GBP/USD', type: 'forex' },
-              'usdjpy': { symbol: 'USD/JPY', type: 'forex' },
-              'aapl.us': { symbol: 'AAPL', type: 'stock' },
-              'tsla.us': { symbol: 'TSLA', type: 'stock' },
-              'nvda.us': { symbol: 'NVDA', type: 'stock' },
-            };
-
-            symbolsList.forEach((s: any) => {
-              const mapped = stooqMap[s.symbol?.toLowerCase()];
-              if (mapped && isMounted) {
-                const price = parseFloat(s.close || 0);
-                const open = parseFloat(s.open || 0);
-                const changePct = open > 0 && price !== open ? parseFloat((((price - open) / open) * 100).toFixed(2)) : null;
-                if (price > 0) {
-                  updateTicker(mapped.symbol, {
-                    price,
-                    changePct24h: changePct as any,
-                    high24h: parseFloat(s.high || price * 1.005),
-                    low24h: parseFloat(s.low || price * 0.995),
-                    type: mapped.type
-                  });
-                }
-              }
-            });
-          }
-        } catch (e) {}
-
-        // Direct Browser Fetch for Forex (open.er-api.com) & Gold (Binance PAXG)
-        try {
-          const fxRes = await fetch('https://open.er-api.com/v6/latest/USD');
-          if (fxRes.ok && isMounted) {
-            const data = await fxRes.json();
-            const rates = data?.rates || {};
-            if (rates.EUR) updateTicker('EUR/USD', { price: parseFloat((1 / rates.EUR).toFixed(4)), type: 'forex' });
-            if (rates.GBP) updateTicker('GBP/USD', { price: parseFloat((1 / rates.GBP).toFixed(4)), type: 'forex' });
-            if (rates.JPY) updateTicker('USD/JPY', { price: parseFloat(rates.JPY.toFixed(2)), type: 'forex' });
-          }
-        } catch (e) {}
-
-        try {
-          const paxgRes = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT');
-          if (paxgRes.ok && isMounted) {
-            const paxg = await paxgRes.json();
-            if (paxg && paxg.lastPrice) {
-              updateTicker('XAU/USD', {
-                price: parseFloat(paxg.lastPrice),
-                changePct24h: parseFloat(paxg.priceChangePercent || '0'),
-                high24h: parseFloat(paxg.highPrice || paxg.lastPrice),
-                low24h: parseFloat(paxg.lowPrice || paxg.lastPrice),
-                type: 'commodity'
-              });
-            }
-          }
-        } catch (e) {}
-
-        if (gatewayRes.status === 'fulfilled' && gatewayRes.value.ok) {
-          const markets = await gatewayRes.value.json();
-          if (Array.isArray(markets)) {
+        let gatewaySuccess = false;
+        if (gatewayRes && gatewayRes.ok) {
+          const markets = await gatewayRes.json();
+          if (Array.isArray(markets) && markets.length > 0) {
+            gatewaySuccess = true;
             markets.forEach((m: any) => {
               let storeSymbol = m.symbol || m.name;
               if (storeSymbol === 'GOLD') storeSymbol = 'XAU/USD';
@@ -212,7 +73,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
               if (isMounted && m.price && parseFloat(m.price) > 0) {
                 updateTicker(storeSymbol, {
                   price: parseFloat(m.price),
-                  changePct24h: parseFloat(m.changePct24h || '0'),
+                  changePct24h: typeof m.changePct24h === 'number' ? m.changePct24h : parseFloat(m.changePct24h || '0'),
                   high24h: parseFloat(m.high24h || m.price * 1.005),
                   low24h: parseFloat(m.low24h || m.price * 0.995),
                   type: m.type === 'indices' ? 'index' : m.type === 'commodities' ? 'commodity' : m.type === 'stocks' ? 'stock' : (m.type || 'index')
@@ -221,11 +82,43 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
             });
           }
         }
+
+        // Fallback: If gateway fetch fails, query Binance 24h ticker directly for crypto
+        if (!gatewaySuccess) {
+          try {
+            const cryptoRes = await fetch('https://api.binance.com/api/v3/ticker/24hr?symbols=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT"]');
+            if (cryptoRes.ok) {
+              const cryptoData = await cryptoRes.json();
+              if (Array.isArray(cryptoData)) {
+                const symMap: Record<string, string> = {
+                  'BTCUSDT': 'BTC/USD',
+                  'ETHUSDT': 'ETH/USD',
+                  'SOLUSDT': 'SOL/USD',
+                  'BNBUSDT': 'BNB/USD',
+                  'XRPUSDT': 'XRP/USD'
+                };
+                cryptoData.forEach((t: any) => {
+                  const mapped = symMap[t.symbol];
+                  if (mapped && isMounted) {
+                    updateTicker(mapped, {
+                      price: parseFloat(t.lastPrice),
+                      changePct24h: parseFloat(t.priceChangePercent),
+                      high24h: parseFloat(t.highPrice),
+                      low24h: parseFloat(t.lowPrice),
+                      volume24h: parseFloat(t.quoteVolume),
+                      type: 'crypto'
+                    });
+                  }
+                });
+              }
+            }
+          } catch (e) {}
+        }
       } catch (err) {}
     };
 
     fetchLivePrices();
-    const interval = setInterval(fetchLivePrices, 1000); // 1-second ultra-fast refresh for all assets
+    const interval = setInterval(fetchLivePrices, 2500); // Clean 2.5-second refresh cycle
 
     return () => {
       isMounted = false;

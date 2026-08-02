@@ -8,7 +8,7 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-  Cpu, LogOut, User, Newspaper
+  Cpu, LogOut, User, Newspaper, ShieldAlert
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
@@ -79,7 +79,8 @@ export function Sidebar() {
   const [profile, setProfile] = useState({
     firstName: '',
     lastName: '',
-    photo: ''
+    photo: '',
+    role: ''
   });
 
   // Read profile changes from localStorage
@@ -92,7 +93,8 @@ export function Sidebar() {
           setProfile({
             firstName: parsed.profileData?.firstName || '',
             lastName: parsed.profileData?.lastName || '',
-            photo: parsed.profilePhoto || ''
+            photo: parsed.profilePhoto || '',
+            role: parsed.role || parsed.profileData?.role || ''
           });
         } catch (e) {
           console.error(e);
@@ -240,6 +242,31 @@ export function Sidebar() {
               )}
             </AnimatePresence>
           </Link>
+          {/* Superadmin Panel Link (Admin/Super_Admin only) */}
+          {(profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
+            <Link href="/superadmin/dashboard" onClick={() => isMobile && setSidebarOpen(false)}>
+              <div
+                className={cn(
+                  'flex items-center gap-3 p-2.5 rounded-xl bg-purple-600/15 hover:bg-purple-600/25 border border-purple-500/30 text-purple-300 hover:text-purple-200 cursor-pointer transition-all',
+                  isCollapsed && 'justify-center'
+                )}
+              >
+                <ShieldAlert size={18} className="flex-shrink-0 text-purple-400" />
+                <AnimatePresence>
+                  {!isCollapsed && (
+                    <motion.span
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="text-xs font-semibold whitespace-nowrap"
+                    >
+                      Superadmin Panel
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </div>
+            </Link>
+          )}
           <button
             onClick={handleLogout}
             className={cn(
