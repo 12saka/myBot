@@ -59,7 +59,7 @@ export default function SuperadminKycPage() {
         </p>
       </div>
 
-      <div className="glass-panel rounded-xl border border-white/10 overflow-hidden">
+      <div className="glass-panel rounded-xl border border-white/10 overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-mono uppercase text-[10px]">
             <tr>

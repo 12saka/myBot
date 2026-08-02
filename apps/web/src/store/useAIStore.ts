@@ -62,6 +62,7 @@ interface AIState {
   isTyping: boolean;
   aiMode: 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE' | 'CUSTOM';
   autonomousActive: boolean;
+  autoGenerate: boolean;
   allocation: number;
   riskLimit: number;
   maxDrawdown: number;
@@ -69,11 +70,19 @@ interface AIState {
   setTyping: (typing: boolean) => void;
   setAIMode: (mode: AIState['aiMode']) => void;
   setAutonomous: (active: boolean) => void;
+  setAutoGenerate: (active: boolean) => void;
   setAllocation: (pct: number) => void;
   setRiskLimit: (pct: number) => void;
   setMaxDrawdown: (pct: number) => void;
   setSignals: (signals: AISignal[]) => void;
 }
+
+const getInitialBool = (key: string, defaultValue = false): boolean => {
+  if (typeof window === 'undefined') return defaultValue;
+  const val = localStorage.getItem(key);
+  if (val !== null) return val === 'true';
+  return defaultValue;
+};
 
 export const useAIStore = create<AIState>((set) => ({
   signals: [],
@@ -87,14 +96,26 @@ export const useAIStore = create<AIState>((set) => ({
   ],
   isTyping: false,
   aiMode: 'BALANCED',
-  autonomousActive: false,
+  autonomousActive: getInitialBool('trademind_autonomous_active', false),
+  autoGenerate: getInitialBool('trademind_auto_generate', false),
   allocation: 50,
   riskLimit: 2,
   maxDrawdown: 10,
   addMessage: (msg) => set((state) => ({ copilotMessages: [...state.copilotMessages, msg] })),
   setTyping: (isTyping) => set({ isTyping }),
   setAIMode: (aiMode) => set({ aiMode }),
-  setAutonomous: (autonomousActive) => set({ autonomousActive }),
+  setAutonomous: (autonomousActive) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_autonomous_active', String(autonomousActive));
+    }
+    set({ autonomousActive });
+  },
+  setAutoGenerate: (autoGenerate) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_auto_generate', String(autoGenerate));
+    }
+    set({ autoGenerate });
+  },
   setAllocation: (allocation) => set({ allocation }),
   setRiskLimit: (riskLimit) => set({ riskLimit }),
   setMaxDrawdown: (maxDrawdown) => set({ maxDrawdown }),

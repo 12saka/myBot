@@ -95,6 +95,50 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, [router, setPortfolio, setSignals, setTickers, setWatchlist]);
 
+  // Global background signal engine loop (remains active across all pages until user toggles off)
+  const { autoGenerate, autonomousActive } = useAIStore();
+  const { watchlist } = useMarketStore();
+
+  useEffect(() => {
+    if (!autoGenerate) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const userWatchlist = watchlist.length > 0 ? watchlist : ['BTC/USD', 'ETH/USD', 'XAU/USD', 'EUR/USD', 'US100', 'US30'];
+        const randSymbol = userWatchlist[Math.floor(Math.random() * userWatchlist.length)];
+        const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
+          method: 'POST',
+          body: JSON.stringify({ symbol: randSymbol, interval: '1h' })
+        });
+        if (rawSignal) {
+          const newSignal = mapSignal(rawSignal);
+          const currentSignals = useAIStore.getState().signals || [];
+          useAIStore.getState().setSignals([newSignal, ...currentSignals.filter(s => s.symbol !== newSignal.symbol)]);
+
+          // Autonomous bot execution if active
+          if (autonomousActive && newSignal.direction !== 'WAIT') {
+            let quantity = 1.0;
+            if (newSignal.entry > 1000) quantity = parseFloat((100 / newSignal.entry).toFixed(4));
+            else if (newSignal.entry > 100) quantity = parseFloat((50 / newSignal.entry).toFixed(2));
+            else quantity = 10.0;
+
+            await apiFetch('/api/v2/portfolio/order', {
+              method: 'POST',
+              body: JSON.stringify({
+                symbol: newSignal.symbol,
+                direction: newSignal.direction,
+                type: 'MARKET',
+                quantity
+              })
+            }).catch(() => null);
+          }
+        }
+      } catch (err) {}
+    }, 20000);
+
+    return () => clearInterval(interval);
+  }, [autoGenerate, autonomousActive, watchlist]);
+
   return (
     <WebSocketProvider>
       <div className="flex min-h-screen">

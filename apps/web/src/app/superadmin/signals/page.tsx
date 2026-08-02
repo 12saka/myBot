@@ -2,15 +2,17 @@
 
 import React, { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
-import { Zap, AlertTriangle, Clock } from 'lucide-react';
+import { Zap, AlertTriangle, Clock, RefreshCw } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
 export default function SuperadminSignalsPage() {
   const [signals, setSignals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const fetchSignals = async () => {
-    setLoading(true);
+  const fetchSignals = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    else setIsRefreshing(true);
     try {
       const res = await apiFetch<any[]>('/api/v2/admin/signals');
       setSignals(Array.isArray(res) ? res : []);
@@ -18,18 +20,23 @@ export default function SuperadminSignalsPage() {
       console.error(err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
-    fetchSignals();
+    fetchSignals(true);
+    const interval = setInterval(() => {
+      fetchSignals(false);
+    }, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleExpire = async (id: string, symbol: string) => {
     try {
       await apiFetch(`/api/v2/admin/signals/${id}/expire`, { method: 'PATCH' });
       toast.success(`Expired signal for ${symbol}`);
-      fetchSignals();
+      fetchSignals(false);
     } catch (err: any) {
       toast.error(err.message || 'Override failed');
     }
@@ -37,14 +44,24 @@ export default function SuperadminSignalsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-outfit font-bold text-white">Signal Audit & Override Queue</h1>
-        <p className="text-xs text-slate-400 font-mono mt-1">
-          Monitor live AI signals, audit confidence breakdowns, and manually expire compromised signals.
-        </p>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-outfit font-bold text-white">Signal Audit & Override Queue</h1>
+          <p className="text-xs text-slate-400 font-mono mt-1">
+            Monitor live AI signals, audit confidence breakdowns, and manually expire compromised signals.
+          </p>
+        </div>
+        <button
+          onClick={() => fetchSignals(false)}
+          disabled={isRefreshing}
+          className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-mono font-semibold text-slate-300 border border-white/10 flex items-center gap-2 transition disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-purple-400' : ''}`} />
+          <span>Refresh List</span>
+        </button>
       </div>
 
-      <div className="glass-panel rounded-xl border border-white/10 overflow-hidden">
+      <div className="glass-panel rounded-xl border border-white/10 overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-mono uppercase text-[10px]">
             <tr>

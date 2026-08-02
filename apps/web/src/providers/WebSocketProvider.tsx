@@ -18,6 +18,17 @@ const SYMBOLS_TO_SUBSCRIBE = [
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
   const updateTicker = useMarketStore((s) => s.updateTicker);
+  const lastUpdateRef = useRef<Record<string, number>>({});
+
+  // Smooth throttled wrapper for updateTicker (max 1 update per symbol every 1000ms)
+  const throttledUpdateTicker = useRef((symbol: string, data: any) => {
+    const now = Date.now();
+    const last = lastUpdateRef.current[symbol] || 0;
+    if (now - last >= 1000) {
+      lastUpdateRef.current[symbol] = now;
+      updateTicker(symbol, data);
+    }
+  }).current;
 
   // 1. Direct Sub-Second Binance WebSocket Stream for Crypto
   useEffect(() => {
@@ -39,7 +50,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           };
           const mapped = symMap[data.s];
           if (mapped && data.c) {
-            updateTicker(mapped, {
+            throttledUpdateTicker(mapped, {
               price: parseFloat(data.c),
               changePct24h: parseFloat(data.P || '0'),
               high24h: parseFloat(data.h || data.c),
@@ -153,7 +164,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         ? `${symbol}/USD`
         : symbol;
 
-      updateTicker(storeSymbol, {
+      throttledUpdateTicker(storeSymbol, {
         price: data.bidPrice,
         high24h: Math.max(data.bidPrice, data.bidPrice * 1.01),
         low24h: Math.min(data.bidPrice, data.bidPrice * 0.99),

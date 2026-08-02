@@ -461,14 +461,13 @@ const AVAILABLE_MARKETS = [
 ];
 
 export default function SignalsPage() {
-  const { signals, setSignals, autonomousActive } = useAIStore();
+  const { signals, setSignals, autonomousActive, autoGenerate, setAutoGenerate } = useAIStore();
   const { watchlist } = useMarketStore();
   const [activeTab, setActiveTab] = useState<'all'|'crypto'|'stocks'|'indices'|'forex'|'commodities'>('all');
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1m'|'3m'|'5m'|'15m'|'30m'|'1h'>('1h');
   
   // Generation & refresh states
   const [generatingSymbol, setGeneratingSymbol] = useState<string | null>(null);
-  const [autoGenerate, setAutoGenerate] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
@@ -520,16 +519,34 @@ export default function SignalsPage() {
   }, []);
 
   const fetchActiveSignalsSilent = async () => {
+    // Skip polling update if a signal generation is currently in progress
+    if (generatingSymbol) return;
+
     try {
       const raw = await apiFetch<any[]>('/api/v2/signals');
       if (Array.isArray(raw)) {
         const nowMs = Date.now();
         const activeOnly = raw.map(mapSignal).filter(s => {
-          if (s.expiresAt && new Date(s.expiresAt).getTime() < nowMs) return false;
+          // Allow WAIT signals or signals created in the last 30s to stay visible even if near expiry
+          const isRecent = s.createdAt && (nowMs - new Date(s.createdAt).getTime() < 30000);
+          if (!isRecent && s.expiresAt && new Date(s.expiresAt).getTime() < nowMs) return false;
           if (s.status === 'EXPIRED' || s.status === 'CLOSED') return false;
           return true;
         });
-        setSignals(activeOnly);
+
+        // Preserve any freshly generated signals from local state that might be missing from backend list temporarily
+        const currentSignals = useAIStore.getState().signals || [];
+        const recentLocalSignals = currentSignals.filter(s => s.createdAt && (nowMs - new Date(s.createdAt).getTime() < 30000));
+        
+        const mergedMap = new Map<string, AISignal>();
+        activeOnly.forEach(s => mergedMap.set(s.symbol, s));
+        recentLocalSignals.forEach(s => {
+          if (!mergedMap.has(s.symbol)) {
+            mergedMap.set(s.symbol, s);
+          }
+        });
+
+        setSignals(Array.from(mergedMap.values()));
       }
     } catch (err) {
       console.warn('Initial signals fetch skipped:', err);

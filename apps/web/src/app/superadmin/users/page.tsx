@@ -8,26 +8,38 @@ import { toast } from 'react-hot-toast';
 export default function SuperadminUsersPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [roleModal, setRoleModal] = useState(false);
   const [newRole, setNewRole] = useState('TRADER');
 
-  const fetchUsers = async () => {
+  // Debounce search input changes by 350ms to prevent API flooding
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const fetchUsers = async (searchTerm = '') => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await apiFetch<any>(`/api/v2/admin/users?search=${encodeURIComponent(search)}`);
+      const res = await apiFetch<any>(`/api/v2/admin/users?search=${encodeURIComponent(searchTerm)}`);
       setUsers(res?.data || []);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('[AdminUsers] Fetch failed:', err);
+      setError(err.message || 'Failed to load user directory.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchUsers();
-  }, [search]);
+    fetchUsers(debouncedSearch);
+  }, [debouncedSearch]);
 
   const handleUpdateRole = async () => {
     if (!selectedUser) return;
@@ -38,7 +50,7 @@ export default function SuperadminUsersPage() {
       });
       toast.success(`Role updated for ${selectedUser.email}`);
       setRoleModal(false);
-      fetchUsers();
+      fetchUsers(debouncedSearch);
     } catch (err: any) {
       toast.error(err.message || 'Role update failed');
     }
@@ -67,7 +79,7 @@ export default function SuperadminUsersPage() {
       </div>
 
       {/* Users High-Density Table */}
-      <div className="glass-panel rounded-xl border border-white/10 overflow-hidden">
+      <div className="glass-panel rounded-xl border border-white/10 overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-mono uppercase text-[10px]">
             <tr>
@@ -85,6 +97,18 @@ export default function SuperadminUsersPage() {
               <tr>
                 <td colSpan={7} className="p-8 text-center text-slate-500">
                   Loading users...
+                </td>
+              </tr>
+            ) : error ? (
+              <tr>
+                <td colSpan={7} className="p-8 text-center text-red-400">
+                  {error}
+                  <button
+                    onClick={() => fetchUsers(debouncedSearch)}
+                    className="ml-3 px-3 py-1 rounded bg-white/10 hover:bg-white/20 text-xs text-white"
+                  >
+                    Retry
+                  </button>
                 </td>
               </tr>
             ) : users.length === 0 ? (
