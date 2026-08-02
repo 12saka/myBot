@@ -59,17 +59,33 @@ const syncWatchlistToDb = async (list: string[]) => {
   }
 };
 
+const normalizeSym = (sym: string): string => {
+  const u = sym.toUpperCase().trim();
+  if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(u)) return `${u}/USD`;
+  if (u === 'GOLD') return 'XAU/USD';
+  return u;
+};
+
 export const useMarketStore = create<MarketState>()((set) => ({
   tickers: [],
   selectedSymbol: null,
   watchlist: getInitialWatchlist(),
-  setTickers: (tickers) => set({ tickers }),
-  updateTicker: (symbol, data) =>
+  setTickers: (rawTickers) =>
+    set(() => {
+      const map = new Map<string, Ticker>();
+      for (const t of rawTickers) {
+        const norm = normalizeSym(t.symbol);
+        map.set(norm, { ...t, symbol: norm });
+      }
+      return { tickers: Array.from(map.values()) };
+    }),
+  updateTicker: (rawSymbol, data) =>
     set((s) => {
-      const idx = s.tickers.findIndex((t) => t.symbol === symbol);
+      const symbol = normalizeSym(rawSymbol);
+      const idx = s.tickers.findIndex((t) => normalizeSym(t.symbol) === symbol);
       if (idx >= 0) {
         const existing = s.tickers[idx];
-        const updated: Ticker = { ...existing };
+        const updated: Ticker = { ...existing, symbol };
 
         if (typeof data.price === 'number' && !isNaN(data.price) && data.price > 0) {
           updated.price = data.price;

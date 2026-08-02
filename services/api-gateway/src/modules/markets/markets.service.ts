@@ -263,6 +263,34 @@ export class MarketsService implements OnModuleInit {
         }
       } catch (err) {}
 
+      // High-availability Yahoo Chart v8 API for Indices (US30, US100, SPX500, DAX40)
+      const indexTickers = [
+        { name: 'US30', yahoo: '^DJI' },
+        { name: 'US100', yahoo: '^NDX' },
+        { name: 'SPX500', yahoo: '^GSPC' },
+        { name: 'DAX40', yahoo: '^GDAXI' }
+      ];
+
+      for (const idxAsset of indexTickers) {
+        try {
+          const chartRes = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${idxAsset.yahoo}?interval=1m&range=1d`);
+          if (chartRes.ok) {
+            const cData = await chartRes.json();
+            const meta = cData?.chart?.result?.[0]?.meta;
+            if (meta && meta.regularMarketPrice && meta.regularMarketPrice > 0) {
+              const price = parseFloat(meta.regularMarketPrice);
+              const prevClose = parseFloat(meta.chartPreviousClose || meta.previousClose || price);
+              const changePct = prevClose > 0 ? parseFloat((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0;
+              yahooPriceMap[idxAsset.yahoo] = {
+                price,
+                changePct,
+                volume: parseFloat(meta.regularMarketVolume || 1500000)
+              };
+            }
+          }
+        } catch (e) {}
+      }
+
       // High-availability Stooq & Yahoo quoter for Indices & Commodities
       try {
         const stooqRes = await this.fetchWithTimeout('https://stooq.com/q/l/?s=^dji,^ndx,^gspc,^dax,cl.f&f=sd2t2ohlcv&h&e=json');
@@ -282,13 +310,15 @@ export class MarketsService implements OnModuleInit {
             const p = parseFloat(s.close);
             if (assetName && !isNaN(p) && p > 0) {
               const yahooTicker = this.getYahooTicker(assetName);
-              const openP = parseFloat(s.open);
-              const changePct = (!isNaN(openP) && openP > 0) ? parseFloat((((p - openP) / openP) * 100).toFixed(2)) : 0.15;
-              yahooPriceMap[yahooTicker] = {
-                price: p,
-                changePct,
-                volume: parseFloat(s.volume || '1500000')
-              };
+              if (!yahooPriceMap[yahooTicker] || yahooPriceMap[yahooTicker].price <= 0) {
+                const openP = parseFloat(s.open);
+                const changePct = (!isNaN(openP) && openP > 0) ? parseFloat((((p - openP) / openP) * 100).toFixed(2)) : 0.15;
+                yahooPriceMap[yahooTicker] = {
+                  price: p,
+                  changePct,
+                  volume: parseFloat(s.volume || '1500000')
+                };
+              }
             }
           }
         }

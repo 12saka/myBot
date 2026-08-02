@@ -311,18 +311,6 @@ export class SignalsController implements OnModuleInit {
       }
 
       const finalDirection = res.data.direction;
-
-      // 1. Strictly expire any existing active signals for this asset to prevent duplicates
-      await this.prisma.signal.updateMany({
-        where: {
-          symbol: res.data.symbol,
-          expiresAt: { gt: new Date() },
-        },
-        data: {
-          expiresAt: new Date(), // expire older signal
-        },
-      });
-
       const strategyKey = this.getStrategyKey(symbol);
 
       // 2. Save the returned prediction and Gemini explanations into the database
@@ -430,19 +418,7 @@ export class SignalsController implements OnModuleInit {
         : interval === '4h' ? '6–24 Hours (Intraday Swing)'
         : '1–3 Days (Macro Swing)';
 
-      const expirationMs = (interval === '1m' || interval === '3m') ? 15 * 60 * 1000
-        : (interval === '5m' || interval === '15m') ? 30 * 60 * 1000
-        : (interval === '1h') ? 4 * 3600 * 1000
-        : 24 * 3600 * 1000;
-
-      try {
-        await this.prisma.signal.updateMany({
-          where: { symbol, expiresAt: { gt: new Date() } },
-          data: { expiresAt: new Date() },
-        });
-      } catch (err: any) {
-        console.warn(`Prisma notice: ${err.message}`);
-      }
+      const expirationMs = 24 * 3600 * 1000; // Signals valid for 24h until TP/SL or manual dismissal
 
       let signal: any = null;
       try {
