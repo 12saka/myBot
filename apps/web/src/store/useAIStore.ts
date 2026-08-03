@@ -27,7 +27,7 @@ export interface AISignal {
   sentiment: string[];
   createdAt: string;
   expiresAt: string;
-  status?: 'ACTIVE' | 'CLOSED' | 'EXPIRED';
+  status?: 'ACTIVE' | 'RUNNING' | 'WAIT' | 'HIT_TP1' | 'HIT_TP2' | 'HIT_SL' | 'CLOSED' | 'EXPIRED';
   aiReasoning?: any;
   reasoning?: string;
   indicatorVerdicts?: Record<string, string>;

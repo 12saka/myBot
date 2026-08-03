@@ -1074,9 +1074,10 @@ export class SignalsController implements OnModuleInit {
           await this.prisma.signal.update({
             where: { id: sig.id },
             data: {
-              expiresAt: new Date(),
+              expiresAt: new Date(Date.now() + 60 * 60 * 1000),
               aiReasoning: {
                 ...(typeof sig.aiReasoning === 'object' ? sig.aiReasoning : {}),
+                status: outcome,
                 outcomeResolution: outcome,
                 resolvedAt: new Date().toISOString(),
                 resolvedPrice: livePrice

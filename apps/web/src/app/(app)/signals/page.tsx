@@ -665,11 +665,16 @@ export default function SignalsPage() {
         body: JSON.stringify({ symbol, interval: selectedTimeframe })
       });
       const newSignal = mapSignal(rawSignal);
+      if (newSignal.direction === 'WAIT') {
+        setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+        toast(`No high-probability setup for ${symbol}: ${newSignal.reasoning || 'market conditions are not clean.'}`, { id: toastId });
+        return;
+      }
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
       toast.success(`Generated AI Signal for ${symbol} successfully!`, { id: toastId });
 
       // Autonomous execution if bot is running
-      if (autonomousActive && newSignal.direction !== 'WAIT') {
+      if (autonomousActive) {
         let quantity = 1.0;
         if (newSignal.entry > 1000) {
           quantity = parseFloat((100 / newSignal.entry).toFixed(4));

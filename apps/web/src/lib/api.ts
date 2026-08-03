@@ -110,20 +110,24 @@ export function getAssetStrategyName(symbol: string, strategyKey?: string): stri
 export function mapSignal(item: any): AISignal {
   const reasoning = item.aiReasoning || {};
   const indicators = Array.isArray(reasoning.indicators) ? reasoning.indicators : [];
-  const confidence = Math.min(95, Math.max(65, Number(item.winProbability ?? item.confidence ?? 78)));
+  const direction = item.direction || 'WAIT';
+  const status = reasoning.status || item.status || (direction === 'WAIT' ? 'WAIT' : 'ACTIVE');
+  const confidence = direction === 'WAIT'
+    ? 0
+    : Math.min(95, Math.max(1, Number(item.winProbability ?? item.confidence ?? 0)));
 
-  const explanation = reasoning.explanation || reasoning.analysis || reasoning.idea || item.reasoning || 'Multi-factor quantitative AI signal generated from live market confluence.';
+  const explanation = reasoning.explanation || reasoning.analysis || reasoning.idea || item.reasoning || 'No detailed engine explanation was returned for this signal.';
 
-  const macroContext = reasoning.macro_context || reasoning.macroContext || 'Macroeconomic backdrop aligned with directional volatility and liquidity.';
-  const marketStructure = reasoning.market_structure_analysis || reasoning.marketStructureAnalysis || 'Price action maintaining institutional support and resistance boundaries.';
+  const macroContext = reasoning.macro_context || reasoning.macroContext || 'No live macro feed was attached to this signal.';
+  const marketStructure = reasoning.market_structure_analysis || reasoning.marketStructureAnalysis || 'No computed market-structure summary was returned.';
   const indicatorVerdicts = reasoning.indicator_verdicts || reasoning.indicatorVerdicts || {};
   const tradingviewIdea = reasoning.tradingview_idea || reasoning.tradingviewIdea || '';
   const categoryScores = reasoning.category_scores || reasoning.categoryScores || {};
 
-  const entry = Number(item.entryPrice ?? item.entry ?? 100);
-  const stopLoss = Number(item.stopLoss ?? item.stop_loss ?? entry * 0.985);
-  const tp1 = Number(item.takeProfit1 ?? item.tp1 ?? item.take_profit_1 ?? entry * 1.025);
-  const tp2 = Number(item.takeProfit2 ?? item.tp2 ?? item.take_profit_2 ?? entry * 1.05);
+  const entry = Number(item.entryPrice ?? item.entry ?? 0);
+  const stopLoss = Number(item.stopLoss ?? item.stop_loss ?? 0);
+  const tp1 = Number(item.takeProfit1 ?? item.tp1 ?? item.take_profit_1 ?? 0);
+  const tp2 = Number(item.takeProfit2 ?? item.tp2 ?? item.take_profit_2 ?? 0);
 
   const rrRatio = Number(item.riskRewardRatio ?? (Math.abs(tp1 - entry) / (Math.abs(entry - stopLoss) || 1))).toFixed(1);
   const strategyName = getAssetStrategyName(item.symbol || 'BTC/USD', item.strategyKey || reasoning.strategy_key);
@@ -132,14 +136,14 @@ export function mapSignal(item: any): AISignal {
     id: item.id || `sig-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     symbol: normalizeMarketSymbol(item.symbol || 'BTC/USD'),
     type: getSignalType(item.symbol || 'BTC/USD'),
-    direction: item.direction || 'BUY',
+    direction,
     confidence,
     entry,
     stopLoss,
     tp1,
     tp2,
     riskReward: `1:${rrRatio}`,
-    probability: `${confidence}%`,
+    probability: direction === 'WAIT' ? 'No trade' : `${confidence}%`,
     duration: item.durationEstimate || '4h (Day Trade)',
     strategy: strategyName,
     technicals: indicators.length ? indicators : [explanation],
@@ -147,6 +151,7 @@ export function mapSignal(item: any): AISignal {
     sentiment: [marketStructure],
     createdAt: item.createdAt || new Date().toISOString(),
     expiresAt: item.expiresAt || new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+    status,
     aiReasoning: item.aiReasoning,
     reasoning: explanation,
     indicatorVerdicts,
