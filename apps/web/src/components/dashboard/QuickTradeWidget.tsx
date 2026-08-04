@@ -60,7 +60,7 @@ export function QuickTradeWidget({
       t.symbol.toUpperCase().replace('/USD', '') === symbol.toUpperCase()
   );
 
-  const currentPrice = activeTicker ? activeTicker.price : 100.0;
+  const currentPrice = activeTicker && activeTicker.price > 0 ? activeTicker.price : 0;
 
   // Compute total cost based on execution mode
   const executionPrice = tradeMode === 'AI' && aiSignal

@@ -95,6 +95,8 @@ export class AdminService {
             kyc: {
               select: {
                 status: true,
+                documentType: true,
+                documentUrl: true,
               },
             },
           },
