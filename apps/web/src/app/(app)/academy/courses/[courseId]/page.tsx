@@ -5,12 +5,50 @@ import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
   BookOpen, Play, CheckCircle2, ArrowLeft,
-  Award, Clock, ChevronRight, Loader2, Sparkles
+  Award, Clock, ChevronRight, Loader2, Sparkles, Video
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from 'react-hot-toast';
 import { apiFetch } from '@/lib/api';
+
+function extractVideoInfo(rawContent: string) {
+  if (!rawContent) return { cleanText: '', videoUrl: null, embedUrl: null };
+
+  let videoUrl: string | null = null;
+
+  const tagMatch = rawContent.match(/\[VIDEO_URL:(https?:\/\/[^\]]+)\]/i);
+  if (tagMatch) {
+    videoUrl = tagMatch[1].trim();
+  } else {
+    const urlMatch = rawContent.match(/(https?:\/\/(?:www\.)?(?:youtube\.com|youtu\.be|vimeo\.com)[^\s]+)/i);
+    if (urlMatch) {
+      videoUrl = urlMatch[1].trim();
+    }
+  }
+
+  const cleanText = rawContent
+    .replace(/\[VIDEO_URL:[^\]]+\]/gi, '')
+    .replace(/detailed on how/gi, 'Detailed on how')
+    .trim();
+
+  let embedUrl: string | null = null;
+  if (videoUrl) {
+    const ytMatch = videoUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/i);
+    if (ytMatch && ytMatch[1]) {
+      embedUrl = `https://www.youtube.com/embed/${ytMatch[1]}?rel=0&modestbranding=1`;
+    } else if (videoUrl.includes('vimeo.com')) {
+      const vimeoMatch = videoUrl.match(/vimeo\.com\/(\d+)/i);
+      if (vimeoMatch && vimeoMatch[1]) {
+        embedUrl = `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+      }
+    } else if (videoUrl.match(/\.(mp4|webm|ogg)$/i)) {
+      embedUrl = videoUrl;
+    }
+  }
+
+  return { cleanText, videoUrl, embedUrl };
+}
 
 interface Lesson {
   id: string;
@@ -170,9 +208,49 @@ export default function CourseDetailPage() {
                 )}
               </div>
 
-              <div className="prose prose-invert max-w-none text-xs text-slate-300 leading-relaxed space-y-4">
-                <p>{selectedLesson.content}</p>
-              </div>
+              {(() => {
+                const { cleanText, videoUrl, embedUrl } = extractVideoInfo(selectedLesson.content || '');
+                return (
+                  <div className="space-y-4">
+                    {/* Embedded Video Player */}
+                    {embedUrl ? (
+                      <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-purple-500/20 bg-black/80 shadow-2xl">
+                        {embedUrl.match(/\.(mp4|webm|ogg)$/i) ? (
+                          <video src={embedUrl} controls className="w-full h-full object-cover" />
+                        ) : (
+                          <iframe
+                            src={embedUrl}
+                            title={selectedLesson.title}
+                            className="w-full h-full border-0"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                          />
+                        )}
+                      </div>
+                    ) : videoUrl ? (
+                      <div className="p-4 rounded-xl glass-card border border-purple-500/30 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Video className="w-5 h-5 text-purple-400" />
+                          <span className="text-xs text-white font-semibold">Lesson Video Resource</span>
+                        </div>
+                        <a
+                          href={videoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-primary text-xs px-3 py-1.5 inline-flex items-center gap-1.5"
+                        >
+                          <Play size={12} /> Watch Video Lesson
+                        </a>
+                      </div>
+                    ) : null}
+
+                    {/* Cleaned Lesson Text Content */}
+                    <div className="prose prose-invert max-w-none text-xs text-slate-300 leading-relaxed">
+                      <p>{cleanText || selectedLesson.content}</p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Quiz section if present */}
               {selectedLesson.quizzes && selectedLesson.quizzes.length > 0 && (

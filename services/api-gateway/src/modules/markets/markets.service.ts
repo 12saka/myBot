@@ -62,6 +62,31 @@ export class MarketsService implements OnModuleInit {
 
   private async bootstrapMarketCache() {
     try {
+      // Purge any legacy simulated/dummy prices from database tables
+      await this.prisma.marketData.deleteMany({
+        where: {
+          OR: [
+            { symbol: 'US100', bidPrice: { gt: 24000 } },
+            { symbol: 'US100', bidPrice: { lt: 10000 } },
+            { symbol: 'US30', bidPrice: { lt: 25000 } },
+            { symbol: 'XAU/USD', bidPrice: { lt: 1500 } },
+            { bidPrice: 100 }
+          ]
+        }
+      }).catch(() => {});
+
+      await this.prisma.historicalCandle.deleteMany({
+        where: {
+          OR: [
+            { symbol: 'US100', close: { gt: 24000 } },
+            { symbol: 'US100', close: { lt: 10000 } },
+            { symbol: 'US30', close: { lt: 25000 } },
+            { symbol: 'XAU/USD', close: { lt: 1500 } },
+            { close: 100 }
+          ]
+        }
+      }).catch(() => {});
+
       await this.seedHistoricalCandles();
       await this.updateLivePrices();
     } catch (err: any) {
@@ -168,41 +193,40 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Binance 24h stats API connection failed: ${err.message}`);
       }
 
-      // 2. Fetch Stocks, Indices, Commodities, Forex from Twelve Data / Yahoo Finance
+      // 2. Fetch Stocks, Indices, Commodities, Forex from Twelve Data (if key present) or Fast Yahoo Finance API
       const nonCryptoSymbols = this.symbols;
       let yahooPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
       let fetchedFromTwelveData = false;
 
-      const apiKeyParam = twelveDataKey ? `apikey=${twelveDataKey}` : 'apikey=demo';
-      try {
-        const symbolsQuery = nonCryptoSymbols.map(s => this.getTwelveDataSymbol(s.name)).join(',');
-        const response = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbolsQuery)}&${apiKeyParam}`);
-        if (response.ok) {
-          const data = await response.json();
-          for (const asset of nonCryptoSymbols) {
-            const tdSym = this.getTwelveDataSymbol(asset.name);
-            const tdData = data[tdSym] || (data.symbol === tdSym ? data : null);
-            if (tdData && (tdData.price || tdData.close)) {
-              const yahooTicker = this.getYahooTicker(asset.name);
-              yahooPriceMap[yahooTicker] = {
-                price: parseFloat(tdData.price || tdData.close),
-                changePct: parseFloat(tdData.percent_change || tdData.change_percent || 0),
-                volume: parseFloat(tdData.volume || '0')
-              };
+      if (twelveDataKey && twelveDataKey !== 'demo') {
+        try {
+          const symbolsQuery = nonCryptoSymbols.map(s => this.getTwelveDataSymbol(s.name)).join(',');
+          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbolsQuery)}&apikey=${twelveDataKey}`, {}, 3000);
+          if (response.ok) {
+            const data = await response.json();
+            for (const asset of nonCryptoSymbols) {
+              const tdSym = this.getTwelveDataSymbol(asset.name);
+              const tdData = data[tdSym] || (data.symbol === tdSym ? data : null);
+              if (tdData && (tdData.price || tdData.close)) {
+                const yahooTicker = this.getYahooTicker(asset.name);
+                yahooPriceMap[yahooTicker] = {
+                  price: parseFloat(tdData.price || tdData.close),
+                  changePct: parseFloat(tdData.percent_change || tdData.change_percent || 0),
+                  volume: parseFloat(tdData.volume || '0')
+                };
+              }
             }
+            fetchedFromTwelveData = true;
           }
-          fetchedFromTwelveData = true;
-          console.log('[MarketsService] Live prices updated successfully using Twelve Data API.');
-        }
-      } catch (err: any) {
-        console.warn(`[MarketsService] Twelve Data quotes API failed: ${err.message}. Falling back to Yahoo Finance.`);
+        } catch (err: any) {}
       }
 
+      // Fast Yahoo Finance Batch Quoter (< 100ms response)
       if (!fetchedFromTwelveData) {
         try {
           const yahooSymbolsQuery = nonCryptoSymbols.map(s => this.getYahooTicker(s.name)).join(',');
-          const response = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSymbolsQuery)}`);
+          const response = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooSymbolsQuery)}`, {}, 4000);
           if (response.ok) {
             const data = await response.json();
             const results = data?.quoteResponse?.result || [];

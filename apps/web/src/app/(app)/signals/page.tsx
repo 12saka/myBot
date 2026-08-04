@@ -214,14 +214,25 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
           <span className="text-[10px] text-slate-400 font-mono">Recommended Execution</span>
         </div>
         <div className="text-[11px] text-slate-200 font-medium leading-relaxed">
-          {isBuy 
-            ? `Place Buy Limit at $${signal.entry}. Set Stop Loss at $${signal.stopLoss}. Move SL to Break-Even once TP1 ($${signal.tp1}) is reached.` 
-            : `Place Sell Limit at $${signal.entry}. Set Stop Loss at $${signal.stopLoss}. Move SL to Break-Even once TP1 ($${signal.tp1}) is reached.`}
+          {(() => {
+            const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(signal.symbol);
+            const isJpy = signal.symbol.includes('JPY');
+            const dec = isForex ? (isJpy ? 2 : 4) : 2;
+            const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) : '0.00';
+            
+            return isBuy 
+              ? `Place Buy Limit at ${fmt(signal.entry)}. Set Stop Loss at ${fmt(signal.stopLoss)}. Move SL to Break-Even once TP1 (${fmt(signal.tp1)}) is reached.` 
+              : `Place Sell Limit at ${fmt(signal.entry)}. Set Stop Loss at ${fmt(signal.stopLoss)}. Move SL to Break-Even once TP1 (${fmt(signal.tp1)}) is reached.`;
+          })()}
         </div>
         <div className="flex gap-2 mt-1">
           <button
             onClick={() => {
-              navigator.clipboard.writeText(`Entry: ${signal.entry} | SL: ${signal.stopLoss} | TP1: ${signal.tp1} | TP2: ${signal.tp2}`);
+              const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(signal.symbol);
+              const isJpy = signal.symbol.includes('JPY');
+              const dec = isForex ? (isJpy ? 2 : 4) : 2;
+              const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? v.toFixed(dec) : '0.00';
+              navigator.clipboard.writeText(`Entry: ${fmt(signal.entry)} | SL: ${fmt(signal.stopLoss)} | TP1: ${fmt(signal.tp1)} | TP2: ${fmt(signal.tp2)}`);
               toast.success(`Copied trade parameters for ${signal.symbol} to clipboard! Paste into MT4/MT5.`, {
                 icon: '📋',
                 duration: 5000
