@@ -134,10 +134,7 @@ export class MarketsService implements OnModuleInit {
   @Interval(2500)
   async updateLivePrices() {
     try {
-      // 1. Fetch Crypto Prices & 24h Stats from Binance
-      const binanceCryptoSymbols = this.symbols.filter(s => s.type === 'crypto');
-      const cryptoSymbolsQuery = JSON.stringify(binanceCryptoSymbols.map(s => s.binanceSymbol));
-      
+      // 1. Fetch Crypto Prices & 24h Stats from Binance (including PAXGUSDT for Gold)
       let cryptoPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       try {
         const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
@@ -146,24 +143,32 @@ export class MarketsService implements OnModuleInit {
           headers['X-MBX-APIKEY'] = binanceApiKey;
         }
         const response = await this.fetchWithTimeout(
-          `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(cryptoSymbolsQuery)}`,
+          'https://api.binance.com/api/v3/ticker/24hr',
           { headers }
         );
         if (response.ok) {
           const stats = await response.json();
-          for (const item of stats) {
-            cryptoPriceMap[item.symbol] = {
-              price: parseFloat(item.lastPrice || 0),
-              changePct: parseFloat(item.priceChangePercent || 0),
-              volume: parseFloat(item.quoteVolume || 0)
-            };
+          if (Array.isArray(stats)) {
+            const targetSymbols = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'PAXGUSDT']);
+            for (const item of stats) {
+              if (targetSymbols.has(item.symbol)) {
+                const price = parseFloat(item.lastPrice || '0');
+                if (price > 0) {
+                  cryptoPriceMap[item.symbol] = {
+                    price,
+                    changePct: parseFloat(item.priceChangePercent || '0'),
+                    volume: parseFloat(item.quoteVolume || '0')
+                  };
+                }
+              }
+            }
           }
         }
       } catch (err: any) {
         console.warn(`[MarketsService] Binance 24h stats API connection failed: ${err.message}`);
       }
 
-      // 2. Fetch Stocks, Indices, Commodities, Forex, and Cryptos as fallback
+      // 2. Fetch Stocks, Indices, Commodities, Forex from Twelve Data / Yahoo Finance
       const nonCryptoSymbols = this.symbols;
       let yahooPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
@@ -219,7 +224,8 @@ export class MarketsService implements OnModuleInit {
           console.warn(`[MarketsService] Yahoo Finance batch quote API failed: ${err.message}`);
         }
       }
-      // High-availability open.er-api.com & exchangerate-api for live real-time Forex exchange rates
+
+      // High-availability open.er-api.com for live real-time Forex exchange rates
       try {
         const forexRes = await this.fetchWithTimeout('https://open.er-api.com/v6/latest/USD');
         if (forexRes.ok) {
@@ -248,36 +254,13 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Forex connection notice: ${err.message}`);
       }
 
-      // High-availability Spot Gold API (gold-api.com & Binance PAXG)
-      try {
-        const goldApiRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU');
-        if (goldApiRes.ok) {
-          const gData = await goldApiRes.json();
-          if (gData && gData.price && parseFloat(gData.price) > 0) {
-            const price = parseFloat(gData.price);
-            yahooPriceMap['GC=F'] = {
-              price,
-              changePct: parseFloat(gData.chp || gData.change_percent || 0),
-              volume: 1200000
-            };
-          }
-        }
-      } catch (e) {}
-
-      if (!yahooPriceMap['GC=F'] || yahooPriceMap['GC=F'].price <= 0) {
-        try {
-          const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT');
-          if (paxgRes.ok) {
-            const paxgData = await paxgRes.json();
-            if (paxgData && paxgData.lastPrice) {
-              yahooPriceMap['GC=F'] = {
-                price: parseFloat(paxgData.lastPrice),
-                changePct: parseFloat(paxgData.priceChangePercent || 0),
-                volume: parseFloat(paxgData.quoteVolume || '0')
-              };
-            }
-          }
-        } catch (err) {}
+      // Gold Spot Price from Binance PAXGUSDT if available
+      if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price > 0) {
+        yahooPriceMap['GC=F'] = {
+          price: cryptoPriceMap['PAXGUSDT'].price,
+          changePct: cryptoPriceMap['PAXGUSDT'].changePct,
+          volume: cryptoPriceMap['PAXGUSDT'].volume
+        };
       }
 
       // High-availability Yahoo Chart v8 API for Indices (US30, US100, SPX500, DAX40)
@@ -348,7 +331,7 @@ export class MarketsService implements OnModuleInit {
         let changePct24h = lastCached ? lastCached.changePct24h : 0;
         let volume24h = lastCached ? lastCached.volume24h : 0;
 
-        if (asset.type === 'crypto' && asset.binanceSymbol && cryptoPriceMap[asset.binanceSymbol]) {
+        if (asset.binanceSymbol && cryptoPriceMap[asset.binanceSymbol] && cryptoPriceMap[asset.binanceSymbol].price > 0) {
           const binanceData = cryptoPriceMap[asset.binanceSymbol];
           currentPrice = binanceData.price;
           changePct24h = binanceData.changePct;
