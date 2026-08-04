@@ -119,5 +119,28 @@ export const useAIStore = create<AIState>((set) => ({
   setAllocation: (allocation) => set({ allocation }),
   setRiskLimit: (riskLimit) => set({ riskLimit }),
   setMaxDrawdown: (maxDrawdown) => set({ maxDrawdown }),
-  setSignals: (signals) => set({ signals }),
+  setSignals: (rawSignals) =>
+    set(() => {
+      const normSigSym = (sym: string): string => {
+        const u = String(sym || '').toUpperCase().trim();
+        const base = u.replace('/USD', '');
+        if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(base)) return `${base}/USD`;
+        if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(u)) return 'XAU/USD';
+        return u;
+      };
+
+      const map = new Map<string, AISignal>();
+      const sorted = Array.isArray(rawSignals)
+        ? [...rawSignals].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+        : [];
+
+      for (const sig of sorted) {
+        if (!sig || !sig.symbol) continue;
+        const key = normSigSym(sig.symbol);
+        if (!map.has(key)) {
+          map.set(key, { ...sig, symbol: key });
+        }
+      }
+      return { signals: Array.from(map.values()) };
+    }),
 }));

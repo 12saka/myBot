@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, BrainCircuit, TrendingUp, TrendingDown,
-  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles
+  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles, AlertTriangle, Trophy, Target
 } from 'lucide-react';
 import { useAIStore, AISignal } from '@/store/useAIStore';
 import { useMarketStore } from '@/store/useMarketStore';
@@ -69,6 +69,11 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <Badge variant={signal.aiReasoning?.entry_type === 'MARKET_NOW' ? 'buy' : 'blue'} size="xs">
               {signal.aiReasoning?.entry_type === 'MARKET_NOW' ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
             </Badge>
+            {signal.signalGrade && (
+              <Badge variant={signal.signalGrade.startsWith('A') ? 'buy' : signal.signalGrade.startsWith('B') ? 'blue' : 'sell'} size="xs">
+                {signal.signalGrade.startsWith('A') ? '🏆' : signal.signalGrade.startsWith('B') ? '📊' : '⚠️'} {signal.signalGrade}
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <span className="text-[10px] text-slate-500">{signal.strategy}</span>
@@ -453,7 +458,7 @@ const AVAILABLE_MARKETS = [
   { name: 'NASDAQ 100', symbol: 'US100', type: 'indices' },
   { name: 'S&P 500', symbol: 'SPX500', type: 'indices' },
   { name: 'DAX 40', symbol: 'DAX40', type: 'indices' },
-  { name: 'Gold Spot', symbol: 'GOLD', type: 'commodities' },
+  { name: 'Gold Spot', symbol: 'XAU/USD', type: 'commodities' },
   { name: 'Crude Oil', symbol: 'OIL', type: 'commodities' },
   { name: 'Euro / USD', symbol: 'EUR/USD', type: 'forex' },
   { name: 'Pound / USD', symbol: 'GBP/USD', type: 'forex' },
@@ -539,7 +544,10 @@ export default function SignalsPage() {
         const recentLocalSignals = currentSignals.filter(s => s.createdAt && (nowMs - new Date(s.createdAt).getTime() < 30000));
         
         const mergedMap = new Map<string, AISignal>();
-        activeOnly.forEach(s => mergedMap.set(s.symbol, s));
+        activeOnly.forEach(s => {
+          const sym = s.symbol;
+          mergedMap.set(sym, { ...s, symbol: sym });
+        });
         recentLocalSignals.forEach(s => {
           if (!mergedMap.has(s.symbol)) {
             mergedMap.set(s.symbol, s);
@@ -853,12 +861,30 @@ export default function SignalsPage() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Risk Disclaimer Banner */}
+      <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+        <div>
+          <p className="text-xs font-bold text-amber-300">Trading Risk Disclaimer</p>
+          <p className="text-[11px] text-amber-200/80 mt-0.5 leading-relaxed">
+            AI signals are probabilistic tools based on technical analysis — not financial advice. No signal is 100% guaranteed.
+            Always use stop losses and risk only capital you can afford to lose. Past performance does not guarantee future results.
+          </p>
+        </div>
+      </div>
+
+      {/* Performance Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard label="Total Signals"    value={signals.length.toString()}    icon={Zap}         iconColor="#a78bfa" accentColor="rgba(139,92,246,0.5)" />
         <StatCard label="Buy Signals"      value={buySignals.length.toString()}  icon={TrendingUp}  iconColor="#34d399" accentColor="rgba(16,185,129,0.5)" />
         <StatCard label="Sell Signals"     value={sellSignals.length.toString()} icon={TrendingDown} iconColor="#f87171" accentColor="rgba(239,68,68,0.5)" />
         <StatCard label="Avg Confidence"   value={`${avgConf}%`}                 icon={BrainCircuit} iconColor="#818cf8" accentColor="rgba(99,102,241,0.5)" />
+        <StatCard label="Win Rate"         value={(() => {
+          const resolved = signals.filter(s => s.status === 'HIT_TP1' || s.status === 'HIT_TP2' || s.status === 'HIT_SL');
+          if (resolved.length === 0) return 'N/A';
+          const wins = resolved.filter(s => s.status === 'HIT_TP1' || s.status === 'HIT_TP2').length;
+          return `${Math.round((wins / resolved.length) * 100)}%`;
+        })()}                                                                     icon={Trophy}      iconColor="#fbbf24" accentColor="rgba(251,191,36,0.5)" />
       </div>
 
       {/* Market Selector Directory */}

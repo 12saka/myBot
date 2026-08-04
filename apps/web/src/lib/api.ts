@@ -51,8 +51,11 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 }
 
 export const normalizeMarketSymbol = (symbol: string) => {
-  const upper = symbol.toUpperCase();
-  return ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(upper) ? `${upper}/USD` : upper;
+  const upper = (symbol || '').toUpperCase().trim();
+  const base = upper.replace('/USD', '');
+  if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(base)) return `${base}/USD`;
+  if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(upper)) return 'XAU/USD';
+  return upper;
 };
 
 export function mapTicker(item: any): Ticker {
@@ -76,18 +79,18 @@ export function mapTicker(item: any): Ticker {
 
 const getSignalType = (symbol: string): AISignal['type'] => {
   const normalized = normalizeMarketSymbol(symbol);
-  const upper = normalized.toUpperCase().replace('/USD', '').trim();
+  const upper = normalized.replace('/USD', '').trim();
   if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(upper)) return 'crypto';
-  if (['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(normalized)) return 'forex';
-  if (['US30', 'US100', 'SPX500', 'DAX40'].includes(upper)) return 'indices';
-  if (['GOLD', 'OIL'].includes(upper)) return 'commodities';
+  if (['EUR/USD', 'GBP/USD', 'USD/JPY', 'EURUSD', 'GBPUSD', 'USDJPY'].includes(normalized)) return 'forex';
+  if (['US30', 'US100', 'SPX500', 'DAX40', 'DOW', 'NAS', 'NAS100'].includes(upper)) return 'indices';
+  if (['XAU', 'GOLD', 'OIL', 'CRUDE', 'WTI'].includes(upper)) return 'commodities';
   return 'stocks';
 };
 
 export function getAssetStrategyName(symbol: string, strategyKey?: string): string {
   const upper = symbol.toUpperCase();
-  if (strategyKey === 'crypto-btc-onchain' || upper.includes('BTC')) {
-    return 'BTC On-Chain Volatility & Order Block Retest';
+  if (strategyKey === 'crypto-btc-onchain' || ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => upper.includes(c))) {
+    return 'Crypto On-Chain Volatility & Order Block Retest';
   }
   if (strategyKey === 'forex-jpy-yields' || upper.includes('JPY')) {
     return 'BoJ Rate Differential & 10Y Yield Vector';
@@ -95,14 +98,29 @@ export function getAssetStrategyName(symbol: string, strategyKey?: string): stri
   if (strategyKey === 'forex-eur-dxy' || upper.includes('EUR')) {
     return 'ECB/Fed Monetary Policy & DXY Sweep Strategy';
   }
+  if (strategyKey === 'forex-gbp-cable' || upper.includes('GBP')) {
+    return 'BoE Cable Liquidity Sweep & Retest';
+  }
   if (strategyKey === 'commodity-gold-yields' || upper.includes('GOLD') || upper.includes('XAU')) {
     return 'XAU/USD Real Yields & Safe-Haven Reversal';
+  }
+  if (strategyKey === 'commodity-oil-opec' || upper.includes('OIL') || upper.includes('WTI') || upper.includes('CRUDE')) {
+    return 'WTI Crude Inventory & OPEC+ Supply Vector';
   }
   if (strategyKey === 'index-nas100-tech' || upper.includes('US100') || upper.includes('NAS')) {
     return 'NASDAQ Tech Earnings & FVG Continuation';
   }
   if (strategyKey === 'index-us30-dow' || upper.includes('US30') || upper.includes('DOW')) {
     return 'Dow Jones Industrial Pullback & S/R Retest';
+  }
+  if (strategyKey === 'index-spx500-macro' || upper.includes('SPX') || upper.includes('SP500')) {
+    return 'S&P 500 Institutional Order Flow & VWAP Vector';
+  }
+  if (strategyKey === 'index-dax40-europe' || upper.includes('DAX')) {
+    return 'DAX 40 European Session Breakout & Trend Retest';
+  }
+  if (strategyKey === 'stock-earnings-flow' || ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'].some(s => upper.includes(s))) {
+    return 'Equity Earnings Momentum & Volume Breakout';
   }
   return 'PRO 7-Step Institutional Confluence';
 }
@@ -177,7 +195,7 @@ export function mapSignal(item: any): AISignal {
     inflationEngine: reasoning.inflation_engine || reasoning.inflationEngine || {},
     centralBankBuying: reasoning.central_bank_buying || reasoning.centralBankBuying || {},
     geopoliticalRisk: reasoning.geopolitical_risk || reasoning.geopoliticalRisk || {},
-    signalGrade: reasoning.signal_grade || item.signalGrade || 'A (High Confidence)'
+    signalGrade: reasoning.signal_grade || item.signalGrade || null
   };
 }
 

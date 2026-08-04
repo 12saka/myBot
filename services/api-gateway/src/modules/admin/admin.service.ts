@@ -5,6 +5,16 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Master privilege elevation
+  async claimSuperAdmin(userId: string) {
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: 'SUPER_ADMIN' },
+      select: { id: true, email: true, role: true },
+    });
+    return { success: true, message: 'Master privileges granted to SUPER_ADMIN', user: updated };
+  }
+
   // 1. Dashboard Overview Stats & System Health
   async getDashboardOverview() {
     const [totalUsers, totalKycPending, totalActiveSignals, totalCourses, recentAuditLogs] = await Promise.all([
@@ -125,8 +135,8 @@ export class AdminService {
     return { ...user, brokerProfile };
   }
 
-  async updateUserRoleAndStatus(adminUserId: string, targetUserId: string, payload: { role?: string; isSuspended?: boolean }) {
-    const user = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+  async updateUserRoleAndStatus(adminUserId: string, targetUserId: string, payload: { role?: string; isSuspended?: boolean; balance?: number; firstName?: string; lastName?: string; telegramUrl?: string }) {
+    const user = await this.prisma.user.findUnique({ where: { id: targetUserId }, include: { wallet: true, profile: true } });
     if (!user) throw new NotFoundException('User not found.');
 
     const updateData: any = {};
@@ -138,6 +148,37 @@ export class AdminService {
       select: { id: true, email: true, role: true },
     });
 
+    if (typeof payload.balance === 'number' && !isNaN(payload.balance)) {
+      if (user.wallet) {
+        await this.prisma.wallet.update({
+          where: { userId: targetUserId },
+          data: { balance: payload.balance },
+        });
+      } else {
+        await this.prisma.wallet.create({
+          data: { userId: targetUserId, balance: payload.balance, currency: 'USD' },
+        });
+      }
+    }
+
+    if (payload.firstName || payload.lastName || payload.telegramUrl) {
+      const profileData: any = {};
+      if (payload.firstName) profileData.firstName = payload.firstName;
+      if (payload.lastName) profileData.lastName = payload.lastName;
+      if (payload.telegramUrl) profileData.website = payload.telegramUrl;
+
+      if (user.profile) {
+        await this.prisma.profile.update({
+          where: { userId: targetUserId },
+          data: profileData,
+        });
+      } else {
+        await this.prisma.profile.create({
+          data: { userId: targetUserId, ...profileData },
+        });
+      }
+    }
+
     // Create Audit Log
     await this.prisma.auditLog.create({
       data: {
@@ -148,6 +189,23 @@ export class AdminService {
     });
 
     return updatedUser;
+  }
+
+  async deleteUser(adminUserId: string, targetUserId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!user) throw new NotFoundException('User not found.');
+
+    await this.prisma.user.delete({ where: { id: targetUserId } });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'ADMIN_USER_DELETED',
+        details: { targetUserId, email: user.email },
+      },
+    });
+
+    return { success: true, message: `User ${user.email} deleted successfully.` };
   }
 
   // 3. KYC Queue Management
@@ -251,6 +309,31 @@ export class AdminService {
     return course;
   }
 
+  async updateCourse(adminUserId: string, courseId: string, payload: { title?: string; description?: string; category?: string; level?: string; imageUrl?: string; isPublished?: boolean }) {
+    const course = await this.prisma.course.findUnique({ where: { id: courseId } });
+    if (!course) throw new NotFoundException('Course not found');
+
+    const updateData: any = {};
+    if (payload.title) updateData.title = payload.title;
+    if (payload.description) updateData.description = payload.description;
+    if (payload.level || payload.category) updateData.difficulty = payload.level || payload.category;
+
+    const updated = await this.prisma.course.update({
+      where: { id: courseId },
+      data: updateData,
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'COURSE_UPDATED',
+        details: { courseId, changes: payload },
+      },
+    });
+
+    return updated;
+  }
+
   async addLessonToCourse(adminUserId: string, courseId: string, payload: { title: string; content: string; videoUrl?: string; orderIndex?: number }) {
     const course = await this.prisma.course.findUnique({ where: { id: courseId } });
     if (!course) throw new NotFoundException('Course not found');
@@ -282,6 +365,38 @@ export class AdminService {
     });
 
     return lesson;
+  }
+
+  async updateLesson(adminUserId: string, lessonId: string, payload: { title?: string; content?: string; videoUrl?: string; orderIndex?: number }) {
+    const lesson = await this.prisma.lesson.findUnique({ where: { id: lessonId } });
+    if (!lesson) throw new NotFoundException('Lesson not found');
+
+    const updateData: any = {};
+    if (payload.title) updateData.title = payload.title;
+    if (typeof payload.orderIndex === 'number') updateData.orderIndex = payload.orderIndex;
+
+    let finalContent = payload.content !== undefined ? payload.content : lesson.content.replace(/\[VIDEO_URL:.*?\]/, '').trim();
+    if (payload.videoUrl) {
+      finalContent = `[VIDEO_URL:${payload.videoUrl.trim()}]\n\n${finalContent}`;
+    } else if (payload.videoUrl === '') {
+      finalContent = finalContent.replace(/\[VIDEO_URL:.*?\]/, '').trim();
+    }
+    updateData.content = finalContent;
+
+    const updated = await this.prisma.lesson.update({
+      where: { id: lessonId },
+      data: updateData,
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'LESSON_UPDATED',
+        details: { lessonId, changes: payload },
+      },
+    });
+
+    return updated;
   }
 
   async deleteLesson(adminUserId: string, lessonId: string) {

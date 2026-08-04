@@ -85,8 +85,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
                 updateTicker(storeSymbol, {
                   price: parseFloat(m.price),
                   changePct24h: typeof m.changePct24h === 'number' ? m.changePct24h : parseFloat(m.changePct24h || '0'),
-                  high24h: parseFloat(m.high24h || m.price * 1.005),
-                  low24h: parseFloat(m.low24h || m.price * 0.995),
+                  high24h: parseFloat(m.high24h || '0'),
+                  low24h: parseFloat(m.low24h || '0'),
                   type: m.type === 'indices' ? 'index' : m.type === 'commodities' ? 'commodity' : m.type === 'stocks' ? 'stock' : (m.type || 'index')
                 });
               }

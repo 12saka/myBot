@@ -129,8 +129,8 @@ export const useMarketStore = create<MarketState>()((set) => ({
           changePct24h: (typeof data.changePct24h === 'number' && !isNaN(data.changePct24h)) ? data.changePct24h : 0,
           volume24h: (typeof data.volume24h === 'number' && !isNaN(data.volume24h)) ? data.volume24h : 0,
           marketCap: (typeof data.marketCap === 'number' && !isNaN(data.marketCap)) ? data.marketCap : 0,
-          high24h: (typeof data.high24h === 'number' && !isNaN(data.high24h)) ? data.high24h : (price ? price * 1.005 : 0),
-          low24h: (typeof data.low24h === 'number' && !isNaN(data.low24h)) ? data.low24h : (price ? price * 0.995 : 0),
+          high24h: (typeof data.high24h === 'number' && !isNaN(data.high24h)) ? data.high24h : 0,
+          low24h: (typeof data.low24h === 'number' && !isNaN(data.low24h)) ? data.low24h : 0,
           type: data.type || 'crypto'
         };
         return { tickers: [...s.tickers, newTicker] };

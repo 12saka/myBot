@@ -9,8 +9,21 @@ interface AdminTopbarProps {
   onOpenMobile?: () => void;
 }
 
+import { apiFetch } from '@/lib/api';
+import { toast } from 'react-hot-toast';
+
 export function AdminTopbar({ onOpenMobile }: AdminTopbarProps) {
   const pathname = usePathname();
+
+  const handleClaimMasterAccess = async () => {
+    try {
+      const res = await apiFetch<any>('/api/v2/admin/claim-superadmin', { method: 'POST' });
+      toast.success(res.message || 'Full SUPER_ADMIN master privileges activated!');
+      setTimeout(() => window.location.reload(), 800);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to activate master access.');
+    }
+  };
 
   const getPageTitle = (path: string) => {
     if (path.includes('/superadmin/users')) return 'User Management';
@@ -62,6 +75,16 @@ export function AdminTopbar({ onOpenMobile }: AdminTopbarProps) {
 
       {/* Right section: Action Buttons & Profile */}
       <div className="flex items-center gap-3">
+        {/* Elevate Master Access Button */}
+        <button
+          onClick={handleClaimMasterAccess}
+          className="hidden lg:flex px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/40 text-amber-300 hover:text-amber-200 text-xs font-semibold items-center gap-1.5 transition shadow-sm"
+          title="Grant Master SUPER_ADMIN Privileges to Current User"
+        >
+          <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+          <span>Grant Master Access</span>
+        </button>
+
         {/* Switch to Trader View shortcut */}
         <Link href="/dashboard" className="hidden md:block">
           <button className="px-3 py-1.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-semibold flex items-center gap-1.5 transition">

@@ -122,9 +122,13 @@ export class SignalsController implements OnModuleInit {
   }
 
   private normalizeSymbol(symbol: string): string {
-    const s = symbol.trim().toUpperCase();
-    if (['BTC/USD', 'ETH/USD', 'SOL/USD', 'BNB/USD', 'XRP/USD'].includes(s)) {
-      return s.split('/')[0];
+    const s = (symbol || '').trim().toUpperCase();
+    const base = s.replace('/USD', '');
+    if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(base)) {
+      return `${base}/USD`;
+    }
+    if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(s)) {
+      return 'XAU/USD';
     }
     return s;
   }
@@ -313,45 +317,59 @@ export class SignalsController implements OnModuleInit {
       const finalDirection = res.data.direction;
       const strategyKey = this.getStrategyKey(symbol);
 
-      // 2. Save the returned prediction and Gemini explanations into the database
-      const signal = await this.prisma.signal.create({
-        data: {
-          userId: userId || null,
-          strategyKey,
-          symbol: res.data.symbol,
-          direction: finalDirection,
-          entryPrice: res.data.entry,
-          stopLoss: res.data.stop_loss,
-          takeProfit1: res.data.take_profit_1,
-          takeProfit2: res.data.take_profit_2,
-          riskRewardRatio: parseFloat((Math.abs(res.data.take_profit_1 - res.data.entry) / (Math.abs(res.data.entry - res.data.stop_loss) || 1)).toFixed(1)),
-          winProbability: Math.min(95, Math.max(55, Math.round((res.data.confidence || 0.78) * 100))),
-          durationEstimate: interval === '1m' ? '1-5 mins (Scalping)' :
-                            interval === '3m' ? '3-10 mins (Scalping)' :
-                            interval === '5m' ? '5-15 mins (Scalping)' :
-                            interval === '15m' ? '15-45 mins (Scalping)' :
-                            interval === '30m' ? '30-90 mins (Scalping)' :
-                            interval === '1h' ? '1-4 hours (Day Trade)' :
-                            interval === '4h' ? '1-2 days' : '3-5 days',
-          aiReasoning: { 
-            indicators: res.data.indicators,
-            explanation: res.data.ai_explanation,
-            technicals: res.data.technicals,
-            structure: res.data.structure,
-            scores: res.data.scores,
-            indicator_verdicts: res.data.indicator_verdicts || {},
-            market_structure_analysis: res.data.market_structure_analysis || '',
-            tradingview_idea: res.data.tradingview_idea || '',
-            category_scores: res.data.category_scores || {},
-            macro_context: res.data.macro_context || '',
-            correlation_analysis: res.data.correlation_analysis || '',
-            timeframe: interval,
-            strategy_key: strategyKey,
-            status: 'ACTIVE'
-          },
-          expiresAt: new Date(Date.now() + (interval === '1d' ? 3 * 24 : 1 * 4) * 60 * 60 * 1000), 
-        },
+      const existingActive = await this.prisma.signal.findFirst({
+        where: { symbol: res.data.symbol, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'desc' },
       });
+
+      const signalPayload = {
+        userId: userId || null,
+        strategyKey,
+        symbol: res.data.symbol,
+        direction: finalDirection,
+        entryPrice: res.data.entry,
+        stopLoss: res.data.stop_loss,
+        takeProfit1: res.data.take_profit_1,
+        takeProfit2: res.data.take_profit_2,
+        riskRewardRatio: parseFloat((Math.abs(res.data.take_profit_1 - res.data.entry) / (Math.abs(res.data.entry - res.data.stop_loss) || 1)).toFixed(1)),
+        winProbability: Math.min(95, Math.max(55, Math.round((res.data.confidence || 0.78) * 100))),
+        durationEstimate: interval === '1m' ? '1-5 mins (Scalping)' :
+                          interval === '3m' ? '3-10 mins (Scalping)' :
+                          interval === '5m' ? '5-15 mins (Scalping)' :
+                          interval === '15m' ? '15-45 mins (Scalping)' :
+                          interval === '30m' ? '30-90 mins (Scalping)' :
+                          interval === '1h' ? '1-4 hours (Day Trade)' :
+                          interval === '4h' ? '1-2 days' : '3-5 days',
+        aiReasoning: { 
+          indicators: res.data.indicators,
+          explanation: res.data.ai_explanation,
+          technicals: res.data.technicals,
+          structure: res.data.structure,
+          scores: res.data.scores,
+          indicator_verdicts: res.data.indicator_verdicts || {},
+          market_structure_analysis: res.data.market_structure_analysis || '',
+          tradingview_idea: res.data.tradingview_idea || '',
+          category_scores: res.data.category_scores || {},
+          macro_context: res.data.macro_context || '',
+          correlation_analysis: res.data.correlation_analysis || '',
+          timeframe: interval,
+          strategy_key: strategyKey,
+          status: 'ACTIVE'
+        },
+        expiresAt: new Date(Date.now() + (interval === '1d' ? 3 * 24 : 1 * 4) * 60 * 60 * 1000), 
+      };
+
+      let signal: any = null;
+      if (existingActive) {
+        signal = await this.prisma.signal.update({
+          where: { id: existingActive.id },
+          data: signalPayload,
+        });
+      } else {
+        signal = await this.prisma.signal.create({
+          data: signalPayload,
+        });
+      }
 
       return signal;
     } catch (err: any) {
@@ -366,7 +384,7 @@ export class SignalsController implements OnModuleInit {
 
       let result: any = null;
 
-      if (symUpper.includes('BTC') || symUpper.includes('ETH') || symUpper.includes('SOL')) {
+      if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => symUpper.includes(c))) {
         result = this.btcStrategyEngine(cachedCandles, symbol);
       } else if (symUpper.includes('US100') || symUpper.includes('NAS')) {
         result = this.nasdaqStrategyEngine(cachedCandles, symbol);
@@ -422,15 +440,19 @@ export class SignalsController implements OnModuleInit {
 
       let signal: any = null;
       try {
-        signal = await this.prisma.signal.create({
-        data: {
+        const existingActive = await this.prisma.signal.findFirst({
+          where: { symbol, expiresAt: { gt: new Date() } },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        const signalPayload = {
           symbol,
           direction,
           entryPrice,
           stopLoss,
           takeProfit1,
           takeProfit2,
-          riskRewardRatio: 1.6,
+          riskRewardRatio: parseFloat((Math.abs(takeProfit1 - entryPrice) / (Math.abs(entryPrice - stopLoss) || 1)).toFixed(1)),
           winProbability: calculatedWinProb,
           durationEstimate,
           aiReasoning: {
@@ -446,7 +468,7 @@ export class SignalsController implements OnModuleInit {
             explanation: `Evidence-based quantitative engine confirmed high-probability ${direction} setup for ${symbol} backed by EMA 20/50/200, RSI-14 (${rsi14.toFixed(1)}), and VWAP alignment.`,
             technicals: { rsi14, trend: direction === 'BUY' ? 'Bullish' : 'Bearish', atr: parseFloat(atr.toFixed(4)), vwap: parseFloat(vwap.toFixed(2)), ema20: parseFloat(ema20.toFixed(2)), ema50: parseFloat(ema50.toFixed(2)), ema200: parseFloat(ema200.toFixed(2)) },
             structure: { fvg_detected: true, order_block_detected: true, support: stopLoss, resistance: takeProfit1 },
-            scores: { bullish: direction === 'BUY' ? calculatedWinProb : 100 - calculatedWinProb, bearish: direction === 'BUY' ? 100 - calculatedWinProb : calculatedWinProb, momentum: 80, volume: 75, trend: 85 },
+            scores: { bullish: direction === 'BUY' ? calculatedWinProb : 100 - calculatedWinProb, bearish: direction === 'BUY' ? 100 - calculatedWinProb : calculatedWinProb, ...this.computeDynamicScores(rsi14, ema20, ema50, ema200, entryPrice, vwap, direction) },
             indicator_verdicts: {
               ema: `EMA-20 (${ema20.toFixed(2)}) is ${ema20 > ema50 ? 'above' : 'below'} EMA-50 (${ema50.toFixed(2)}), indicating ${ema20 > ema50 ? 'bullish' : 'bearish'} structure.`,
               rsi: `RSI-14 is at ${rsi14.toFixed(1)}, showing ${rsi14 > 60 ? 'bullish momentum' : rsi14 < 40 ? 'bearish momentum' : 'neutral momentum'}.`,
@@ -455,15 +477,26 @@ export class SignalsController implements OnModuleInit {
             },
             market_structure_analysis: `Price is ${entryPrice > ema200 ? 'above' : 'below'} the 200 EMA (${ema200.toFixed(2)}), confirming long-term ${entryPrice > ema200 ? 'uptrend' : 'downtrend'}. VWAP is at ${vwap.toFixed(2)}.`,
             tradingview_idea: `PRO Institutional ${direction} setup for ${symbol}. Retest Entry: ${entryPrice.toFixed(2)}, TP1: ${takeProfit1.toFixed(2)} (1:1.6 R:R), TP2: ${takeProfit2.toFixed(2)} (1:2.8 R:R), Stop Loss: ${stopLoss.toFixed(2)}.`,
-            category_scores: { technical: 0.85, fundamental: 0.80, sentiment: 0.78, correlation: 0.82, volume: 0.80, on_chain: 0.75 },
+            category_scores: this.computeCategoryScores(rsi14, ema20, ema50, direction),
             macro_context: 'Computed from technical indicators only — no live macro data feed.',
             correlation_analysis: 'Cross-market correlation coefficients validate target boundaries.',
             timeframe: interval,
-            status: 'ACTIVE'
+            status: 'ACTIVE',
+            signal_grade: this.computeSignalGrade(calculatedWinProb, ema20, ema50, ema200, direction)
           },
           expiresAt: new Date(Date.now() + expirationMs),
+        };
+
+        if (existingActive) {
+          signal = await this.prisma.signal.update({
+            where: { id: existingActive.id },
+            data: signalPayload,
+          });
+        } else {
+          signal = await this.prisma.signal.create({
+            data: signalPayload,
+          });
         }
-      });
       } catch (e: any) {
         throw new ServiceUnavailableException(`Database storage error on signal ${symbol}: ${e.message}`);
       }
@@ -495,66 +528,92 @@ export class SignalsController implements OnModuleInit {
   }
 
   private getTwelveDataSymbol(symbol: string): string {
+    const u = (symbol || '').toUpperCase().trim();
     const map: Record<string, string> = {
       'US30': 'US30',
+      'DOW': 'US30',
       'US100': 'US100',
+      'NAS': 'US100',
       'SPX500': 'SPX500',
       'DAX40': 'GER30',
       'GOLD': 'XAU/USD',
+      'XAU/USD': 'XAU/USD',
       'OIL': 'WTI/USD',
       'EUR/USD': 'EUR/USD',
       'GBP/USD': 'GBP/USD',
       'USD/JPY': 'USD/JPY',
       'BTC': 'BTC/USD',
+      'BTC/USD': 'BTC/USD',
       'ETH': 'ETH/USD',
+      'ETH/USD': 'ETH/USD',
       'SOL': 'SOL/USD',
+      'SOL/USD': 'SOL/USD',
       'BNB': 'BNB/USD',
-      'XRP': 'XRP/USD'
+      'BNB/USD': 'BNB/USD',
+      'XRP': 'XRP/USD',
+      'XRP/USD': 'XRP/USD',
     };
-    return map[symbol] || symbol;
+    return map[u] || u;
   }
 
   private getYahooTicker(symbol: string): string {
+    const u = (symbol || '').toUpperCase().trim();
     const mappings: Record<string, string> = {
       'US30': '^DJI',
+      'DOW': '^DJI',
       'US100': '^NDX',
+      'NAS': '^NDX',
       'SPX500': '^GSPC',
       'DAX40': '^GDAXI',
       'GOLD': 'GC=F',
+      'XAU/USD': 'GC=F',
       'OIL': 'CL=F',
       'EUR/USD': 'EURUSD=X',
       'GBP/USD': 'GBPUSD=X',
       'USD/JPY': 'USDJPY=X',
       'BTC': 'BTC-USD',
+      'BTC/USD': 'BTC-USD',
       'ETH': 'ETH-USD',
+      'ETH/USD': 'ETH-USD',
       'SOL': 'SOL-USD',
+      'SOL/USD': 'SOL-USD',
       'BNB': 'BNB-USD',
-      'XRP': 'XRP-USD'
+      'BNB/USD': 'BNB-USD',
+      'XRP': 'XRP-USD',
+      'XRP/USD': 'XRP-USD',
+      'AAPL': 'AAPL',
+      'TSLA': 'TSLA',
+      'NVDA': 'NVDA',
+      'MSFT': 'MSFT',
+      'AMZN': 'AMZN',
     };
-    return mappings[symbol] || symbol;
+    return mappings[u] || u;
   }
 
   private getStrategyKey(symbol: string): string {
     const s = symbol.toUpperCase();
-    if (s.includes('BTC')) return 'crypto-btc-onchain';
+    if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => s.includes(c))) return 'crypto-btc-onchain';
     if (s.includes('JPY')) return 'forex-jpy-yields';
     if (s.includes('EUR')) return 'forex-eur-dxy';
+    if (s.includes('GBP')) return 'forex-gbp-cable';
     if (s.includes('XAU') || s.includes('GOLD')) return 'commodity-gold-yields';
+    if (s.includes('OIL') || s.includes('CRUDE') || s.includes('WTI')) return 'commodity-oil-opec';
     if (s.includes('NAS') || s.includes('US100')) return 'index-nas100-tech';
     if (s.includes('US30') || s.includes('DOW')) return 'index-us30-dow';
+    if (s.includes('SPX') || s.includes('SP500')) return 'index-spx500-macro';
+    if (s.includes('DAX')) return 'index-dax40-europe';
+    if (['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'].some(st => s.includes(st))) return 'stock-earnings-flow';
     return 'institutional-core';
   }
 
   async getOrFetchCandles(symbol: string, interval: string): Promise<any[]> {
-    let cleanSymbol = symbol.toUpperCase().trim();
-    const isForex = cleanSymbol.includes('/');
-    if (!isForex) {
-      cleanSymbol = cleanSymbol.replace('/USD', '');
-    }
+    const normSym = this.normalizeSymbol(symbol);
+    const cleanSymbol = normSym;
+    const baseSymbol = normSym.replace('/USD', '').replace('USDT', '').trim();
     
     // 1. Try to read from DB first
     let candles = await this.prisma.historicalCandle.findMany({
-      where: { symbol: cleanSymbol, interval },
+      where: { symbol: normSym, interval },
       orderBy: { timestamp: 'asc' },
       take: 200,
     });
@@ -577,14 +636,14 @@ export class SignalsController implements OnModuleInit {
     }
     
     // 3. Otherwise, fetch real-time. Try Binance first if crypto.
-    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(cleanSymbol);
+    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(baseSymbol);
     let fetched = false;
 
     if (isCrypto) {
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
       try {
-        const binanceSym = `${cleanSymbol}USDT`;
+        const binanceSym = `${baseSymbol}USDT`;
         const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
         const headers: Record<string, string> = {};
         if (binanceApiKey) {
@@ -771,26 +830,7 @@ export class SignalsController implements OnModuleInit {
         }
 
         if (liveSpotPrice > 0) {
-          const seeded = [];
-          const nowMs = Date.now();
-          for (let i = 50; i >= 0; i--) {
-            const time = new Date(nowMs - i * 3600 * 1000);
-            const p = liveSpotPrice * (1 + (Math.sin(i / 6) * 0.003));
-            seeded.push({
-              id: `live-${cleanSymbol.toLowerCase()}-${i}`,
-              symbol: cleanSymbol,
-              interval,
-              timestamp: time,
-              open: parseFloat((p * 0.9995).toFixed(4)),
-              high: parseFloat((p * 1.002).toFixed(4)),
-              low: parseFloat((p * 0.998).toFixed(4)),
-              close: parseFloat(p.toFixed(4)),
-              volume: 2500,
-              createdAt: time
-            });
-          }
-          console.log(`[SignalsController] Real-time live spot candles synthesized for ${cleanSymbol} at price ${liveSpotPrice}.`);
-          return seeded;
+          console.warn(`[SignalsController] Live spot price found for ${cleanSymbol} ($${liveSpotPrice}) but insufficient candle history. Cannot generate reliable signal.`);
         }
       } catch (err: any) {
         console.warn(`[SignalsController] Live spot fallback candle build failed for ${cleanSymbol}: ${err.message}`);
@@ -802,17 +842,76 @@ export class SignalsController implements OnModuleInit {
 
   // ─── DEDICATED QUANTITATIVE STRATEGY ENGINES ───
 
-  private calculateWinProb(ema20: number, ema50: number, ema200: number, rsi: number, vwap: number, entryPrice: number, direction: string): number {
+  private calculateWinProb(ema20: number, ema50: number, ema200: number, rsi: number, vwap: number, entryPrice: number, direction: string, candles?: any[]): number {
     let winProb = 50;
-    if (ema20 > ema50 && direction === 'BUY') winProb += 10;
-    if (ema20 < ema50 && direction === 'SELL') winProb += 10;
-    if (ema50 > ema200 && direction === 'BUY') winProb += 8;
-    if (ema50 < ema200 && direction === 'SELL') winProb += 8;
-    if (rsi > 55 && direction === 'BUY') winProb += 6;
-    if (rsi < 45 && direction === 'SELL') winProb += 6;
-    if (entryPrice > vwap && direction === 'BUY') winProb += 5;
-    if (entryPrice < vwap && direction === 'SELL') winProb += 5;
+    // EMA-20 vs EMA-50 short-term trend
+    if (ema20 > ema50 && direction === 'BUY') winProb += 8;
+    if (ema20 < ema50 && direction === 'SELL') winProb += 8;
+    // EMA-50 vs EMA-200 macro trend
+    if (ema50 > ema200 && direction === 'BUY') winProb += 7;
+    if (ema50 < ema200 && direction === 'SELL') winProb += 7;
+    // Triple EMA stack bonus (strongest trend confirmation)
+    if (ema20 > ema50 && ema50 > ema200 && direction === 'BUY') winProb += 6;
+    if (ema20 < ema50 && ema50 < ema200 && direction === 'SELL') winProb += 6;
+    // RSI momentum confirmation
+    if (rsi > 55 && rsi < 75 && direction === 'BUY') winProb += 5;
+    if (rsi < 45 && rsi > 25 && direction === 'SELL') winProb += 5;
+    // Overbought/Oversold penalty
+    if (rsi > 75 && direction === 'BUY') winProb -= 8;
+    if (rsi < 25 && direction === 'SELL') winProb -= 8;
+    // VWAP institutional alignment
+    if (entryPrice > vwap && direction === 'BUY') winProb += 4;
+    if (entryPrice < vwap && direction === 'SELL') winProb += 4;
+    // Volume confirmation (current candle volume vs 20-period average)
+    if (candles && candles.length >= 20) {
+      const volumes = candles.slice(-20).map(c => Number(c.volume || 0)).filter(v => v > 0);
+      if (volumes.length > 0) {
+        const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+        const currentVol = Number(candles[candles.length - 1]?.volume || 0);
+        if (currentVol > avgVol * 1.2) winProb += 5; // Above-average volume confirms move
+      }
+    }
     return Math.min(92, Math.max(55, winProb));
+  }
+
+  private computeSignalGrade(winProb: number, ema20: number, ema50: number, ema200: number, direction: string): string {
+    const tripleAligned = direction === 'BUY'
+      ? (ema20 > ema50 && ema50 > ema200)
+      : (ema20 < ema50 && ema50 < ema200);
+    if (winProb >= 80 && tripleAligned) return 'A (High Conviction)';
+    if (winProb >= 65) return 'B (Moderate Conviction)';
+    return 'C (Low Conviction — Caution)';
+  }
+
+  private computeDynamicScores(rsi: number, ema20: number, ema50: number, ema200: number, entryPrice: number, vwap: number, direction: string): { momentum: number; volume: number; trend: number } {
+    let momentum = 50;
+    if (direction === 'BUY' && rsi > 55) momentum = Math.min(95, 50 + (rsi - 50) * 1.2);
+    else if (direction === 'SELL' && rsi < 45) momentum = Math.min(95, 50 + (50 - rsi) * 1.2);
+    let trend = 50;
+    if (direction === 'BUY') {
+      if (ema20 > ema50) trend += 15;
+      if (ema50 > ema200) trend += 15;
+      if (entryPrice > ema200) trend += 10;
+    } else {
+      if (ema20 < ema50) trend += 15;
+      if (ema50 < ema200) trend += 15;
+      if (entryPrice < ema200) trend += 10;
+    }
+    const volumeScore = entryPrice > vwap && direction === 'BUY' ? 78 : entryPrice < vwap && direction === 'SELL' ? 78 : 55;
+    return { momentum: Math.round(momentum), volume: volumeScore, trend: Math.min(95, Math.round(trend)) };
+  }
+
+  private computeCategoryScores(rsi: number, ema20: number, ema50: number, direction: string): Record<string, number> {
+    const emaAlign = (direction === 'BUY' && ema20 > ema50) || (direction === 'SELL' && ema20 < ema50);
+    const rsiStrong = (direction === 'BUY' && rsi > 60) || (direction === 'SELL' && rsi < 40);
+    return {
+      technical: parseFloat((emaAlign ? (rsiStrong ? 0.88 : 0.72) : 0.55).toFixed(2)),
+      fundamental: 0.50,
+      sentiment: parseFloat((rsiStrong ? 0.75 : 0.50).toFixed(2)),
+      correlation: 0.60,
+      volume: parseFloat((emaAlign ? 0.70 : 0.50).toFixed(2)),
+      on_chain: 0.50,
+    };
   }
 
   private getComputedEvidence(ema20: number, ema50: number, rsi: number, atr: number, vwap: number, entryPrice: number, stopLoss: number, direction: string, dp: number) {
@@ -834,7 +933,7 @@ export class SignalsController implements OnModuleInit {
     const ema200 = this.calcEMA(closes, 200);
     const vwap = this.calcVWAP(candles);
 
-    const isChop = rsi >= 48 && rsi <= 52;
+    const isChop = rsi >= 45 && rsi <= 55;
     if (isChop) {
       return {
         direction: 'WAIT',
@@ -855,7 +954,7 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction, candles),
       evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }
@@ -882,7 +981,7 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction, candles),
       evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }
@@ -909,7 +1008,7 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction, candles),
       evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }
@@ -924,7 +1023,7 @@ export class SignalsController implements OnModuleInit {
     const ema200 = this.calcEMA(closes, 200);
     const vwap = this.calcVWAP(candles);
 
-    const isChop = rsi >= 49 && rsi <= 51;
+    const isChop = rsi >= 45 && rsi <= 55;
     if (isChop) {
       return {
         direction: 'WAIT',
@@ -946,7 +1045,7 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(precision)),
       takeProfit1: parseFloat(takeProfit1.toFixed(precision)),
       takeProfit2: parseFloat(takeProfit2.toFixed(precision)),
-      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction, candles),
       evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, precision)
     };
   }
@@ -973,7 +1072,7 @@ export class SignalsController implements OnModuleInit {
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction),
+      calculatedWinProb: this.calculateWinProb(ema20, ema50, ema200, rsi, vwap, entryPrice, direction, candles),
       evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
     };
   }

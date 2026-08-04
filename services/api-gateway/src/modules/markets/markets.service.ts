@@ -183,7 +183,7 @@ export class MarketsService implements OnModuleInit {
               yahooPriceMap[yahooTicker] = {
                 price: parseFloat(tdData.price || tdData.close),
                 changePct: parseFloat(tdData.percent_change || tdData.change_percent || 0),
-                volume: parseFloat(tdData.volume || 100000)
+                volume: parseFloat(tdData.volume || '0')
               };
             }
           }
@@ -205,7 +205,7 @@ export class MarketsService implements OnModuleInit {
               const symbol = q.symbol;
               const price = parseFloat(q.regularMarketPrice || q.postMarketPrice || q.preMarketPrice || 0);
               const changePct = parseFloat(q.regularMarketChangePercent || 0);
-              const volume = parseFloat(q.regularMarketVolume || 100000);
+              const volume = parseFloat(q.regularMarketVolume || '0');
               if (price > 0) {
                 yahooPriceMap[symbol] = {
                   price,
@@ -219,49 +219,66 @@ export class MarketsService implements OnModuleInit {
           console.warn(`[MarketsService] Yahoo Finance batch quote API failed: ${err.message}`);
         }
       }
-      // High-availability open.er-api.com for live real-time Forex exchange rates (EUR/USD, USD/JPY, GBP/USD)
+      // High-availability open.er-api.com & exchangerate-api for live real-time Forex exchange rates
       try {
         const forexRes = await this.fetchWithTimeout('https://open.er-api.com/v6/latest/USD');
         if (forexRes.ok) {
           const fxData = await forexRes.json();
           const rates = fxData?.rates || {};
-          if (rates.EUR) {
+          if (rates.EUR && rates.EUR > 0) {
             const currentP = parseFloat((1 / rates.EUR).toFixed(4));
             const prevP = yahooPriceMap['EURUSD=X']?.price;
-            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : null;
-            yahooPriceMap['EURUSD=X'] = { price: currentP, changePct: changePct as any, volume: 500000 };
+            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
+            yahooPriceMap['EURUSD=X'] = { price: currentP, changePct, volume: 500000 };
           }
-          if (rates.GBP) {
+          if (rates.GBP && rates.GBP > 0) {
             const currentP = parseFloat((1 / rates.GBP).toFixed(4));
             const prevP = yahooPriceMap['GBPUSD=X']?.price;
-            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : null;
-            yahooPriceMap['GBPUSD=X'] = { price: currentP, changePct: changePct as any, volume: 450000 };
+            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
+            yahooPriceMap['GBPUSD=X'] = { price: currentP, changePct, volume: 450000 };
           }
-          if (rates.JPY) {
+          if (rates.JPY && rates.JPY > 0) {
             const currentP = parseFloat(rates.JPY.toFixed(2));
             const prevP = yahooPriceMap['USDJPY=X']?.price;
-            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : null;
-            yahooPriceMap['USDJPY=X'] = { price: currentP, changePct: changePct as any, volume: 600000 };
+            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
+            yahooPriceMap['USDJPY=X'] = { price: currentP, changePct, volume: 600000 };
           }
         }
       } catch (err: any) {
-        console.warn(`[MarketsService] Forex open.er-api.com connection notice: ${err.message}`);
+        console.warn(`[MarketsService] Forex connection notice: ${err.message}`);
       }
 
-      // High-availability Binance PAXG for Gold spot price proxy (XAU/USD)
+      // High-availability Spot Gold API (gold-api.com & Binance PAXG)
       try {
-        const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT');
-        if (paxgRes.ok) {
-          const paxgData = await paxgRes.json();
-          if (paxgData && paxgData.lastPrice) {
+        const goldApiRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU');
+        if (goldApiRes.ok) {
+          const gData = await goldApiRes.json();
+          if (gData && gData.price && parseFloat(gData.price) > 0) {
+            const price = parseFloat(gData.price);
             yahooPriceMap['GC=F'] = {
-              price: parseFloat(paxgData.lastPrice),
-              changePct: parseFloat(paxgData.priceChangePercent || 0),
-              volume: parseFloat(paxgData.quoteVolume || 100000)
+              price,
+              changePct: parseFloat(gData.chp || gData.change_percent || 0),
+              volume: 1200000
             };
           }
         }
-      } catch (err) {}
+      } catch (e) {}
+
+      if (!yahooPriceMap['GC=F'] || yahooPriceMap['GC=F'].price <= 0) {
+        try {
+          const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT');
+          if (paxgRes.ok) {
+            const paxgData = await paxgRes.json();
+            if (paxgData && paxgData.lastPrice) {
+              yahooPriceMap['GC=F'] = {
+                price: parseFloat(paxgData.lastPrice),
+                changePct: parseFloat(paxgData.priceChangePercent || 0),
+                volume: parseFloat(paxgData.quoteVolume || '0')
+              };
+            }
+          }
+        } catch (err) {}
+      }
 
       // High-availability Yahoo Chart v8 API for Indices (US30, US100, SPX500, DAX40)
       const indexTickers = [
@@ -284,7 +301,7 @@ export class MarketsService implements OnModuleInit {
               yahooPriceMap[idxAsset.yahoo] = {
                 price,
                 changePct,
-                volume: parseFloat(meta.regularMarketVolume || 1500000)
+                volume: parseFloat(meta.regularMarketVolume || '0')
               };
             }
           }
@@ -312,11 +329,11 @@ export class MarketsService implements OnModuleInit {
               const yahooTicker = this.getYahooTicker(assetName);
               if (!yahooPriceMap[yahooTicker] || yahooPriceMap[yahooTicker].price <= 0) {
                 const openP = parseFloat(s.open);
-                const changePct = (!isNaN(openP) && openP > 0) ? parseFloat((((p - openP) / openP) * 100).toFixed(2)) : 0.15;
+                const changePct = (!isNaN(openP) && openP > 0) ? parseFloat((((p - openP) / openP) * 100).toFixed(2)) : 0;
                 yahooPriceMap[yahooTicker] = {
                   price: p,
                   changePct,
-                  volume: parseFloat(s.volume || '1500000')
+                  volume: parseFloat(s.volume || '0')
                 };
               }
             }
@@ -329,7 +346,7 @@ export class MarketsService implements OnModuleInit {
         const lastCached = this.tickerCache[asset.name];
         let currentPrice = lastCached ? lastCached.price : 0;
         let changePct24h = lastCached ? lastCached.changePct24h : 0;
-        let volume24h = lastCached ? lastCached.volume24h : 1500000;
+        let volume24h = lastCached ? lastCached.volume24h : 0;
 
         if (asset.type === 'crypto' && asset.binanceSymbol && cryptoPriceMap[asset.binanceSymbol]) {
           const binanceData = cryptoPriceMap[asset.binanceSymbol];
@@ -356,23 +373,7 @@ export class MarketsService implements OnModuleInit {
         }
 
         if (currentPrice <= 0) {
-          const defaults: Record<string, number> = {
-            'US30': 40520.50,
-            'US100': 19840.25,
-            'SPX500': 5530.80,
-            'DAX40': 18250.40,
-            'OIL': 78.40,
-            'AAPL': 224.50,
-            'TSLA': 212.30,
-            'NVDA': 121.80,
-            'MSFT': 442.10,
-            'AMZN': 184.90,
-            'EUR/USD': 1.0854,
-            'GBP/USD': 1.2842,
-            'USD/JPY': 155.30,
-            'XAU/USD': 2420.50,
-          };
-          currentPrice = defaults[asset.name] || 100.0;
+          currentPrice = 0; // No live data available — skip dummy fallbacks
         }
  
         const bidPrice = parseFloat(currentPrice.toFixed(4));

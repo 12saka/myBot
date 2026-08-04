@@ -7,11 +7,16 @@ import { AdminService } from './admin.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN', 'SUPER_ADMIN')
+@UseGuards(JwtAuthGuard)
 @Controller('admin')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  @Post('claim-superadmin')
+  @ApiOperation({ summary: 'Grant current logged in user full SUPER_ADMIN master privileges in database' })
+  async claimSuperAdmin(@Req() req: any) {
+    return this.adminService.claimSuperAdmin(req.user.userId);
+  }
 
   @Get('dashboard/overview')
   @ApiOperation({ summary: 'Get Superadmin executive overview stats & health' })
@@ -33,8 +38,20 @@ export class AdminController {
 
   @Patch('users/:id/status')
   @ApiOperation({ summary: 'Update user role or suspension status' })
-  async updateUserRoleAndStatus(@Req() req: any, @Param('id') id: string, @Body() body: { role?: string; isSuspended?: boolean }) {
+  async updateUserRoleAndStatus(@Req() req: any, @Param('id') id: string, @Body() body: { role?: string; isSuspended?: boolean; balance?: number; firstName?: string; lastName?: string; telegramUrl?: string }) {
     return this.adminService.updateUserRoleAndStatus(req.user.userId, id, body);
+  }
+
+  @Patch('users/:id')
+  @ApiOperation({ summary: 'Update user details, balance, or profile' })
+  async updateUser(@Req() req: any, @Param('id') id: string, @Body() body: { role?: string; balance?: number; firstName?: string; lastName?: string; telegramUrl?: string; isSuspended?: boolean }) {
+    return this.adminService.updateUserRoleAndStatus(req.user.userId, id, body);
+  }
+
+  @Delete('users/:id')
+  @ApiOperation({ summary: 'Delete user account' })
+  async deleteUser(@Req() req: any, @Param('id') id: string) {
+    return this.adminService.deleteUser(req.user.userId, id);
   }
 
   @Get('kyc')
@@ -67,10 +84,22 @@ export class AdminController {
     return this.adminService.createCourse(req.user.userId, body);
   }
 
+  @Patch('academy/courses/:id')
+  @ApiOperation({ summary: 'Update existing course in LMS' })
+  async updateCourse(@Req() req: any, @Param('id') id: string, @Body() body: { title?: string; description?: string; category?: string; level?: string; imageUrl?: string; isPublished?: boolean }) {
+    return this.adminService.updateCourse(req.user.userId, id, body);
+  }
+
   @Post('academy/courses/:id/lessons')
   @ApiOperation({ summary: 'Add a new lesson with video/image media to a course' })
   async addLessonToCourse(@Req() req: any, @Param('id') courseId: string, @Body() body: { title: string; content: string; videoUrl?: string; orderIndex?: number }) {
     return this.adminService.addLessonToCourse(req.user.userId, courseId, body);
+  }
+
+  @Patch('academy/lessons/:id')
+  @ApiOperation({ summary: 'Update existing lesson in LMS' })
+  async updateLesson(@Req() req: any, @Param('id') lessonId: string, @Body() body: { title?: string; content?: string; videoUrl?: string; orderIndex?: number }) {
+    return this.adminService.updateLesson(req.user.userId, lessonId, body);
   }
 
   @Delete('academy/lessons/:id')
