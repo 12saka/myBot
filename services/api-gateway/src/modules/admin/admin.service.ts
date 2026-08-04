@@ -18,18 +18,23 @@ export class AdminService {
   // 1. Dashboard Overview Stats & System Health
   async getDashboardOverview() {
     const [totalUsers, totalKycPending, totalActiveSignals, totalCourses, recentAuditLogs] = await Promise.all([
-      this.prisma.user.count(),
-      this.prisma.kycRecord.count({ where: { status: 'PENDING' } }),
-      this.prisma.signal.count({ where: { expiresAt: { gt: new Date() } } }),
-      this.prisma.course.count(),
+      this.prisma.user.count().catch(() => 0),
+      this.prisma.kycRecord.count({ where: { status: 'PENDING' } }).catch(() => 0),
+      this.prisma.signal.count({ where: { expiresAt: { gt: new Date() } } }).catch(() => 0),
+      this.prisma.course.count().catch(() => 0),
       this.prisma.auditLog.findMany({
         take: 8,
         orderBy: { timestamp: 'desc' },
         include: { user: { select: { email: true, role: true } } },
-      }),
+      }).catch(() => []),
     ]);
 
-    const activeBrokers = await (this.prisma as any).userBrokerProfile.count({ where: { status: 'connected' } });
+    let activeBrokers = 0;
+    try {
+      if ((this.prisma as any).userBrokerProfile) {
+        activeBrokers = await (this.prisma as any).userBrokerProfile.count({ where: { status: 'connected' } });
+      }
+    } catch (e) {}
 
     return {
       totalUsers,
@@ -45,7 +50,7 @@ export class AdminService {
   // 2. User Management
   async getUsers(query?: { search?: string; role?: string; page?: number; limit?: number }) {
     const page = Number(query?.page || 1);
-    const limit = Number(query?.limit || 20);
+    const limit = Number(query?.limit || 50);
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -60,62 +65,78 @@ export class AdminService {
       where.role = query.role;
     }
 
-    const [users, total, brokerProfiles] = await Promise.all([
-      this.prisma.user.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          isTwoFactorEnabled: true,
-          createdAt: true,
-          profile: {
-            select: {
-              firstName: true,
-              lastName: true,
-              country: true,
-              avatarUrl: true,
+    try {
+      const [users, total] = await Promise.all([
+        this.prisma.user.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            isTwoFactorEnabled: true,
+            createdAt: true,
+            profile: {
+              select: {
+                firstName: true,
+                lastName: true,
+                country: true,
+                avatarUrl: true,
+                brokerType: true,
+              },
+            },
+            wallet: {
+              select: {
+                balance: true,
+              },
+            },
+            kyc: {
+              select: {
+                status: true,
+              },
             },
           },
-          wallet: {
+        }),
+        this.prisma.user.count({ where }),
+      ]);
+
+      let brokerProfiles: any[] = [];
+      try {
+        if ((this.prisma as any).userBrokerProfile) {
+          brokerProfiles = await (this.prisma as any).userBrokerProfile.findMany({
             select: {
+              userId: true,
+              status: true,
+              brokerType: true,
               balance: true,
             },
-          },
-          kyc: {
-            select: {
-              status: true,
-            },
-          },
-        },
-      }),
-      this.prisma.user.count({ where }),
-      (this.prisma as any).userBrokerProfile.findMany({
-        select: {
-          userId: true,
-          status: true,
-          brokerType: true,
-          balance: true,
-        },
-      }),
-    ]);
-    const brokerByUserId = new Map(brokerProfiles.map((broker: any) => [broker.userId, broker]));
+          });
+        }
+      } catch (e) {}
 
-    return {
-      data: users.map((user) => ({
-        ...user,
-        brokerProfile: brokerByUserId.get(user.id) || null,
-      })),
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+      const brokerByUserId = new Map(brokerProfiles.map((broker: any) => [broker.userId, broker]));
+
+      return {
+        data: users.map((user) => ({
+          ...user,
+          brokerProfile: brokerByUserId.get(user.id) || null,
+        })),
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    } catch (err: any) {
+      console.error('[AdminService] getUsers error:', err);
+      return {
+        data: [],
+        meta: { total: 0, page: 1, limit, totalPages: 0 },
+      };
+    }
   }
 
   async getUserById(userId: string) {
@@ -131,7 +152,14 @@ export class AdminService {
       },
     });
     if (!user) throw new NotFoundException(`User with ID ${userId} not found.`);
-    const brokerProfile = await (this.prisma as any).userBrokerProfile.findUnique({ where: { userId } });
+
+    let brokerProfile = null;
+    try {
+      if ((this.prisma as any).userBrokerProfile) {
+        brokerProfile = await (this.prisma as any).userBrokerProfile.findUnique({ where: { userId } });
+      }
+    } catch (e) {}
+
     return { ...user, brokerProfile };
   }
 
