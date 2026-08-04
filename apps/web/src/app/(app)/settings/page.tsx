@@ -1295,40 +1295,129 @@ export default function SettingsPage() {
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-6"
               >
-                {/* AI Preferences */}
-                <div className="glass-card rounded-2xl p-6 border border-white/5 space-y-4">
-                  <div className="border-b border-white/5 pb-3">
-                    <h3 className="font-display font-bold text-white text-sm flex items-center gap-2">
-                      <BrainCircuit size={16} className="text-purple-400" />
-                      AI Intelligence Parameters
-                    </h3>
+                {/* AI Preferences & Interactive Risk Safety Suite */}
+                <div className="glass-card rounded-2xl p-6 border border-white/5 space-y-6">
+                  <div className="border-b border-white/5 pb-3 flex items-center justify-between">
+                    <div>
+                      <h3 className="font-display font-bold text-white text-sm flex items-center gap-2">
+                        <BrainCircuit size={16} className="text-purple-400" />
+                        AI Risk & Bot Safety Suite
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Configure capital allocation limits, lot size caps, stop-loss enforcement, and drawdown safeguards.</p>
+                    </div>
+                    <Badge variant="purple" size="sm">Risk Engine Active</Badge>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Preferred AI Strategy</span>
-                      <span className="text-slate-200 font-semibold">{aiPreferences.strategy}</span>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">Execution Strategy</label>
+                      <select
+                        value={aiPreferences.strategy || 'SMC Order Block & Volume Vector'}
+                        onChange={e => {
+                          const updated = { ...aiPreferences, strategy: e.target.value };
+                          setAiPreferences(updated);
+                          toast.success('Strategy updated!');
+                        }}
+                        className="w-full input-glass rounded-xl px-3 py-2.5 bg-slate-900 text-slate-200 focus:outline-none focus:border-purple-500 font-mono"
+                      >
+                        <option value="SMC Order Block & Volume Vector">SMC Order Block & Volume Vector</option>
+                        <option value="Institutional Trend Follower (EMA 20/50/200)">Institutional Trend Follower (EMA 20/50/200)</option>
+                        <option value="Quantitative VWAP & RSI Mean Reversion">Quantitative VWAP & RSI Mean Reversion</option>
+                      </select>
                     </div>
 
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Automation Mode</span>
-                      <span className="text-slate-200 font-semibold">{aiPreferences.automationMode}</span>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">Bot Automation Mode</label>
+                      <select
+                        value={aiPreferences.automationMode || 'Semi-Autonomous (Requires Confirmation)'}
+                        onChange={e => {
+                          const updated = { ...aiPreferences, automationMode: e.target.value };
+                          setAiPreferences(updated);
+                          toast.success('Automation mode updated!');
+                        }}
+                        className="w-full input-glass rounded-xl px-3 py-2.5 bg-slate-900 text-slate-200 focus:outline-none focus:border-purple-500 font-mono"
+                      >
+                        <option value="Semi-Autonomous (Requires Confirmation)">Semi-Autonomous (Requires Confirmation)</option>
+                        <option value="Fully Autonomous Auto-Execution">Fully Autonomous Auto-Execution</option>
+                        <option value="Advisory Only (Signal Alerts Only)">Advisory Only (Signal Alerts Only)</option>
+                      </select>
                     </div>
 
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Risk Limit Guard</span>
-                      <span className="text-slate-200 font-semibold">{aiPreferences.riskLimit}</span>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">Max Capital Risk Per Trade</label>
+                      <select
+                        value={aiPreferences.riskLimit || 'Max 2% Per Trade'}
+                        onChange={e => {
+                          const updated = { ...aiPreferences, riskLimit: e.target.value };
+                          setAiPreferences(updated);
+                          toast.success('Capital risk limit updated!');
+                        }}
+                        className="w-full input-glass rounded-xl px-3 py-2.5 bg-slate-900 text-emerald-400 font-mono font-bold focus:outline-none focus:border-purple-500"
+                      >
+                        <option value="Max 1% Per Trade (Conservative)">Max 1% Per Trade (Conservative)</option>
+                        <option value="Max 2% Per Trade (Standard)">Max 2% Per Trade (Standard)</option>
+                        <option value="Max 3% Per Trade (Growth)">Max 3% Per Trade (Growth)</option>
+                        <option value="Max 5% Per Trade (Aggressive)">Max 5% Per Trade (Aggressive)</option>
+                      </select>
                     </div>
 
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Recommendation Frequency</span>
-                      <span className="text-slate-200 font-semibold">{aiPreferences.frequency}</span>
+                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">Daily Drawdown Circuit Breaker</label>
+                      <select
+                        value={aiPreferences.maxDrawdown || '10% Max Portfolio Loss'}
+                        onChange={e => {
+                          const updated = { ...aiPreferences, maxDrawdown: e.target.value };
+                          setAiPreferences(updated);
+                          toast.success('Drawdown limit updated!');
+                        }}
+                        className="w-full input-glass rounded-xl px-3 py-2.5 bg-slate-900 text-amber-400 font-mono font-bold focus:outline-none focus:border-purple-500"
+                      >
+                        <option value="5% Max Portfolio Loss">5% Max Portfolio Loss (Strict Guard)</option>
+                        <option value="10% Max Portfolio Loss">10% Max Portfolio Loss (Standard Guard)</option>
+                        <option value="15% Max Portfolio Loss">15% Max Portfolio Loss (High Flexibility)</option>
+                      </select>
                     </div>
                   </div>
 
-                  <button className="btn-ghost text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer">
-                    <Cpu size={14} /> Customize AI Strategy
-                  </button>
+                  <div className="p-4 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-purple-300 flex items-center gap-2">
+                        <ShieldAlert size={15} className="text-purple-400" />
+                        Mandatory Safety Guards
+                      </span>
+                      <span className="text-[10px] font-mono text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">Enforced by Gateway</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      <label className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-900/60 border border-white/5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={aiPreferences.requireStopLoss !== false}
+                          onChange={e => {
+                            const updated = { ...aiPreferences, requireStopLoss: e.target.checked };
+                            setAiPreferences(updated);
+                            toast.success(`Stop Loss Enforcement: ${e.target.checked ? 'ENABLED' : 'DISABLED'}`);
+                          }}
+                          className="accent-purple-500"
+                        />
+                        <span className="text-slate-200 font-medium">Require Mandatory Stop-Loss on Every Trade</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-900/60 border border-white/5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={aiPreferences.sessionFilter !== false}
+                          onChange={e => {
+                            const updated = { ...aiPreferences, sessionFilter: e.target.checked };
+                            setAiPreferences(updated);
+                            toast.success(`Session Filter: ${e.target.checked ? 'ENABLED' : 'DISABLED'}`);
+                          }}
+                          className="accent-purple-500"
+                        />
+                        <span className="text-slate-200 font-medium">Only Trade During High Liquidity (London/NY Sessions)</span>
+                      </label>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Notifications */}
