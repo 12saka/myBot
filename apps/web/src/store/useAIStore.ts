@@ -18,6 +18,7 @@ export interface AISignal {
   stopLoss: number;
   tp1: number;
   tp2: number;
+  tp3?: number;
   riskReward: string;
   probability: string;
   duration: string;

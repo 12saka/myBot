@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAIStore, ChatMessage } from '@/store/useAIStore';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { apiFetch } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const QUICK_PROMPTS = [
@@ -73,28 +74,16 @@ export default function CopilotPage() {
     setTyping(true);
 
     try {
-      const token = localStorage.getItem('trademind_token');
-      // Format history matching python expectations
       const history = copilotMessages.map(m => ({
         role: m.role,
         content: m.content
       }));
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      const response = await fetch(`${apiUrl}/api/v2/copilot/chat`, {
+      const res = await apiFetch<any>('/api/v2/copilot/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify({ message: text, history })
       });
-
-      if (!response.ok) {
-        const errBody = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errBody}`);
-      }
-      const data = await response.json();
+      const data = res;
       
       const aiMsg: ChatMessage = { 
         id: (Date.now() + 1).toString(), 

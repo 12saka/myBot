@@ -115,8 +115,7 @@ export default function CourseDetailPage() {
         toast.error(`Quiz attempt score: ${res.score}%. Minimum 70% required.`);
       }
     } catch (err: any) {
-      toast.success('Lesson marked as completed!');
-      fetchCourse();
+      toast.error(err.message || 'Failed to complete lesson. Please try again.');
     } finally {
       setSubmittingQuiz(false);
     }

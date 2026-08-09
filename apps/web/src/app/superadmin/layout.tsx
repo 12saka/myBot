@@ -29,10 +29,10 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
           router.push('/dashboard');
         }
       } catch (e) {
-        setAuthorized(true);
+        router.push('/login');
       }
     } else {
-      setAuthorized(true);
+      router.push('/login');
     }
   }, [router]);
 

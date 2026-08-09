@@ -10,7 +10,7 @@ export class MarketsService implements OnModuleInit {
     { name: 'SOL/USD', type: 'crypto', binanceSymbol: 'SOLUSDT',  volatility: 1.5 },
     { name: 'BNB/USD', type: 'crypto', binanceSymbol: 'BNBUSDT',  volatility: 1.5 },
     { name: 'XRP/USD', type: 'crypto', binanceSymbol: 'XRPUSDT',  volatility: 0.005 },
-    { name: 'XAU/USD', type: 'commodity', binanceSymbol: 'PAXGUSDT', volatility: 5.0 },
+    { name: 'XAU/USD', type: 'commodity', binanceSymbol: null,        volatility: 5.0 },
     { name: 'AAPL',    type: 'stock',  binanceSymbol: null,       volatility: 0.6 },
     { name: 'TSLA',    type: 'stock',  binanceSymbol: null,       volatility: 1.2 },
     { name: 'NVDA',    type: 'stock',  binanceSymbol: null,       volatility: 3.0 },
@@ -26,7 +26,15 @@ export class MarketsService implements OnModuleInit {
     { name: 'USD/JPY', type: 'forex', binanceSymbol: null,       volatility: 0.05 },
   ];
 
-  private tickerCache: Record<string, { price: number; changePct24h: number; volume24h: number }> = {};
+  private tickerCache: Record<string, { price: number; changePct24h: number; volume24h: number; timestamp: number }> = {};
+
+  getCachedTicker(symbol: string): { price: number; changePct24h: number; volume24h: number } | null {
+    const cached = this.tickerCache[symbol];
+    if (!cached) return null;
+    const isExpired = Date.now() - cached.timestamp > 30000; // 30s TTL
+    if (isExpired) return null;
+    return cached;
+  }
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -278,21 +286,18 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Forex connection notice: ${err.message}`);
       }
 
-      // Gold Spot Price from Binance PAXGUSDT if available
-      if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price > 0) {
-        yahooPriceMap['GC=F'] = {
-          price: cryptoPriceMap['PAXGUSDT'].price,
-          changePct: cryptoPriceMap['PAXGUSDT'].changePct,
-          volume: cryptoPriceMap['PAXGUSDT'].volume
-        };
-      }
-
-      // High-availability Yahoo Chart v8 API for Indices (US30, US100, SPX500, DAX40)
+      // High-availability Yahoo Chart v8 API for Indices, Macro Indicators & Futures
       const indexTickers = [
         { name: 'US30', yahoo: '^DJI' },
         { name: 'US100', yahoo: '^NDX' },
         { name: 'SPX500', yahoo: '^GSPC' },
-        { name: 'DAX40', yahoo: '^GDAXI' }
+        { name: 'DAX40', yahoo: '^GDAXI' },
+        { name: 'US10Y', yahoo: '^TNX' },
+        { name: 'DXY', yahoo: 'DX-Y.NYB' },
+        { name: 'VIX', yahoo: '^VIX' },
+        { name: 'NQ', yahoo: 'NQ=F' },
+        { name: 'YM', yahoo: 'YM=F' },
+        { name: 'GOLD_FUT', yahoo: 'GC=F' }
       ];
 
       for (const idxAsset of indexTickers) {
@@ -380,7 +385,8 @@ export class MarketsService implements OnModuleInit {
         }
 
         if (currentPrice <= 0) {
-          currentPrice = 0; // No live data available — skip dummy fallbacks
+          console.warn(`[MarketsService] Skipping DB market update for ${asset.name} because live price is unavailable (${currentPrice}).`);
+          continue;
         }
  
         const bidPrice = parseFloat(currentPrice.toFixed(4));
@@ -390,7 +396,8 @@ export class MarketsService implements OnModuleInit {
         this.tickerCache[asset.name] = {
           price: currentPrice,
           changePct24h,
-          volume24h
+          volume24h,
+          timestamp: Date.now()
         };
 
         await this.prisma.marketData.upsert({
@@ -697,15 +704,21 @@ export class MarketsService implements OnModuleInit {
   }
 
   async getOrFetchCandles(symbol: string, interval: string): Promise<any[]> {
-    let cleanSymbol = symbol.toUpperCase().trim();
-    const isForex = cleanSymbol.includes('/');
-    if (!isForex) {
-      cleanSymbol = cleanSymbol.replace('/USD', '');
-    }
+    const rawSymbol = symbol.toUpperCase().trim();
+    const baseAsset = rawSymbol.split('/')[0];
+    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(baseAsset);
+    const dbSymbol = isCrypto ? `${baseAsset}/USD` : rawSymbol;
+    const cleanSymbol = dbSymbol;
     
     // 1. Try to read from DB first
     let candles = await this.prisma.historicalCandle.findMany({
-      where: { symbol: cleanSymbol, interval },
+      where: {
+        OR: [
+          { symbol: dbSymbol, interval },
+          { symbol: baseAsset, interval },
+          { symbol: rawSymbol, interval }
+        ]
+      },
       orderBy: { timestamp: 'asc' },
       take: 200,
     });
@@ -733,13 +746,12 @@ export class MarketsService implements OnModuleInit {
     }
     
     // 3. Otherwise, fetch real-time from Yahoo Finance (for indices/forex/stocks/commodities) or Binance (for crypto)
-    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(cleanSymbol);
     if (isCrypto) {
       // Fetch from Binance
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
       try {
-        const binanceSym = `${cleanSymbol}USDT`;
+        const binanceSym = `${baseAsset}USDT`;
         const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`);
         if (res.ok) {
           const klines = await res.json();

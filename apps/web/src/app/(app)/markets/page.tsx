@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { TradingViewWidget } from '@/components/charts/TradingViewWidget';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
 import { apiFetch } from '@/lib/api';
+import { toast } from 'react-hot-toast';
 
 const TABS = ['All', 'Crypto', 'Stocks', 'Indices', 'Forex', 'Commodities', 'Watchlist'] as const;
 type Tab = typeof TABS[number];
@@ -32,7 +33,7 @@ function getDynamicSparkline(price: number, changePct: number): number[] {
 }
 
 export default function MarketsPage() {
-  const { tickers, watchlist, addToWatchlist, removeFromWatchlist } = useMarketStore();
+  const { tickers, setTickers, watchlist, addToWatchlist, removeFromWatchlist } = useMarketStore();
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('All');
   const [sortKey, setSortKey] = useState<keyof Ticker>('changePct24h');
@@ -159,12 +160,19 @@ export default function MarketsPage() {
     <motion.div className="space-y-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
       <PageHeader
         title="Global Markets"
-        subtitle="Live prices across 10,000+ assets. Updated every 500ms."
+        subtitle="Live institutional quotes across Crypto, Forex, Indices, Equities, and Commodities."
         icon={BarChart3}
       >
         <button 
-          onClick={() => window.location.reload()} 
-          className="btn-ghost flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs"
+          onClick={async () => {
+            toast.promise(
+              apiFetch('/api/v2/markets/tickers').then(data => {
+                if (Array.isArray(data) && data.length > 0) setTickers(data);
+              }),
+              { loading: 'Refreshing market prices...', success: 'Market prices updated!', error: 'Failed to refresh market prices.' }
+            );
+          }} 
+          className="btn-ghost flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs cursor-pointer"
         >
           <RefreshCw size={14} /> Refresh
         </button>

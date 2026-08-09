@@ -47,10 +47,11 @@ export class AuthService {
         }
       });
 
+      const initialBalance = parseFloat(process.env.INITIAL_WALLET_BALANCE || '0.0');
       const newWallet = await tx.wallet.create({
         data: {
           userId: newUser.id,
-          balance: 100000.0, // Starting simulated capital
+          balance: initialBalance,
           currency: 'USD'
         }
       });

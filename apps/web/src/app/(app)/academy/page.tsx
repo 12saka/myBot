@@ -20,6 +20,8 @@ interface CourseItem {
   title: string;
   description: string;
   difficulty: string;
+  category?: string;
+  imageUrl?: string | null;
   totalLessons: number;
   completedLessons: number;
   progressPercent: number;
@@ -111,9 +113,8 @@ export default function AcademyPage() {
     const toastId = toast.loading(`Registering for "${session.title}"...`);
     try {
       await apiFetch(`/api/v2/academy/live-sessions/${session.id}/register`, { method: 'POST' });
-      toast.success(`Successfully registered for "${session.title}"!`, { id: toastId });
     } catch (err: any) {
-      toast.success(`Registered for live webinar "${session.title}"!`, { id: toastId });
+      toast.error(err.message || `Failed to register for live webinar "${session.title}". Please try again.`, { id: toastId });
     }
   };
 
@@ -205,9 +206,26 @@ export default function AcademyPage() {
           {loadState === 'ready' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {filteredCourses.map((course) => (
-                <div key={course.id} className="glass-card rounded-2xl p-5 flex flex-col justify-between border border-white/5 hover:border-purple-500/30 transition-all duration-300">
-                  <div>
-                    <div className="flex justify-between items-center mb-3">
+                <div key={course.id} className="glass-card rounded-2xl overflow-hidden flex flex-col justify-between border border-white/5 hover:border-purple-500/30 transition-all duration-300">
+                  {/* Course Image Header Banner */}
+                  <div className="relative h-36 w-full bg-slate-800/80 overflow-hidden">
+                    {course.imageUrl ? (
+                      <img
+                        src={course.imageUrl}
+                        alt={course.title}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        onError={(e) => {
+                          // Image fallback if URL fails to load
+                          (e.target as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-purple-900/40 via-slate-900 to-indigo-900/40 flex items-center justify-center">
+                        <GraduationCap className="w-12 h-12 text-purple-400/40" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+                    <div className="absolute top-3 left-3 right-3 flex justify-between items-center">
                       <Badge variant={course.difficulty === 'Beginner' ? 'blue' : course.difficulty === 'Intermediate' ? 'purple' : 'amber'} size="xs">
                         {course.difficulty}
                       </Badge>
@@ -215,19 +233,24 @@ export default function AcademyPage() {
                         <Badge variant="buy" size="xs">Certified</Badge>
                       )}
                     </div>
-                    <h3 className="font-bold text-slate-200 text-sm mb-2">{course.title}</h3>
-                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed mb-3">{course.description}</p>
-                    <div className="flex gap-4 text-[10px] text-slate-500 mt-2">
-                      <span className="flex items-center gap-1"><GraduationCap size={12} /> {course.totalLessons} Lessons</span>
-                      <span className="flex items-center gap-1 text-purple-400 font-bold"><Award size={12} /> {course.progressPercent}% Done</span>
-                    </div>
                   </div>
-                  <button
-                    onClick={() => router.push(`/academy/courses/${course.id}`)}
-                    className="w-full btn-ghost py-2 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 hover:bg-purple-500 hover:text-white hover:border-purple-600 transition-all mt-4 cursor-pointer"
-                  >
-                    {course.completedLessons > 0 ? 'Continue Course' : 'Start Course'} <ArrowRight size={12} />
-                  </button>
+
+                  <div className="p-5 flex-1 flex flex-col justify-between">
+                    <div>
+                      <h3 className="font-bold text-slate-200 text-sm mb-2">{course.title}</h3>
+                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed mb-3">{course.description}</p>
+                      <div className="flex gap-4 text-[10px] text-slate-500 mt-2">
+                        <span className="flex items-center gap-1"><GraduationCap size={12} /> {course.totalLessons} Lessons</span>
+                        <span className="flex items-center gap-1 text-purple-400 font-bold"><Award size={12} /> {course.progressPercent}% Done</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => router.push(`/academy/courses/${course.id}`)}
+                      className="w-full btn-ghost py-2 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 hover:bg-purple-500 hover:text-white hover:border-purple-600 transition-all mt-4 cursor-pointer"
+                    >
+                      {course.completedLessons > 0 ? 'Continue Course' : 'Start Course'} <ArrowRight size={12} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

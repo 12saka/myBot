@@ -93,7 +93,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       </div>
 
       {/* Price Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 border-y border-white/5 py-3 overflow-hidden">
+      <div className={cn("grid gap-2 sm:gap-3 border-y border-white/5 py-3 overflow-hidden", signal.tp3 ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4")}>
         {[
           { 
             label: 'Entry', 
@@ -115,6 +115,11 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             val: signal.tp2, 
             color: 'text-emerald-300' 
           },
+          ...(signal.tp3 ? [{
+            label: 'Target 3',
+            val: signal.tp3,
+            color: 'text-cyan-400'
+          }] : [])
         ].map(({ label, val, color }) => {
           const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(signal.symbol);
           const isJpy = signal.symbol.includes('JPY');
@@ -265,6 +270,26 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider border-b border-white/5 pb-1.5">
               Multi-Factor AI Reasoning & Explanation
             </div>
+
+            {/* 12-Layer XAUUSD / Confluence Breakdown */}
+            {signal.aiReasoning?.reasons_for && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-b border-white/5 pb-2.5">
+                <div className="bg-emerald-950/20 border border-emerald-500/20 p-2.5 rounded-lg">
+                  <span className="font-bold text-emerald-400 block mb-1 uppercase tracking-wider text-[10px]">🟢 Reasons Supporting Trade (+Score)</span>
+                  <ul className="list-disc pl-3.5 space-y-0.5 text-[10px] text-emerald-200">
+                    {signal.aiReasoning.reasons_for.map((r: string, idx: number) => <li key={idx}>{r}</li>)}
+                  </ul>
+                </div>
+                {signal.aiReasoning?.reasons_against?.length > 0 && (
+                  <div className="bg-amber-950/20 border border-amber-500/20 p-2.5 rounded-lg">
+                    <span className="font-bold text-amber-400 block mb-1 uppercase tracking-wider text-[10px]">⚠️ Risk Flags / Headwinds</span>
+                    <ul className="list-disc pl-3.5 space-y-0.5 text-[10px] text-amber-200">
+                      {signal.aiReasoning.reasons_against.map((r: string, idx: number) => <li key={idx}>{r}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
             {[
               { label: '📈 Technical Analysis & Confluence', items: signal.technicals, color: 'text-emerald-400' },
@@ -827,47 +852,48 @@ export default function SignalsPage() {
       {/* Live Economic News Protection Banner & CFTC COT Summary */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Economic News Calendar Feed */}
+        {/* Operational Market Risk & Volatility Monitor */}
         <div className="glass-card rounded-2xl p-4 border border-blue-500/20 bg-blue-950/10 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-              <Clock size={14} /> Live Economic News Feed & Protection
+              <Clock size={14} /> Volatility & Volatility Protection Engine
             </span>
-            <Badge variant="green" size="sm">Active Polling</Badge>
+            <Badge variant="green" size="sm">Active Engine</Badge>
           </div>
           <div className="flex items-center justify-between bg-slate-900/60 p-2.5 rounded-xl border border-white/5 text-xs text-slate-300">
             <div>
-              <div className="font-bold text-white">US Consumer Price Index (CPI YoY)</div>
-              <div className="text-[10px] text-slate-400">Impact: ★★★★★ │ Forecast: 2.8% │ Prev: 2.9%</div>
+              <div className="font-bold text-white">Dynamic Volatility Filter (ATR-14)</div>
+              <div className="text-[10px] text-slate-400">Status: Operational │ Risk Boundaries: Active │ Drawdown Guard: Enabled</div>
             </div>
-            <div className="text-right font-mono font-bold text-amber-400 text-xs">
-              In 18 Minutes
+            <div className="text-right font-mono font-bold text-emerald-400 text-xs">
+              Optimal
             </div>
           </div>
           <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
-            <Shield size={12} className="text-emerald-400" /> News Protection Mode: Auto -10.0 penalty deduction active during release window.
+            <Shield size={12} className="text-emerald-400" /> Dynamic Risk Guard: Auto ATR stop-loss buffer active for all trade setups.
           </div>
         </div>
 
-        {/* CFTC COT Institutional Positioning */}
+        {/* Technical Structure Confluence Engine */}
         <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
-              <BrainCircuit size={14} /> CFTC COT Institutional Net Positioning
+              <BrainCircuit size={14} /> Market Structure Confluence Engine
             </span>
-            <Badge variant="purple" size="sm">Friday Weekly Report</Badge>
+            <Badge variant="purple" size="sm">7-Step Confluence</Badge>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="bg-slate-900/60 p-2 rounded-xl border border-white/5">
-              <div className="text-[10px] text-slate-400 uppercase font-bold">Gold (COMEX) Net</div>
-              <div className="font-bold text-emerald-400 text-xs">+142.5K Contracts (91.5% Percentile)</div>
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Fair Value Gap (FVG)</div>
+              <div className="font-bold text-emerald-400 text-xs">3-Candle Imbalance Scanner</div>
             </div>
             <div className="bg-slate-900/60 p-2 rounded-xl border border-white/5">
-              <div className="text-[10px] text-slate-400 uppercase font-bold">Euro FX (CME) Net</div>
-              <div className="font-bold text-emerald-400 text-xs">+48.2K Contracts (78.4% Percentile)</div>
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Institutional Order Block</div>
+              <div className="font-bold text-emerald-400 text-xs">Liquidity Sweep Detector</div>
             </div>
           </div>
           <div className="text-[10px] text-slate-400 italic">
-            Institutional Bias: Managed Money long accumulation awards up to +12.0 COT score boost.
+            Structure Alignment: Signals require multi-timeframe EMA trend and RSI momentum confluence before publishing.
           </div>
         </div>
       </div>
@@ -1427,7 +1453,7 @@ export default function SignalsPage() {
                     <input
                       type="number"
                       step="any"
-                      placeholder="e.g. 64200"
+                      placeholder="Target entry level"
                       value={manualEntry}
                       onChange={(e) => setManualEntry(e.target.value)}
                       className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
@@ -1438,7 +1464,7 @@ export default function SignalsPage() {
                     <input
                       type="number"
                       step="any"
-                      placeholder="e.g. 63500"
+                      placeholder="Stop loss boundary"
                       value={manualStopLoss}
                       onChange={(e) => setManualStopLoss(e.target.value)}
                       className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
@@ -1452,7 +1478,7 @@ export default function SignalsPage() {
                     <input
                       type="number"
                       step="any"
-                      placeholder="e.g. 66000"
+                      placeholder="Target 1 level"
                       value={manualTp1}
                       onChange={(e) => setManualTp1(e.target.value)}
                       className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"
@@ -1463,7 +1489,7 @@ export default function SignalsPage() {
                     <input
                       type="number"
                       step="any"
-                      placeholder="e.g. 68500"
+                      placeholder="Target 2 level"
                       value={manualTp2}
                       onChange={(e) => setManualTp2(e.target.value)}
                       className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-semibold outline-none"

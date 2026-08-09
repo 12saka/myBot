@@ -267,8 +267,14 @@ model Course {
   title        String
   description  String
   difficulty   String
+  category     String?       @default("CRYPTO")
+  imageUrl     String?
+  isPublished  Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   certificates Certificate[]
   lessons      Lesson[]
+  quizzes      Quiz[]
 }
 
 model Lesson {
@@ -283,23 +289,82 @@ model Lesson {
 }
 
 model Quiz {
-  id            String   @id @default(uuid())
-  lessonId      String
+  id               String            @id @default(uuid())
+  lessonId         String?
+  courseId         String?
+  title            String
+  description      String?
+  difficulty       String            @default("INTERMEDIATE")
+  timeLimitMinutes Int               @default(15)
+  passMarkPct      Float             @default(70.0)
+  xpReward         Int               @default(100)
+  status           String            @default("PUBLISHED")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  lesson           Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  course           Course?           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  quizQuestions    QuizQuestion[]
+  attempts         QuizAttempt[]
+}
+
+model QuestionBank {
+  id            String         @id @default(uuid())
   question      String
-  options       String[]
-  correctOption Int
-  lesson        Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  type          String         @default("MULTIPLE_CHOICE")
+  options       Json
+  explanation   String?
+  assetTag      String?
+  skillTag      String         @default("Technical Analysis")
+  difficulty    String         @default("INTERMEDIATE")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  quizQuestions QuizQuestion[]
+  questionAttempts QuestionAttempt[]
+}
+
+model QuizQuestion {
+  id         String       @id @default(uuid())
+  quizId     String
+  questionId String
+  orderIndex Int          @default(1)
+  quiz       Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  question   QuestionBank @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, questionId])
 }
 
 model QuizAttempt {
-  id          String   @id @default(uuid())
-  userId      String
-  lessonId    String
-  score       Float
-  passed      Boolean
-  completedAt DateTime @default(now())
-  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id               String            @id @default(uuid())
+  userId           String
+  quizId           String
+  lessonId         String?
+  score            Float
+  percentage       Float
+  passed           Boolean
+  timeSpentSeconds Int               @default(0)
+  attemptNumber    Int               @default(1)
+  aiInsight        String?
+  skillBreakdown   Json?
+  startedAt        DateTime          @default(now())
+  submittedAt      DateTime          @default(now())
+  completedAt      DateTime          @default(now())
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quiz             Quiz              @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  lesson           Lesson?           @relation(fields: [lessonId], references: [id])
+  questionAttempts QuestionAttempt[]
+
+  @@index([userId, quizId])
+}
+
+model QuestionAttempt {
+  id            String       @id @default(uuid())
+  quizAttemptId String
+  questionId    String
+  selectedAnswer Json
+  isCorrect     Boolean
+  pointsEarned  Float        @default(0.0)
+  quizAttempt   QuizAttempt  @relation(fields: [quizAttemptId], references: [id], onDelete: Cascade)
+  question      QuestionBank @relation(fields: [questionId], references: [id], onDelete: Cascade)
 }
 
 model Certificate {
@@ -341,9 +406,13 @@ model Notification {
   userId    String
   title     String
   message   String
+  type      String   @default("SYSTEM")
+  linkUrl   String?
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
 }
 
 model AuditLog {

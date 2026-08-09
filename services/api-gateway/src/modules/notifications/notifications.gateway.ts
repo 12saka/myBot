@@ -107,15 +107,22 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
     if (!adapter) return;
 
     const symbols = [
-      'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 
-      'AAPL', 'TSLA', 'NVDA', 
-      'EUR/USD', 'GBP/USD', 'USD/JPY'
+      'BTC/USD', 'ETH/USD', 'SOL/USD', 'BNB/USD', 'XRP/USD',
+      'BTC', 'ETH', 'SOL', 'BNB', 'XRP',
+      'AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN',
+      'EUR/USD', 'GBP/USD', 'USD/JPY',
+      'US30', 'US100', 'SPX500', 'DAX40',
+      'XAU/USD', 'GOLD'
     ];
     for (const symbol of symbols) {
       const roomName = `market:${symbol}`;
       const room = adapter.rooms.get(roomName);
       if (room && room.size > 0) {
-        const dbMarket = await this.prisma.marketData.findUnique({ where: { symbol } });
+        let dbMarket = await this.prisma.marketData.findUnique({ where: { symbol } });
+        if (!dbMarket) {
+          const altSymbol = symbol.includes('/USD') ? symbol.replace('/USD', '') : `${symbol}/USD`;
+          dbMarket = await this.prisma.marketData.findUnique({ where: { symbol: altSymbol } });
+        }
         if (dbMarket) {
           this.server.to(roomName).emit('market_tick', {
             symbol,

@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomInt } from 'crypto';
 import axios from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
@@ -14,9 +14,9 @@ export class AuthService {
     private readonly jwtService: JwtService
   ) {}
 
-  // Generate a random 6-digit OTP
+  // Generate a random 6-digit OTP using CSPRNG
   generateOtp(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(100000, 1000000).toString();
   }
 
   // Hash the OTP and store it in Redis with a 5-minute expiration (300 seconds)

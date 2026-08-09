@@ -211,6 +211,13 @@ export class WalletController {
 
     const checkoutRequestId = `ws_CO_${Date.now()}`;
 
+    const allowMock = process.env.ALLOW_MOCK_PAYMENTS === 'true';
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    if (!allowMock && isProduction) {
+      throw new BadRequestException('M-Pesa STK Push integration requires live Daraja API credentials.');
+    }
+
     // 1. Create a PENDING transaction in PostgreSQL
     const transaction = await this.prisma.transaction.create({
       data: {
@@ -225,36 +232,38 @@ export class WalletController {
 
     console.log(`[M-PESA STK PUSH] Dispatched push request to ${dto.phoneNumber} for $${dto.amount}`);
 
-    // 2. Simulate the asynchronous Safaricom callback internally after 4 seconds
-    setTimeout(async () => {
-      try {
-        console.log(`[M-PESA CALLBACK SIMULATOR] Triggering successful callback for checkout ${checkoutRequestId}...`);
-        
-        await this.prisma.$transaction(async (tx) => {
-          // Update transaction to COMPLETED
-          await tx.transaction.update({
-            where: { id: transaction.id },
-            data: { status: 'COMPLETED' },
+    // 2. In sandbox/mock mode, simulate the asynchronous Safaricom callback internally
+    if (allowMock || !isProduction) {
+      setTimeout(async () => {
+        try {
+          console.log(`[M-PESA CALLBACK SIMULATOR] Triggering successful callback for checkout ${checkoutRequestId}...`);
+          
+          await this.prisma.$transaction(async (tx) => {
+            // Update transaction to COMPLETED
+            await tx.transaction.update({
+              where: { id: transaction.id },
+              data: { status: 'COMPLETED' },
+            });
+
+            // Increment wallet balance
+            await tx.wallet.update({
+              where: { id: wallet.id },
+              data: { balance: { increment: dto.amount } },
+            });
           });
 
-          // Increment wallet balance
-          await tx.wallet.update({
-            where: { id: wallet.id },
-            data: { balance: { increment: dto.amount } },
-          });
-        });
+          // Broadcast success via WebSockets
+          await this.notificationsGateway.sendNotification(
+            userPayload.userId,
+            'M-Pesa Payment Confirmed',
+            `Your STK deposit of $${dto.amount.toFixed(2)} was successfully processed. Receipt: MPESA-${Date.now()}`
+          );
 
-        // Broadcast success via WebSockets
-        await this.notificationsGateway.sendNotification(
-          userPayload.userId,
-          'M-Pesa Payment Confirmed',
-          `Your STK deposit of $${dto.amount.toFixed(2)} was successfully processed. Receipt: MPESA-${Date.now()}`
-        );
-
-      } catch (err: any) {
-        console.error('Error processing mock callback:', err.message);
-      }
-    }, 4000);
+        } catch (err: any) {
+          console.error('Error processing mock callback:', err.message);
+        }
+      }, 4000);
+    }
 
     return {
       message: 'STK push request dispatched. Please approve the payment prompt on your phone.',
@@ -276,6 +285,13 @@ export class WalletController {
 
     if (!wallet) {
       throw new BadRequestException('Wallet not found.');
+    }
+
+    const allowMock = process.env.ALLOW_MOCK_PAYMENTS === 'true';
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    if (!allowMock && isProduction) {
+      throw new BadRequestException('Visa payment processing requires live Stripe / Payment Gateway API credentials.');
     }
 
     // Mock validation constraints

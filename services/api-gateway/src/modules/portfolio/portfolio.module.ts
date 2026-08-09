@@ -175,10 +175,10 @@ export class PortfolioController {
   @ApiOperation({ summary: 'Submit a new trading order with risk validation checks' })
   async placeOrder(@Req() req: Request, @Body() dto: CreateOrderDto) {
     const userPayload = req.user as any;
-    let symbol = dto.symbol.toUpperCase().trim();
-    if (['BTC/USD', 'ETH/USD', 'SOL/USD', 'BNB/USD', 'XRP/USD'].includes(symbol)) {
-      symbol = symbol.split('/')[0];
-    }
+    const rawSymbol = dto.symbol.toUpperCase().trim();
+    const isCryptoShort = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(rawSymbol);
+    const dbSymbol = isCryptoShort ? `${rawSymbol}/USD` : rawSymbol;
+    const symbol = dbSymbol;
 
     // 1. Fetch User details, Wallet, and Risk Profiles
     const user = await this.prisma.user.findUnique({
@@ -212,11 +212,19 @@ export class PortfolioController {
       });
     }
 
-    // 4. Fetch/Estimate execution price (mocked using MarketData)
-    const market = await this.prisma.marketData.findUnique({ where: { symbol } });
+    // 4. Fetch execution price from MarketData
+    let market = await this.prisma.marketData.findUnique({ where: { symbol: dbSymbol } });
+    if (!market) {
+      market = await this.prisma.marketData.findUnique({ where: { symbol: rawSymbol } });
+    }
+
     const executionPrice = market
       ? dto.direction === 'BUY' ? market.askPrice : market.bidPrice
-      : dto.price || (dto.direction === 'BUY' ? 100.0 : 95.0);
+      : dto.price;
+
+    if (!executionPrice || executionPrice <= 0) {
+      throw new BadRequestException(`Live market price unavailable for ${rawSymbol}. Please try again shortly.`);
+    }
 
     const totalCost = dto.quantity * executionPrice;
 

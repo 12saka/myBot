@@ -449,7 +449,7 @@ export default function OrdersPage() {
                       value={newOrder.type === 'Market' ? '' : newOrder.price}
                       onChange={e => setNewOrder({ ...newOrder, price: Number(e.target.value) })}
                       disabled={newOrder.type === 'Market'}
-                      placeholder={newOrder.type === 'Market' ? `Best rate: ${currentTicker?.price ?? 'live'}` : '64200'}
+                      placeholder={newOrder.type === 'Market' ? `Best rate: ${currentTicker?.price ?? 'live'}` : currentTicker?.price ? `e.g. ${currentTicker.price}` : 'Limit price'}
                       className="w-full input-glass rounded-xl px-3 py-2.5 disabled:opacity-55 disabled:cursor-not-allowed"
                       required={newOrder.type !== 'Market'}
                     />

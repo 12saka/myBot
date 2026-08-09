@@ -114,6 +114,42 @@ export class AdminController {
     return this.adminService.deleteCourse(req.user.userId, id);
   }
 
+  @Get('users/:id/360')
+  @ApiOperation({ summary: 'Get 360-degree comprehensive user profile, audit trail, security & academy progress' })
+  async getUser360Details(@Param('id') id: string) {
+    return this.adminService.getUser360Details(id);
+  }
+
+  @Get('academy/questions')
+  @ApiOperation({ summary: 'Get Question Bank items for Quiz creation' })
+  async getQuestionBank() {
+    return this.adminService.getQuestionBank();
+  }
+
+  @Post('academy/questions')
+  @ApiOperation({ summary: 'Create new item in central Question Bank' })
+  async createQuestion(@Req() req: any, @Body() body: any) {
+    return this.adminService.createQuestion(req.user.userId, body);
+  }
+
+  @Get('academy/quizzes')
+  @ApiOperation({ summary: 'Get all Quizzes for LMS management' })
+  async getAdminQuizzes() {
+    return this.adminService.getAdminQuizzes();
+  }
+
+  @Post('academy/quizzes')
+  @ApiOperation({ summary: 'Create new Quiz with Question Bank items' })
+  async createQuiz(@Req() req: any, @Body() body: any) {
+    return this.adminService.createQuiz(req.user.userId, body);
+  }
+
+  @Get('academy/analytics')
+  @ApiOperation({ summary: 'Get Academy Master Analytics & Most-Missed Questions' })
+  async getAcademyAnalytics() {
+    return this.adminService.getAcademyAnalytics();
+  }
+
   @Get('signals')
   @ApiOperation({ summary: 'Get all AI signals for admin audit' })
   async getAdminSignals() {

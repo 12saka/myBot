@@ -226,11 +226,23 @@ export class MarketsController {
     }
 
     // Non-crypto: deterministic spread-based bids/asks around active market price
-    const item = await this.prisma.marketData.findUnique({
-      where: { symbol: symbol.toUpperCase() },
+    const symUpper = symbol.toUpperCase().trim();
+    let item = await this.prisma.marketData.findUnique({
+      where: { symbol: symUpper },
     });
-    const bidPrice = item ? item.bidPrice : 100.0;
-    const askPrice = item ? item.askPrice : 100.05;
+    if (!item) {
+      const altSymbol = symUpper.includes('/USD') ? symUpper.replace('/USD', '') : `${symUpper}/USD`;
+      item = await this.prisma.marketData.findUnique({
+        where: { symbol: altSymbol },
+      });
+    }
+
+    if (!item || !item.bidPrice || item.bidPrice <= 0) {
+      return { symbol: symUpper, bids: [], asks: [], source: 'unavailable' };
+    }
+
+    const bidPrice = item.bidPrice;
+    const askPrice = item.askPrice;
     const step = (askPrice - bidPrice) || (bidPrice * 0.0005);
     
     const bids = Array.from({ length: 5 }, (_, i) => ({
@@ -243,7 +255,7 @@ export class MarketsController {
       size: parseFloat((1.5 + i * 0.2).toFixed(2))
     }));
 
-    return { symbol: symbol.toUpperCase(), bids, asks, source: 'market_quote' };
+    return { symbol: symUpper, bids, asks, source: 'market_quote' };
   }
 }
 

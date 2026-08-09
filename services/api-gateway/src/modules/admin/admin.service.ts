@@ -324,7 +324,10 @@ export class AdminService {
       data: {
         title: payload.title,
         description: payload.description,
-        difficulty: payload.level || payload.category || 'Beginner',
+        difficulty: payload.level || 'Beginner',
+        category: payload.category || 'CRYPTO',
+        imageUrl: payload.imageUrl || null,
+        isPublished: payload.isPublished ?? true,
       },
     });
 
@@ -346,7 +349,10 @@ export class AdminService {
     const updateData: any = {};
     if (payload.title) updateData.title = payload.title;
     if (payload.description) updateData.description = payload.description;
-    if (payload.level || payload.category) updateData.difficulty = payload.level || payload.category;
+    if (payload.level) updateData.difficulty = payload.level;
+    if (payload.category) updateData.category = payload.category;
+    if (payload.imageUrl !== undefined) updateData.imageUrl = payload.imageUrl;
+    if (payload.isPublished !== undefined) updateData.isPublished = payload.isPublished;
 
     const updated = await this.prisma.course.update({
       where: { id: courseId },
@@ -508,7 +514,196 @@ export class AdminService {
 
     return {
       data: logs,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    };
+  }
+
+  // 7. User 360° Profile Hub
+  async getUser360Details(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        profile: true,
+        wallet: true,
+        kyc: true,
+        subscription: true,
+        devices: true,
+        sessions: { orderBy: { createdAt: 'desc' }, take: 10 },
+        quizAttempts: {
+          orderBy: { completedAt: 'desc' },
+          take: 20,
+          include: { quiz: { select: { title: true, difficulty: true } } }
+        },
+        certificates: { include: { course: true } },
+        auditLogs: { orderBy: { timestamp: 'desc' }, take: 15 },
+        notifications: { orderBy: { createdAt: 'desc' }, take: 15 },
+      }
+    });
+
+    if (!user) throw new NotFoundException('User profile not found');
+
+    const totalQuizzes = user.quizAttempts.length;
+    const passedQuizzes = user.quizAttempts.filter(q => q.passed).length;
+    const avgScore = totalQuizzes > 0 ? Math.round(user.quizAttempts.reduce((acc, q) => acc + q.percentage, 0) / totalQuizzes) : 0;
+    const xp = passedQuizzes * 100 + user.certificates.length * 500;
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        createdAt: user.createdAt,
+        isTwoFactorEnabled: user.isTwoFactorEnabled,
+      },
+      profile: user.profile,
+      wallet: user.wallet,
+      kyc: user.kyc,
+      subscription: user.subscription,
+      devices: user.devices,
+      sessions: user.sessions,
+      academy: {
+        totalAttempts: totalQuizzes,
+        passedAttempts: passedQuizzes,
+        avgScore,
+        xp,
+        certificates: user.certificates,
+        attempts: user.quizAttempts,
+      },
+      notifications: user.notifications,
+      auditLogs: user.auditLogs,
+    };
+  }
+
+  // 8. Question Bank & Quiz CMS
+  async getQuestionBank() {
+    return this.prisma.questionBank.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createQuestion(adminUserId: string, payload: { question: string; type?: string; options: any; explanation?: string; assetTag?: string; skillTag?: string; difficulty?: string }) {
+    const question = await this.prisma.questionBank.create({
+      data: {
+        question: payload.question,
+        type: payload.type || 'MULTIPLE_CHOICE',
+        options: payload.options,
+        explanation: payload.explanation || null,
+        assetTag: payload.assetTag || null,
+        skillTag: payload.skillTag || 'Technical Analysis',
+        difficulty: payload.difficulty || 'INTERMEDIATE',
+      }
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'QUESTION_CREATED',
+        details: { questionId: question.id, skillTag: question.skillTag },
+      }
+    });
+
+    return question;
+  }
+
+  async getAdminQuizzes() {
+    return this.prisma.quiz.findMany({
+      include: {
+        course: { select: { title: true } },
+        lesson: { select: { title: true } },
+        quizQuestions: { include: { question: true } },
+        attempts: true,
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  async createQuiz(adminUserId: string, payload: { title: string; description?: string; courseId?: string; lessonId?: string; difficulty?: string; timeLimitMinutes?: number; passMarkPct?: number; xpReward?: number; questionIds?: string[] }) {
+    const quiz = await this.prisma.quiz.create({
+      data: {
+        title: payload.title,
+        description: payload.description || null,
+        courseId: payload.courseId || null,
+        lessonId: payload.lessonId || null,
+        difficulty: payload.difficulty || 'INTERMEDIATE',
+        timeLimitMinutes: payload.timeLimitMinutes || 15,
+        passMarkPct: payload.passMarkPct || 70,
+        xpReward: payload.xpReward || 100,
+        status: 'PUBLISHED',
+      }
+    });
+
+    if (payload.questionIds && payload.questionIds.length > 0) {
+      for (let i = 0; i < payload.questionIds.length; i++) {
+        await this.prisma.quizQuestion.create({
+          data: {
+            quizId: quiz.id,
+            questionId: payload.questionIds[i],
+            orderIndex: i + 1,
+          }
+        });
+      }
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'QUIZ_CREATED',
+        details: { quizId: quiz.id, title: quiz.title },
+      }
+    });
+
+    return quiz;
+  }
+
+  async getAcademyAnalytics() {
+    const [totalQuizzes, totalAttempts, passedAttempts, totalCourses, questionAttempts] = await Promise.all([
+      this.prisma.quiz.count(),
+      this.prisma.quizAttempt.count(),
+      this.prisma.quizAttempt.count({ where: { passed: true } }),
+      this.prisma.course.count(),
+      this.prisma.questionAttempt.findMany({
+        take: 100,
+        include: { question: { select: { question: true, skillTag: true } } }
+      })
+    ]);
+
+    const passRate = totalAttempts > 0 ? Math.round((passedAttempts / totalAttempts) * 100) : 0;
+
+    // Aggregate most missed questions
+    const questionStats: Record<string, { title: string; skill: string; total: number; correct: number }> = {};
+    for (const qa of questionAttempts) {
+      const qId = qa.questionId;
+      if (!questionStats[qId]) {
+        questionStats[qId] = {
+          title: qa.question.question,
+          skill: qa.question.skillTag,
+          total: 0,
+          correct: 0,
+        };
+      }
+      questionStats[qId].total += 1;
+      if (qa.isCorrect) questionStats[qId].correct += 1;
+    }
+
+    const mostMissedQuestions = Object.values(questionStats)
+      .map(q => ({
+        question: q.title,
+        skill: q.skill,
+        correctPct: q.total > 0 ? Math.round((q.correct / q.total) * 100) : 0,
+        totalAttempts: q.total,
+      }))
+      .sort((a, b) => a.correctPct - b.correctPct)
+      .slice(0, 10);
+
+    return {
+      totalCourses,
+      totalQuizzes,
+      totalAttempts,
+      passRate,
+      mostMissedQuestions,
     };
   }
 }
