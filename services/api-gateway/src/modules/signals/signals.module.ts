@@ -341,6 +341,7 @@ export class SignalsController implements OnModuleInit {
                           interval === '1h' ? '1-4 hours (Day Trade)' :
                           interval === '4h' ? '1-2 days' : '3-5 days',
         aiReasoning: { 
+          entry_type: res.data.entry_type || 'MARKET_NOW',
           indicators: res.data.indicators,
           explanation: res.data.ai_explanation,
           technicals: res.data.technicals,

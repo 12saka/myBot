@@ -66,8 +66,8 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <span className="font-display font-bold text-white text-lg">{signal.symbol}</span>
             <Badge variant={isBuy ? 'buy' : 'sell'}>{signal.direction}</Badge>
             <Badge variant="neutral" size="xs">{signal.type}</Badge>
-            <Badge variant={signal.aiReasoning?.entry_type === 'MARKET_NOW' ? 'buy' : 'blue'} size="xs">
-              {signal.aiReasoning?.entry_type === 'MARKET_NOW' ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
+            <Badge variant={!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? 'buy' : 'blue'} size="xs">
+              {!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
             </Badge>
             {signal.signalGrade && (
               <Badge variant={signal.signalGrade.startsWith('A') ? 'buy' : signal.signalGrade.startsWith('B') ? 'blue' : 'sell'} size="xs">
