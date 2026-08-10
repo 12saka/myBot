@@ -275,33 +275,35 @@ export class MarketsService implements OnModuleInit {
         }
       }
 
-      // High-availability open.er-api.com for live real-time Forex exchange rates
+      // High-availability open.er-api.com as emergency fallback only for Forex exchange rates
       try {
-        const forexRes = await this.fetchWithTimeout('https://open.er-api.com/v6/latest/USD');
-        if (forexRes.ok) {
-          const fxData = await forexRes.json();
-          const rates = fxData?.rates || {};
-          if (rates.EUR && rates.EUR > 0) {
-            const currentP = parseFloat((1 / rates.EUR).toFixed(4));
-            const prevP = this.tickerCache['EUR/USD']?.price || yahooPriceMap['EURUSD=X']?.price;
-            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
-            yahooPriceMap['EURUSD=X'] = { price: currentP, changePct, volume: 500000 };
-          }
-          if (rates.GBP && rates.GBP > 0) {
-            const currentP = parseFloat((1 / rates.GBP).toFixed(4));
-            const prevP = this.tickerCache['GBP/USD']?.price || yahooPriceMap['GBPUSD=X']?.price;
-            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
-            yahooPriceMap['GBPUSD=X'] = { price: currentP, changePct, volume: 450000 };
-          }
-          if (rates.JPY && rates.JPY > 0) {
-            const currentP = parseFloat(rates.JPY.toFixed(2));
-            const prevP = this.tickerCache['USD/JPY']?.price || yahooPriceMap['USDJPY=X']?.price;
-            const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
-            yahooPriceMap['USDJPY=X'] = { price: currentP, changePct, volume: 600000 };
+        if (!yahooPriceMap['EURUSD=X'] || !yahooPriceMap['GBPUSD=X'] || !yahooPriceMap['USDJPY=X']) {
+          const forexRes = await this.fetchWithTimeout('https://open.er-api.com/v6/latest/USD');
+          if (forexRes.ok) {
+            const fxData = await forexRes.json();
+            const rates = fxData?.rates || {};
+            if (rates.EUR && rates.EUR > 0 && !yahooPriceMap['EURUSD=X']) {
+              const currentP = parseFloat((1 / rates.EUR).toFixed(5));
+              const prevP = this.tickerCache['EUR/USD']?.price;
+              const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
+              yahooPriceMap['EURUSD=X'] = { price: currentP, changePct, volume: 500000 };
+            }
+            if (rates.GBP && rates.GBP > 0 && !yahooPriceMap['GBPUSD=X']) {
+              const currentP = parseFloat((1 / rates.GBP).toFixed(5));
+              const prevP = this.tickerCache['GBP/USD']?.price;
+              const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
+              yahooPriceMap['GBPUSD=X'] = { price: currentP, changePct, volume: 450000 };
+            }
+            if (rates.JPY && rates.JPY > 0 && !yahooPriceMap['USDJPY=X']) {
+              const currentP = parseFloat(rates.JPY.toFixed(3));
+              const prevP = this.tickerCache['USD/JPY']?.price;
+              const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
+              yahooPriceMap['USDJPY=X'] = { price: currentP, changePct, volume: 600000 };
+            }
           }
         }
       } catch (err: any) {
-        console.warn(`[MarketsService] Forex connection notice: ${err.message}`);
+        console.warn(`[MarketsService] Forex fallback notice: ${err.message}`);
       }
 
       // High-availability Yahoo Chart v8 API for Crypto, Indices, Stocks, Commodities & Forex

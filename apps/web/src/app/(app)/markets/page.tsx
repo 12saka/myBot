@@ -289,7 +289,7 @@ export default function MarketsPage() {
                       </div>
                     </td>
                     <td className="text-right font-mono font-semibold text-slate-100">
-                      {ticker.type === 'forex' ? ticker.price.toFixed(4) :
+                      {ticker.type === 'forex' ? (ticker.symbol.includes('JPY') ? ticker.price.toFixed(3) : ticker.price.toFixed(5)) :
                        ticker.price >= 1000 ? ticker.price.toLocaleString('en-US', { minimumFractionDigits: 2 }) :
                        ticker.price.toFixed(4)}
                     </td>
