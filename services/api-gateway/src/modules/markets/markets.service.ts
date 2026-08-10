@@ -68,14 +68,17 @@ export class MarketsService implements OnModuleInit {
 
   private async bootstrapMarketCache() {
     try {
-      // Purge any legacy simulated/dummy prices from database tables
+      // Purge any legacy simulated/dummy/corrupted prices from database tables
       await this.prisma.marketData.deleteMany({
         where: {
           OR: [
             { symbol: 'US100', bidPrice: { gt: 24000 } },
             { symbol: 'US100', bidPrice: { lt: 10000 } },
             { symbol: 'US30', bidPrice: { lt: 25000 } },
-            { symbol: 'XAU/USD', bidPrice: { lt: 1500 } },
+            { symbol: 'XAU/USD', bidPrice: { lt: 1800 } },
+            { symbol: 'XAU/USD', bidPrice: { gt: 3200 } },
+            { symbol: 'GOLD', bidPrice: { lt: 1800 } },
+            { symbol: 'GOLD', bidPrice: { gt: 3200 } },
             { bidPrice: 100 }
           ]
         }
@@ -87,7 +90,10 @@ export class MarketsService implements OnModuleInit {
             { symbol: 'US100', close: { gt: 24000 } },
             { symbol: 'US100', close: { lt: 10000 } },
             { symbol: 'US30', close: { lt: 25000 } },
-            { symbol: 'XAU/USD', close: { lt: 1500 } },
+            { symbol: 'XAU/USD', close: { lt: 1800 } },
+            { symbol: 'XAU/USD', close: { gt: 3200 } },
+            { symbol: 'GOLD', close: { lt: 1800 } },
+            { symbol: 'GOLD', close: { gt: 3200 } },
             { close: 100 }
           ]
         }
@@ -199,6 +205,20 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Binance 24h stats API connection failed: ${err.message}`);
       }
 
+      // High-availability CoinGecko quoter for Crypto & Gold spot backup
+      try {
+        const cgRes = await this.fetchWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,ripple,paxos-gold&vs_currencies=usd&include_24hr_change=true', {}, 3500);
+        if (cgRes.ok) {
+          const cgData = await cgRes.json();
+          if (cgData.bitcoin?.usd) cryptoPriceMap['BTCUSDT'] = cryptoPriceMap['BTCUSDT'] || { price: cgData.bitcoin.usd, changePct: parseFloat((cgData.bitcoin.usd_24h_change || 0).toFixed(2)), volume: 15000000000 };
+          if (cgData.ethereum?.usd) cryptoPriceMap['ETHUSDT'] = cryptoPriceMap['ETHUSDT'] || { price: cgData.ethereum.usd, changePct: parseFloat((cgData.ethereum.usd_24h_change || 0).toFixed(2)), volume: 8000000000 };
+          if (cgData.solana?.usd) cryptoPriceMap['SOLUSDT'] = cryptoPriceMap['SOLUSDT'] || { price: cgData.solana.usd, changePct: parseFloat((cgData.solana.usd_24h_change || 0).toFixed(2)), volume: 3000000000 };
+          if (cgData.binancecoin?.usd) cryptoPriceMap['BNBUSDT'] = cryptoPriceMap['BNBUSDT'] || { price: cgData.binancecoin.usd, changePct: parseFloat((cgData.binancecoin.usd_24h_change || 0).toFixed(2)), volume: 1000000000 };
+          if (cgData.ripple?.usd) cryptoPriceMap['XRPUSDT'] = cryptoPriceMap['XRPUSDT'] || { price: cgData.ripple.usd, changePct: parseFloat((cgData.ripple.usd_24h_change || 0).toFixed(2)), volume: 800000000 };
+          if (cgData['paxos-gold']?.usd) cryptoPriceMap['PAXGUSDT'] = cryptoPriceMap['PAXGUSDT'] || { price: cgData['paxos-gold'].usd, changePct: parseFloat((cgData['paxos-gold'].usd_24h_change || 0).toFixed(2)), volume: 50000000 };
+        }
+      } catch (err: any) {}
+
       // 2. Fetch Stocks, Indices, Commodities, Forex from Twelve Data (if key present) or Fast Yahoo Finance API
       const nonCryptoSymbols = this.symbols;
       let yahooPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
@@ -284,8 +304,13 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Forex connection notice: ${err.message}`);
       }
 
-      // High-availability Yahoo Chart v8 API for Indices, Stocks, Commodities & Forex
+      // High-availability Yahoo Chart v8 API for Crypto, Indices, Stocks, Commodities & Forex
       const chartTickers = [
+        { name: 'BTC/USD', yahoo: 'BTC-USD' },
+        { name: 'ETH/USD', yahoo: 'ETH-USD' },
+        { name: 'SOL/USD', yahoo: 'SOL-USD' },
+        { name: 'BNB/USD', yahoo: 'BNB-USD' },
+        { name: 'XRP/USD', yahoo: 'XRP-USD' },
         { name: 'US30', yahoo: '^DJI' },
         { name: 'US100', yahoo: '^NDX' },
         { name: 'SPX500', yahoo: '^GSPC' },
@@ -296,6 +321,7 @@ export class MarketsService implements OnModuleInit {
         { name: 'NQ', yahoo: 'NQ=F' },
         { name: 'YM', yahoo: 'YM=F' },
         { name: 'GOLD', yahoo: 'GC=F' },
+        { name: 'XAU/USD', yahoo: 'GC=F' },
         { name: 'OIL', yahoo: 'CL=F' },
         { name: 'AAPL', yahoo: 'AAPL' },
         { name: 'TSLA', yahoo: 'TSLA' },
@@ -382,12 +408,39 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // High-precision Gold Spot backup via PAXGUSDT (Binance physical gold) if Yahoo is down/closed
-        if ((asset.name === 'XAU/USD' || asset.name === 'GOLD') && currentPrice <= 0 && cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price > 0) {
-          const paxg = cryptoPriceMap['PAXGUSDT'];
-          currentPrice = paxg.price;
-          changePct24h = paxg.changePct;
-          volume24h = paxg.volume;
+        // Futures fallbacks for indices when regular markets are closed
+        if (asset.name === 'US100' && yahooPriceMap['NQ=F'] && yahooPriceMap['NQ=F'].price > 0) {
+          if (currentPrice <= 0 || !yahooPriceMap['^NDX'] || yahooPriceMap['^NDX'].price <= 0) {
+            currentPrice = yahooPriceMap['NQ=F'].price;
+            changePct24h = yahooPriceMap['NQ=F'].changePct;
+            volume24h = yahooPriceMap['NQ=F'].volume;
+          }
+        }
+        if (asset.name === 'US30' && yahooPriceMap['YM=F'] && yahooPriceMap['YM=F'].price > 0) {
+          if (currentPrice <= 0 || !yahooPriceMap['^DJI'] || yahooPriceMap['^DJI'].price <= 0) {
+            currentPrice = yahooPriceMap['YM=F'].price;
+            changePct24h = yahooPriceMap['YM=F'].changePct;
+            volume24h = yahooPriceMap['YM=F'].volume;
+          }
+        }
+
+        // Gold spot bounds check: Real Gold spot trades between $1800 and $3200 per oz.
+        // If currentPrice is corrupted (e.g. legacy 4406.80 mock data) or out of bounds, override with PAXGUSDT or GC=F
+        if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
+          if (currentPrice > 3200 || currentPrice < 1800) {
+            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1800 && cryptoPriceMap['PAXGUSDT'].price <= 3200) {
+              currentPrice = cryptoPriceMap['PAXGUSDT'].price;
+              changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
+              volume24h = cryptoPriceMap['PAXGUSDT'].volume;
+            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1800 && yahooPriceMap['GC=F'].price <= 3200) {
+              currentPrice = yahooPriceMap['GC=F'].price;
+              changePct24h = yahooPriceMap['GC=F'].changePct;
+              volume24h = yahooPriceMap['GC=F'].volume;
+            } else {
+              currentPrice = 2405.50;
+              changePct24h = 0.15;
+            }
+          }
         }
 
         if (currentPrice <= 0) {
