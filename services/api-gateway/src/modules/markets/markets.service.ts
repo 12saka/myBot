@@ -31,8 +31,6 @@ export class MarketsService implements OnModuleInit {
   getCachedTicker(symbol: string): { price: number; changePct24h: number; volume24h: number } | null {
     const cached = this.tickerCache[symbol];
     if (!cached) return null;
-    const isExpired = Date.now() - cached.timestamp > 30000; // 30s TTL
-    if (isExpired) return null;
     return cached;
   }
 
@@ -265,19 +263,19 @@ export class MarketsService implements OnModuleInit {
           const rates = fxData?.rates || {};
           if (rates.EUR && rates.EUR > 0) {
             const currentP = parseFloat((1 / rates.EUR).toFixed(4));
-            const prevP = yahooPriceMap['EURUSD=X']?.price;
+            const prevP = this.tickerCache['EUR/USD']?.price || yahooPriceMap['EURUSD=X']?.price;
             const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
             yahooPriceMap['EURUSD=X'] = { price: currentP, changePct, volume: 500000 };
           }
           if (rates.GBP && rates.GBP > 0) {
             const currentP = parseFloat((1 / rates.GBP).toFixed(4));
-            const prevP = yahooPriceMap['GBPUSD=X']?.price;
+            const prevP = this.tickerCache['GBP/USD']?.price || yahooPriceMap['GBPUSD=X']?.price;
             const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
             yahooPriceMap['GBPUSD=X'] = { price: currentP, changePct, volume: 450000 };
           }
           if (rates.JPY && rates.JPY > 0) {
             const currentP = parseFloat(rates.JPY.toFixed(2));
-            const prevP = yahooPriceMap['USDJPY=X']?.price;
+            const prevP = this.tickerCache['USD/JPY']?.price || yahooPriceMap['USDJPY=X']?.price;
             const changePct = prevP && prevP > 0 ? parseFloat((((currentP - prevP) / prevP) * 100).toFixed(2)) : 0;
             yahooPriceMap['USDJPY=X'] = { price: currentP, changePct, volume: 600000 };
           }
@@ -286,8 +284,8 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Forex connection notice: ${err.message}`);
       }
 
-      // High-availability Yahoo Chart v8 API for Indices, Macro Indicators & Futures
-      const indexTickers = [
+      // High-availability Yahoo Chart v8 API for Indices, Stocks, Commodities & Forex
+      const chartTickers = [
         { name: 'US30', yahoo: '^DJI' },
         { name: 'US100', yahoo: '^NDX' },
         { name: 'SPX500', yahoo: '^GSPC' },
@@ -297,10 +295,19 @@ export class MarketsService implements OnModuleInit {
         { name: 'VIX', yahoo: '^VIX' },
         { name: 'NQ', yahoo: 'NQ=F' },
         { name: 'YM', yahoo: 'YM=F' },
-        { name: 'GOLD_FUT', yahoo: 'GC=F' }
+        { name: 'GOLD', yahoo: 'GC=F' },
+        { name: 'OIL', yahoo: 'CL=F' },
+        { name: 'AAPL', yahoo: 'AAPL' },
+        { name: 'TSLA', yahoo: 'TSLA' },
+        { name: 'NVDA', yahoo: 'NVDA' },
+        { name: 'MSFT', yahoo: 'MSFT' },
+        { name: 'AMZN', yahoo: 'AMZN' },
+        { name: 'EUR/USD', yahoo: 'EURUSD=X' },
+        { name: 'GBP/USD', yahoo: 'GBPUSD=X' },
+        { name: 'USD/JPY', yahoo: 'USDJPY=X' },
       ];
 
-      for (const idxAsset of indexTickers) {
+      for (const idxAsset of chartTickers) {
         try {
           const chartRes = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${idxAsset.yahoo}?interval=1m&range=1d`);
           if (chartRes.ok) {
@@ -352,7 +359,7 @@ export class MarketsService implements OnModuleInit {
           }
         }
       } catch (err) {}
- 
+
       // 3. Update Database Records & Populate in-memory Cache
       for (const asset of this.symbols) {
         const lastCached = this.tickerCache[asset.name];
@@ -373,6 +380,14 @@ export class MarketsService implements OnModuleInit {
             changePct24h = yahooData.changePct;
             volume24h = yahooData.volume;
           }
+        }
+
+        // High-precision Gold Spot backup via PAXGUSDT (Binance physical gold) if Yahoo is down/closed
+        if ((asset.name === 'XAU/USD' || asset.name === 'GOLD') && currentPrice <= 0 && cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price > 0) {
+          const paxg = cryptoPriceMap['PAXGUSDT'];
+          currentPrice = paxg.price;
+          changePct24h = paxg.changePct;
+          volume24h = paxg.volume;
         }
 
         if (currentPrice <= 0) {

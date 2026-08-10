@@ -55,6 +55,9 @@ export const normalizeMarketSymbol = (symbol: string) => {
   const base = upper.replace('/USD', '');
   if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(base)) return `${base}/USD`;
   if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(upper)) return 'XAU/USD';
+  if (['EURUSD', 'EUR/USD'].includes(upper)) return 'EUR/USD';
+  if (['GBPUSD', 'GBP/USD'].includes(upper)) return 'GBP/USD';
+  if (['USDJPY', 'USD/JPY'].includes(upper)) return 'USD/JPY';
   return upper;
 };
 

@@ -51,11 +51,11 @@ export class MarketsController {
     return list.map(item => {
       const info = meta[item.symbol] || { name: item.symbol, marketCap: 0, type: 'crypto' as const };
       const cache = stats[item.symbol];
-      const livePrice = cache && cache.price > 0 ? cache.price : item.bidPrice;
+      const livePrice = cache && cache.price > 0 ? cache.price : (item.bidPrice > 0 ? item.bidPrice : 0);
       const isCrypto = info.type === 'crypto';
       const isForex = info.type === 'forex';
       const ageMs = Date.now() - new Date(item.lastUpdated).getTime();
-      const isLive = ageMs < 90_000;
+      const isLive = ageMs < 120_000;
 
       const source = isCrypto ? 'binance' : isForex ? 'open-er-api' : isLive ? 'stooq' : 'stale-cache';
 
@@ -63,8 +63,8 @@ export class MarketsController {
         symbol: item.symbol,
         name: info.name,
         price: livePrice,
-        changePct24h: cache ? (cache.changePct24h ?? null) : null,
-        volume24h: cache ? cache.volume24h : item.volume24h,
+        changePct24h: cache ? (cache.changePct24h ?? 0) : 0,
+        volume24h: cache ? cache.volume24h : (item.volume24h || 0),
         marketCap: info.marketCap,
         type: info.type,
         source,
