@@ -577,19 +577,55 @@ export class AdminService {
     };
   }
 
-  // 8. Question Bank & Quiz CMS
-  async getQuestionBank() {
-    return this.prisma.questionBank.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
+  private normalizeQuestionOptions(payload: any, fallback?: any) {
+    const rawOptions = payload?.options;
+    const fallbackOptions = fallback?.options ?? fallback;
+    const choices = Array.isArray(rawOptions)
+      ? rawOptions
+      : Array.isArray(rawOptions?.choices)
+      ? rawOptions.choices
+      : Array.isArray(fallbackOptions)
+      ? fallbackOptions
+      : Array.isArray(fallbackOptions?.choices)
+      ? fallbackOptions.choices
+      : [];
+
+    const rawCorrectIndex = payload?.correctOptionIndex ?? rawOptions?.correctOptionIndex ?? fallbackOptions?.correctOptionIndex ?? 0;
+    const correctOptionIndex = Math.min(
+      Math.max(Number.isFinite(Number(rawCorrectIndex)) ? Number(rawCorrectIndex) : 0, 0),
+      Math.max(choices.length - 1, 0)
+    );
+
+    return {
+      choices: choices.map((choice: any) => String(choice).trim()).filter(Boolean),
+      correctOptionIndex,
+    };
   }
 
-  async createQuestion(adminUserId: string, payload: { question: string; type?: string; options: any; explanation?: string; assetTag?: string; skillTag?: string; difficulty?: string }) {
+  private serializeQuestionForAdmin(question: any) {
+    const normalized = this.normalizeQuestionOptions({}, question.options);
+    return {
+      ...question,
+      options: normalized.choices,
+      correctOptionIndex: normalized.correctOptionIndex,
+    };
+  }
+
+  // 8. Question Bank & Quiz CMS
+  async getQuestionBank() {
+    const questions = await this.prisma.questionBank.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    return questions.map((question) => this.serializeQuestionForAdmin(question));
+  }
+
+  async createQuestion(adminUserId: string, payload: { question?: string; text?: string; type?: string; options: any; correctOptionIndex?: number; explanation?: string; assetTag?: string; skillTag?: string; difficulty?: string }) {
+    const normalizedOptions = this.normalizeQuestionOptions(payload);
     const question = await this.prisma.questionBank.create({
       data: {
-        question: payload.question,
+        question: payload.question || payload.text || '',
         type: payload.type || 'MULTIPLE_CHOICE',
-        options: payload.options,
+        options: normalizedOptions,
         explanation: payload.explanation || null,
         assetTag: payload.assetTag || null,
         skillTag: payload.skillTag || 'Technical Analysis',
@@ -605,7 +641,7 @@ export class AdminService {
       }
     });
 
-    return question;
+    return this.serializeQuestionForAdmin(question);
   }
 
   async getAdminQuizzes() {
@@ -621,6 +657,13 @@ export class AdminService {
   }
 
   async createQuiz(adminUserId: string, payload: any) {
+    if (!payload.courseId || !payload.lessonId) {
+      throw new BadRequestException('Published quizzes must be linked to both a course and a lesson.');
+    }
+    if (!Array.isArray(payload.questionIds) || payload.questionIds.length === 0) {
+      throw new BadRequestException('Published quizzes must include at least one question.');
+    }
+
     const passMarkPct = Number(payload.passMarkPct ?? payload.passMark ?? 70);
     const timeLimitMinutes = Number(payload.timeLimitMinutes ?? payload.timeLimit ?? 15);
     const xpReward = Number(payload.xpReward ?? 100);
@@ -665,6 +708,22 @@ export class AdminService {
   async updateQuiz(adminUserId: string, quizId: string, payload: any) {
     const existing = await this.prisma.quiz.findUnique({ where: { id: quizId } });
     if (!existing) throw new NotFoundException('Quiz not found.');
+
+    const nextCourseId = payload.courseId !== undefined ? payload.courseId : existing.courseId;
+    const nextLessonId = payload.lessonId !== undefined ? payload.lessonId : existing.lessonId;
+    const willPublish = payload.status === 'PUBLISHED' || payload.isPublished === true || (payload.status === undefined && payload.isPublished === undefined && existing.status === 'PUBLISHED');
+    if (willPublish && (!nextCourseId || !nextLessonId)) {
+      throw new BadRequestException('Published quizzes must be linked to both a course and a lesson.');
+    }
+    if (willPublish && Array.isArray(payload.questionIds) && payload.questionIds.length === 0) {
+      throw new BadRequestException('Published quizzes must include at least one question.');
+    }
+    if (willPublish && payload.questionIds === undefined) {
+      const existingQuestionCount = await this.prisma.quizQuestion.count({ where: { quizId } });
+      if (existingQuestionCount === 0) {
+        throw new BadRequestException('Published quizzes must include at least one question.');
+      }
+    }
 
     const passMarkPct = payload.passMarkPct !== undefined ? Number(payload.passMarkPct) : (payload.passMark !== undefined ? Number(payload.passMark) : existing.passMarkPct);
     const timeLimitMinutes = payload.timeLimitMinutes !== undefined ? Number(payload.timeLimitMinutes) : (payload.timeLimit !== undefined ? Number(payload.timeLimit) : existing.timeLimitMinutes);
@@ -728,6 +787,7 @@ export class AdminService {
   async updateQuestion(adminUserId: string, questionId: string, payload: any) {
     const existing = await this.prisma.questionBank.findUnique({ where: { id: questionId } });
     if (!existing) throw new NotFoundException('Question item not found.');
+    const normalizedOptions = this.normalizeQuestionOptions(payload, existing.options);
 
     const question = await this.prisma.questionBank.update({
       where: { id: questionId },
@@ -736,7 +796,7 @@ export class AdminService {
         skillTag: payload.skillTag || existing.skillTag,
         assetTag: payload.assetTag || existing.assetTag,
         difficulty: payload.difficulty || existing.difficulty,
-        options: payload.options || existing.options,
+        options: normalizedOptions,
         explanation: payload.explanation || existing.explanation,
       }
     });
@@ -749,7 +809,7 @@ export class AdminService {
       }
     });
 
-    return question;
+    return this.serializeQuestionForAdmin(question);
   }
 
   async deleteQuestion(adminUserId: string, questionId: string) {

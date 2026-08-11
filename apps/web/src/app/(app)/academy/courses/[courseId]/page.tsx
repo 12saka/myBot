@@ -100,6 +100,15 @@ export default function CourseDetailPage() {
 
   const handleCompleteLesson = async () => {
     if (!selectedLesson) return;
+    const quizCount = selectedLesson.quizzes?.length || 0;
+    if (quizCount === 0) {
+      toast.error('No published quiz is attached to this lesson yet.');
+      return;
+    }
+    if (Object.keys(quizAnswers).length < quizCount) {
+      toast.error('Please answer every quiz question before submitting.');
+      return;
+    }
     setSubmittingQuiz(true);
     try {
       const answersArray = selectedLesson.quizzes ? selectedLesson.quizzes.map((_, idx) => quizAnswers[idx] ?? 0) : [];
@@ -169,7 +178,10 @@ export default function CourseDetailPage() {
               return (
                 <button
                   key={lesson.id}
-                  onClick={() => setSelectedLesson(lesson)}
+                  onClick={() => {
+                    setSelectedLesson(lesson);
+                    setQuizAnswers({});
+                  }}
                   className={`w-full p-3.5 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
                     isSelected
                       ? 'bg-purple-500/10 border-purple-500/30 text-white'
@@ -252,7 +264,7 @@ export default function CourseDetailPage() {
               })()}
 
               {/* Quiz section if present */}
-              {selectedLesson.quizzes && selectedLesson.quizzes.length > 0 && (
+              {selectedLesson.quizzes && selectedLesson.quizzes.length > 0 ? (
                 <div className="space-y-4 pt-4 border-t border-white/5">
                   <h4 className="font-bold text-white text-xs uppercase tracking-wider">Lesson Knowledge Check</h4>
                   {selectedLesson.quizzes.map((quiz, qIdx) => (
@@ -283,15 +295,21 @@ export default function CourseDetailPage() {
                     </div>
                   ))}
                 </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200">
+                  This lesson is waiting for an admin-published quiz before learners can mark it complete.
+                </div>
               )}
 
               <button
                 onClick={handleCompleteLesson}
-                disabled={submittingQuiz}
+                disabled={submittingQuiz || !selectedLesson.quizzes || selectedLesson.quizzes.length === 0}
                 className="w-full py-3 rounded-xl bg-purple-500 hover:bg-purple-600 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-purple-500/10 disabled:opacity-50"
               >
                 {submittingQuiz ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                {selectedLesson.completed ? 'Re-take Quiz / Mark Complete' : 'Complete Lesson & Next'}
+                {!selectedLesson.quizzes || selectedLesson.quizzes.length === 0
+                  ? 'Awaiting Published Quiz'
+                  : selectedLesson.completed ? 'Re-take Quiz / Mark Complete' : 'Complete Lesson & Next'}
               </button>
             </div>
           )}

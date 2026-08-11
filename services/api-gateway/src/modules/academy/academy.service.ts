@@ -5,6 +5,44 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AcademyService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
+  private getQuestionChoices(options: any): string[] {
+    if (Array.isArray(options)) return options.map((choice) => String(choice));
+    if (Array.isArray(options?.choices)) return options.choices.map((choice: any) => String(choice));
+    return [];
+  }
+
+  private getCorrectOptionIndex(options: any): number {
+    const rawIndex = Array.isArray(options) ? 0 : options?.correctOptionIndex;
+    const parsed = Number(rawIndex);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private getPublishedLessonQuestions(quizzes: any[]) {
+    return (quizzes || [])
+      .filter((quiz) => quiz.status === 'PUBLISHED')
+      .flatMap((quiz) => {
+        const questions = Array.isArray(quiz.quizQuestions) ? quiz.quizQuestions : [];
+        return questions
+          .sort((a: any, b: any) => (a.orderIndex || 0) - (b.orderIndex || 0))
+          .map((quizQuestion: any) => {
+            const question = quizQuestion.question;
+            return {
+              id: quizQuestion.id,
+              quizId: quiz.id,
+              questionId: question.id,
+              quizTitle: quiz.title,
+              passMarkPct: quiz.passMarkPct,
+              question: question.question,
+              options: this.getQuestionChoices(question.options),
+              correctOptionIndex: this.getCorrectOptionIndex(question.options),
+              explanation: question.explanation,
+              skillTag: question.skillTag,
+              difficulty: question.difficulty,
+            };
+          });
+      });
+  }
+
   async onModuleInit() {
     if (process.env.NODE_ENV === 'production') return;
     if (process.env.SEED_DEMO_DATA !== 'true') return;
@@ -86,6 +124,7 @@ export class AcademyService implements OnModuleInit {
   async getCourses(userId: string) {
     try {
       const courses = await this.prisma.course.findMany({
+        where: { isPublished: true },
         include: {
           lessons: { select: { id: true, title: true, orderIndex: true } },
           certificates: { where: { userId } }
@@ -131,13 +170,23 @@ export class AcademyService implements OnModuleInit {
         include: {
           lessons: {
             orderBy: { orderIndex: 'asc' },
-            include: { quizzes: true }
+            include: {
+              quizzes: {
+                where: { status: 'PUBLISHED' },
+                include: {
+                  quizQuestions: {
+                    include: { question: true },
+                    orderBy: { orderIndex: 'asc' }
+                  }
+                }
+              }
+            }
           },
           certificates: { where: { userId } }
         }
       });
 
-      if (!course) throw new NotFoundException('Course not found.');
+      if (!course || !course.isPublished) throw new NotFoundException('Course not found.');
 
       const userAttempts = await this.prisma.quizAttempt.findMany({
         where: { userId, passed: true },
@@ -149,6 +198,7 @@ export class AcademyService implements OnModuleInit {
         ...course,
         lessons: course.lessons.map(l => ({
           ...l,
+          quizzes: this.getPublishedLessonQuestions((l as any).quizzes),
           completed: passedLessonIds.has(l.id)
         })),
         hasCertificate: course.certificates.length > 0
@@ -165,17 +215,26 @@ export class AcademyService implements OnModuleInit {
         where: { id: lessonId },
         include: {
           course: true,
-          quizzes: true,
+          quizzes: {
+            where: { status: 'PUBLISHED' },
+            include: {
+              quizQuestions: {
+                include: { question: true },
+                orderBy: { orderIndex: 'asc' }
+              }
+            }
+          },
           quizAttempts: { where: { userId }, orderBy: { completedAt: 'desc' } }
         }
       });
 
-      if (!lesson) throw new NotFoundException('Lesson not found.');
+      if (!lesson || !lesson.course.isPublished) throw new NotFoundException('Lesson not found.');
 
       const isCompleted = lesson.quizAttempts.some(a => a.passed);
 
       return {
         ...lesson,
+        quizzes: this.getPublishedLessonQuestions((lesson as any).quizzes),
         isCompleted
       };
     } catch (err: any) {
@@ -187,23 +246,41 @@ export class AcademyService implements OnModuleInit {
   async completeLessonQuiz(userId: string, lessonId: string, body: { answers?: number[] }) {
     const lesson = await this.prisma.lesson.findUnique({
       where: { id: lessonId },
-      include: { quizzes: true, course: true }
+      include: {
+        quizzes: {
+          where: { status: 'PUBLISHED' },
+          include: {
+            quizQuestions: {
+              include: { question: true },
+              orderBy: { orderIndex: 'asc' }
+            }
+          }
+        },
+        course: true
+      }
     });
 
-    if (!lesson) throw new NotFoundException('Lesson not found.');
+    if (!lesson || !lesson.course.isPublished) throw new NotFoundException('Lesson not found.');
 
     let score = 100.0;
     let passed = true;
 
     const answers = body.answers ?? [];
+    const lessonQuestions = this.getPublishedLessonQuestions((lesson as any).quizzes);
+    const activeQuiz = lesson.quizzes.find((quiz: any) => quiz.status === 'PUBLISHED');
+    const passMarkPct = activeQuiz?.passMarkPct ?? 70;
 
-    if (lesson.quizzes.length > 0 && answers.length > 0) {
+    if (!activeQuiz) {
+      throw new BadRequestException('No published quiz is attached to this lesson yet.');
+    }
+
+    if (lessonQuestions.length > 0) {
       let correctCount = 0;
-      lesson.quizzes.forEach((q: any, idx: number) => {
-        if (answers[idx] === q.correctOption) correctCount++;
+      lessonQuestions.forEach((q: any, idx: number) => {
+        if (answers[idx] === q.correctOptionIndex) correctCount++;
       });
-      score = Math.round((correctCount / lesson.quizzes.length) * 100);
-      passed = score >= 70;
+      score = Math.round((correctCount / lessonQuestions.length) * 100);
+      passed = score >= passMarkPct;
     }
 
     // Generate Gemini AI Learning Insight summary based on score
@@ -218,7 +295,7 @@ export class AcademyService implements OnModuleInit {
       data: {
         userId,
         lessonId,
-        quizId: lesson.quizzes[0]?.id || lessonId,
+        quizId: activeQuiz.id,
         score,
         percentage: score,
         passed,
@@ -230,6 +307,22 @@ export class AcademyService implements OnModuleInit {
         }
       }
     });
+
+    if (activeQuiz && lessonQuestions.length > 0) {
+      await Promise.all(
+        lessonQuestions.map((q: any, idx: number) =>
+          this.prisma.questionAttempt.create({
+            data: {
+              quizAttemptId: attempt.id,
+              questionId: q.questionId,
+              selectedAnswer: answers[idx] ?? null,
+              isCorrect: answers[idx] === q.correctOptionIndex,
+              pointsEarned: answers[idx] === q.correctOptionIndex ? 1 : 0,
+            }
+          })
+        )
+      );
+    }
 
     // Send Academy Push Notification to User
     await this.prisma.notification.create({
@@ -290,8 +383,8 @@ export class AcademyService implements OnModuleInit {
   // Get Overall LMS Progress for User
   async getUserProgress(userId: string) {
     try {
-      const totalCourses = await this.prisma.course.count();
-      const totalLessons = await this.prisma.lesson.count();
+      const totalCourses = await this.prisma.course.count({ where: { isPublished: true } });
+      const totalLessons = await this.prisma.lesson.count({ where: { course: { isPublished: true } } });
       const certificatesEarned = await this.prisma.certificate.count({ where: { userId } });
 
       const passedAttempts = await this.prisma.quizAttempt.findMany({

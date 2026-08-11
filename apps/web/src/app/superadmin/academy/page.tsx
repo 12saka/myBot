@@ -348,6 +348,14 @@ export default function SuperadminAcademyPage() {
       toast.error('Quiz title is required.');
       return;
     }
+    if (!quizCourseId || !quizLessonId) {
+      toast.error('Select both a course and a lesson so learners can see this quiz.');
+      return;
+    }
+    if (selectedQuestionIds.length === 0) {
+      toast.error('Select at least one question before publishing the quiz.');
+      return;
+    }
     try {
       const payload = {
         title: quizTitle.trim(),
@@ -393,6 +401,36 @@ export default function SuperadminAcademyPage() {
     }
   };
 
+  const handleAutoPickQuestions = () => {
+    if (questions.length === 0) {
+      toast.error('Question Bank is empty. Add questions first.');
+      return;
+    }
+
+    const matchingDifficulty = questions.filter((q) => (q.difficulty || '').toUpperCase() === quizDifficulty.toUpperCase());
+    const source = matchingDifficulty.length >= 3 ? matchingDifficulty : questions;
+    const groupedBySkill = source.reduce<Record<string, any[]>>((acc, question) => {
+      const key = question.skillTag || 'General';
+      acc[key] = acc[key] || [];
+      acc[key].push(question);
+      return acc;
+    }, {});
+
+    const picked: any[] = [];
+    Object.values(groupedBySkill).forEach((group) => {
+      if (picked.length < 5 && group[0]) picked.push(group[0]);
+    });
+
+    source.forEach((question) => {
+      if (picked.length < 5 && !picked.some((p) => p.id === question.id)) {
+        picked.push(question);
+      }
+    });
+
+    setSelectedQuestionIds(picked.map((question) => question.id));
+    toast.success(`Auto-picked ${picked.length} question${picked.length === 1 ? '' : 's'} for this quiz.`);
+  };
+
   const getEmbedVideoUrl = (url: string) => {
     if (!url) return null;
     if (url.includes('youtube.com/watch?v=')) return url.replace('watch?v=', 'embed/');
@@ -436,7 +474,7 @@ export default function SuperadminAcademyPage() {
             )}
             {activeTab === 'QUESTIONS' && (
               <button
-                onClick={() => setQuestionModal(true)}
+                onClick={handleOpenCreateQuestion}
                 className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-lg shadow-purple-500/20"
               >
                 <Plus className="w-4 h-4" />
@@ -445,7 +483,7 @@ export default function SuperadminAcademyPage() {
             )}
             {activeTab === 'QUIZZES' && (
               <button
-                onClick={() => setQuizModal(true)}
+                onClick={handleOpenCreateQuiz}
                 className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white flex items-center gap-2 transition shadow-lg shadow-purple-500/20"
               >
                 <Plus className="w-4 h-4" />
@@ -697,6 +735,15 @@ export default function SuperadminAcademyPage() {
                       {qz.course?.title && (
                         <p className="text-xs text-purple-300 font-mono flex items-center gap-1">
                           <BookOpen className="w-3 h-3" /> Course: {qz.course.title}
+                        </p>
+                      )}
+                      {qz.lesson?.title ? (
+                        <p className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                          <ChevronRight className="w-3 h-3" /> Lesson: {qz.lesson.title}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-amber-300 font-mono flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3" /> Not visible in learner lessons until linked to a lesson.
                         </p>
                       )}
 
@@ -1171,19 +1218,28 @@ export default function SuperadminAcademyPage() {
                     Select Questions from Question Bank ({selectedQuestionIds.length} selected)
                   </label>
                   {questions.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (selectedQuestionIds.length === questions.length) {
-                          setSelectedQuestionIds([]);
-                        } else {
-                          setSelectedQuestionIds(questions.map((q) => q.id));
-                        }
-                      }}
-                      className="text-[11px] font-mono text-purple-400 hover:text-purple-300 font-semibold"
-                    >
-                      {selectedQuestionIds.length === questions.length ? 'Deselect All' : 'Select All'}
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleAutoPickQuestions}
+                        className="text-[11px] font-mono text-emerald-400 hover:text-emerald-300 font-semibold"
+                      >
+                        Auto Pick
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedQuestionIds.length === questions.length) {
+                            setSelectedQuestionIds([]);
+                          } else {
+                            setSelectedQuestionIds(questions.map((q) => q.id));
+                          }
+                        }}
+                        className="text-[11px] font-mono text-purple-400 hover:text-purple-300 font-semibold"
+                      >
+                        {selectedQuestionIds.length === questions.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                    </div>
                   )}
                 </div>
 
