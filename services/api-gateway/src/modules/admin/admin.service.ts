@@ -620,7 +620,11 @@ export class AdminService {
     });
   }
 
-  async createQuiz(adminUserId: string, payload: { title: string; description?: string; courseId?: string; lessonId?: string; difficulty?: string; timeLimitMinutes?: number; passMarkPct?: number; xpReward?: number; questionIds?: string[] }) {
+  async createQuiz(adminUserId: string, payload: any) {
+    const passMarkPct = Number(payload.passMarkPct ?? payload.passMark ?? 70);
+    const timeLimitMinutes = Number(payload.timeLimitMinutes ?? payload.timeLimit ?? 15);
+    const xpReward = Number(payload.xpReward ?? 100);
+
     const quiz = await this.prisma.quiz.create({
       data: {
         title: payload.title,
@@ -628,14 +632,14 @@ export class AdminService {
         courseId: payload.courseId || null,
         lessonId: payload.lessonId || null,
         difficulty: payload.difficulty || 'INTERMEDIATE',
-        timeLimitMinutes: payload.timeLimitMinutes || 15,
-        passMarkPct: payload.passMarkPct || 70,
-        xpReward: payload.xpReward || 100,
-        status: 'PUBLISHED',
+        timeLimitMinutes,
+        passMarkPct,
+        xpReward,
+        status: payload.isPublished === false ? 'DRAFT' : 'PUBLISHED',
       }
     });
 
-    if (payload.questionIds && payload.questionIds.length > 0) {
+    if (Array.isArray(payload.questionIds) && payload.questionIds.length > 0) {
       for (let i = 0; i < payload.questionIds.length; i++) {
         await this.prisma.quizQuestion.create({
           data: {
@@ -651,11 +655,117 @@ export class AdminService {
       data: {
         userId: adminUserId,
         action: 'QUIZ_CREATED',
+        details: { quizId: quiz.id, title: quiz.title, questionCount: payload.questionIds?.length || 0 },
+      }
+    });
+
+    return quiz;
+  }
+
+  async updateQuiz(adminUserId: string, quizId: string, payload: any) {
+    const existing = await this.prisma.quiz.findUnique({ where: { id: quizId } });
+    if (!existing) throw new NotFoundException('Quiz not found.');
+
+    const passMarkPct = payload.passMarkPct !== undefined ? Number(payload.passMarkPct) : (payload.passMark !== undefined ? Number(payload.passMark) : existing.passMarkPct);
+    const timeLimitMinutes = payload.timeLimitMinutes !== undefined ? Number(payload.timeLimitMinutes) : (payload.timeLimit !== undefined ? Number(payload.timeLimit) : existing.timeLimitMinutes);
+    const xpReward = payload.xpReward !== undefined ? Number(payload.xpReward) : existing.xpReward;
+
+    const quiz = await this.prisma.quiz.update({
+      where: { id: quizId },
+      data: {
+        title: payload.title !== undefined ? payload.title : existing.title,
+        description: payload.description !== undefined ? payload.description : existing.description,
+        courseId: payload.courseId !== undefined ? payload.courseId : existing.courseId,
+        lessonId: payload.lessonId !== undefined ? payload.lessonId : existing.lessonId,
+        difficulty: payload.difficulty !== undefined ? payload.difficulty : existing.difficulty,
+        timeLimitMinutes,
+        passMarkPct,
+        xpReward,
+        status: payload.status !== undefined ? payload.status : (payload.isPublished !== undefined ? (payload.isPublished ? 'PUBLISHED' : 'DRAFT') : existing.status),
+      }
+    });
+
+    if (Array.isArray(payload.questionIds)) {
+      await this.prisma.quizQuestion.deleteMany({ where: { quizId } });
+      for (let i = 0; i < payload.questionIds.length; i++) {
+        await this.prisma.quizQuestion.create({
+          data: {
+            quizId: quiz.id,
+            questionId: payload.questionIds[i],
+            orderIndex: i + 1,
+          }
+        });
+      }
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'QUIZ_UPDATED',
         details: { quizId: quiz.id, title: quiz.title },
       }
     });
 
     return quiz;
+  }
+
+  async deleteQuiz(adminUserId: string, quizId: string) {
+    const existing = await this.prisma.quiz.findUnique({ where: { id: quizId } });
+    if (!existing) throw new NotFoundException('Quiz not found.');
+
+    await this.prisma.quiz.delete({ where: { id: quizId } });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'QUIZ_DELETED',
+        details: { quizId, title: existing.title },
+      }
+    });
+
+    return { success: true, message: 'Quiz deleted successfully.' };
+  }
+
+  async updateQuestion(adminUserId: string, questionId: string, payload: any) {
+    const existing = await this.prisma.questionBank.findUnique({ where: { id: questionId } });
+    if (!existing) throw new NotFoundException('Question item not found.');
+
+    const question = await this.prisma.questionBank.update({
+      where: { id: questionId },
+      data: {
+        question: payload.text || payload.question || existing.question,
+        skillTag: payload.skillTag || existing.skillTag,
+        assetTag: payload.assetTag || existing.assetTag,
+        difficulty: payload.difficulty || existing.difficulty,
+        options: payload.options || existing.options,
+        explanation: payload.explanation || existing.explanation,
+      }
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'QUESTION_UPDATED',
+        details: { questionId: question.id },
+      }
+    });
+
+    return question;
+  }
+
+  async deleteQuestion(adminUserId: string, questionId: string) {
+    const existing = await this.prisma.questionBank.findUnique({ where: { id: questionId } });
+    if (!existing) throw new NotFoundException('Question item not found.');
+
+    await this.prisma.questionBank.delete({ where: { id: questionId } });
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'QUESTION_DELETED',
+        details: { questionId },
+      }
+    });
+
+    return { success: true, message: 'Question deleted successfully.' };
   }
 
   async getAcademyAnalytics() {

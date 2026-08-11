@@ -37,6 +37,7 @@ export default function SuperadminAcademyPage() {
   // Question Bank state
   const [questions, setQuestions] = useState<any[]>([]);
   const [questionModal, setQuestionModal] = useState(false);
+  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [qText, setQText] = useState('');
   const [qSkill, setQSkill] = useState('Market Structure');
   const [qAsset, setQAsset] = useState('BTCUSD');
@@ -49,8 +50,12 @@ export default function SuperadminAcademyPage() {
   // Quizzes state
   const [quizzes, setQuizzes] = useState<any[]>([]);
   const [quizModal, setQuizModal] = useState(false);
+  const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
   const [quizTitle, setQuizTitle] = useState('');
+  const [quizDescription, setQuizDescription] = useState('');
   const [quizCourseId, setQuizCourseId] = useState('');
+  const [quizLessonId, setQuizLessonId] = useState('');
+  const [quizDifficulty, setQuizDifficulty] = useState('INTERMEDIATE');
   const [quizPassMark, setQuizPassMark] = useState(70);
   const [quizTimeLimit, setQuizTimeLimit] = useState(15);
   const [quizXpReward, setQuizXpReward] = useState(100);
@@ -228,62 +233,163 @@ export default function SuperadminAcademyPage() {
     }
   };
 
-  // Question Bank Handler
+  // Question Bank Handlers
+  const handleOpenCreateQuestion = () => {
+    setEditingQuestionId(null);
+    setQText('');
+    setQSkill('Market Structure');
+    setQAsset('BTCUSD');
+    setQDiff('INTERMEDIATE');
+    setQConcept('Fair Value Gaps');
+    setQOptions(['', '', '', '']);
+    setQCorrectIdx(0);
+    setQExplain('');
+    setQuestionModal(true);
+  };
+
+  const handleOpenEditQuestion = (q: any) => {
+    setEditingQuestionId(q.id);
+    setQText(q.question || q.text || '');
+    setQSkill(q.skillTag || 'Market Structure');
+    setQAsset(q.assetTag || 'BTCUSD');
+    setQDiff(q.difficulty || 'INTERMEDIATE');
+    setQConcept(q.conceptTag || 'Fair Value Gaps');
+    const opts = Array.isArray(q.options) ? q.options : ['', '', '', ''];
+    setQOptions(opts);
+    setQCorrectIdx(q.correctOptionIndex || 0);
+    setQExplain(q.explanation || '');
+    setQuestionModal(true);
+  };
+
   const handleSaveQuestion = async () => {
     if (!qText.trim() || qOptions.some((o) => !o.trim())) {
       toast.error('Question text and all 4 options are required.');
       return;
     }
     try {
-      await apiFetch('/api/v2/admin/academy/questions', {
-        method: 'POST',
-        body: JSON.stringify({
-          text: qText.trim(),
-          skillTag: qSkill,
-          assetTag: qAsset,
-          difficulty: qDiff,
-          conceptTag: qConcept,
-          options: qOptions.map((o) => o.trim()),
-          correctOptionIndex: qCorrectIdx,
-          explanation: qExplain.trim() || 'Correct trading application.',
-        }),
-      });
-      toast.success('Question added to Question Bank!');
+      const payload = {
+        text: qText.trim(),
+        skillTag: qSkill,
+        assetTag: qAsset,
+        difficulty: qDiff,
+        conceptTag: qConcept,
+        options: qOptions.map((o) => o.trim()),
+        correctOptionIndex: qCorrectIdx,
+        explanation: qExplain.trim() || 'Correct trading application.',
+      };
+
+      if (editingQuestionId) {
+        await apiFetch(`/api/v2/admin/academy/questions/${editingQuestionId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        toast.success('Question updated successfully!');
+      } else {
+        await apiFetch('/api/v2/admin/academy/questions', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        toast.success('Question added to Question Bank!');
+      }
       setQuestionModal(false);
-      setQText('');
-      setQOptions(['', '', '', '']);
       fetchQuestionBank();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save question');
     }
   };
 
-  // Quiz Handler
+  const handleDeleteQuestion = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this question?')) return;
+    try {
+      await apiFetch(`/api/v2/admin/academy/questions/${id}`, { method: 'DELETE' });
+      toast.success('Question deleted');
+      fetchQuestionBank();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete question');
+    }
+  };
+
+  // Quiz Handlers
+  const handleOpenCreateQuiz = () => {
+    setEditingQuizId(null);
+    setQuizTitle('');
+    setQuizDescription('');
+    setQuizCourseId(selectedCourse?.id || '');
+    setQuizLessonId('');
+    setQuizDifficulty('INTERMEDIATE');
+    setQuizPassMark(70);
+    setQuizTimeLimit(15);
+    setQuizXpReward(100);
+    setSelectedQuestionIds([]);
+    setQuizModal(true);
+  };
+
+  const handleOpenEditQuiz = (qz: any) => {
+    setEditingQuizId(qz.id);
+    setQuizTitle(qz.title || '');
+    setQuizDescription(qz.description || '');
+    setQuizCourseId(qz.courseId || '');
+    setQuizLessonId(qz.lessonId || '');
+    setQuizDifficulty(qz.difficulty || 'INTERMEDIATE');
+    setQuizPassMark(qz.passMarkPct ?? qz.passMark ?? 70);
+    setQuizTimeLimit(qz.timeLimitMinutes ?? qz.timeLimit ?? 15);
+    setQuizXpReward(qz.xpReward ?? 100);
+    const qIds = Array.isArray(qz.quizQuestions)
+      ? qz.quizQuestions.map((qq: any) => qq.questionId)
+      : Array.isArray(qz.questionIds)
+      ? qz.questionIds
+      : [];
+    setSelectedQuestionIds(qIds);
+    setQuizModal(true);
+  };
+
   const handleSaveQuiz = async () => {
     if (!quizTitle.trim()) {
       toast.error('Quiz title is required.');
       return;
     }
     try {
-      await apiFetch('/api/v2/admin/academy/quizzes', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: quizTitle.trim(),
-          courseId: quizCourseId || undefined,
-          passMark: Number(quizPassMark),
-          timeLimit: Number(quizTimeLimit),
-          xpReward: Number(quizXpReward),
-          questionIds: selectedQuestionIds,
-          isPublished: true,
-        }),
-      });
-      toast.success('Quiz published successfully!');
+      const payload = {
+        title: quizTitle.trim(),
+        description: quizDescription.trim() || undefined,
+        courseId: quizCourseId || undefined,
+        lessonId: quizLessonId || undefined,
+        difficulty: quizDifficulty,
+        passMarkPct: Number(quizPassMark),
+        timeLimitMinutes: Number(quizTimeLimit),
+        xpReward: Number(quizXpReward),
+        questionIds: selectedQuestionIds,
+        isPublished: true,
+      };
+
+      if (editingQuizId) {
+        await apiFetch(`/api/v2/admin/academy/quizzes/${editingQuizId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        toast.success('Quiz updated successfully!');
+      } else {
+        await apiFetch('/api/v2/admin/academy/quizzes', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        toast.success('Quiz published successfully!');
+      }
       setQuizModal(false);
-      setQuizTitle('');
-      setSelectedQuestionIds([]);
       fetchQuizzes();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save quiz');
+    }
+  };
+
+  const handleDeleteQuiz = async (id: string, titleStr: string) => {
+    if (!confirm(`Delete quiz "${titleStr}"?`)) return;
+    try {
+      await apiFetch(`/api/v2/admin/academy/quizzes/${id}`, { method: 'DELETE' });
+      toast.success('Quiz deleted');
+      fetchQuizzes();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete quiz');
     }
   };
 
@@ -480,7 +586,7 @@ export default function SuperadminAcademyPage() {
               <p className="text-xs text-slate-400 font-mono mt-0.5">Reusable institutional test questions tagged by skill, asset class, and concept.</p>
             </div>
             <button
-              onClick={() => setQuestionModal(true)}
+              onClick={handleOpenCreateQuestion}
               className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white flex items-center gap-1.5 shadow"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -497,19 +603,20 @@ export default function SuperadminAcademyPage() {
                   <th className="p-4">Asset Tag</th>
                   <th className="p-4">Difficulty</th>
                   <th className="p-4">Correct Choice</th>
+                  <th className="p-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 text-slate-300">
                 {questions.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-slate-500 font-mono">
+                    <td colSpan={6} className="p-8 text-center text-slate-500 font-mono">
                       No question items in Question Bank yet. Click "Add Question" to populate.
                     </td>
                   </tr>
                 ) : (
                   questions.map((q) => (
                     <tr key={q.id} className="hover:bg-white/5 transition">
-                      <td className="p-4 font-semibold text-white max-w-xs">{q.text}</td>
+                      <td className="p-4 font-semibold text-white max-w-xs">{q.question || q.text}</td>
                       <td className="p-4 font-mono">
                         <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 text-[10px]">
                           {q.skillTag || 'Market Structure'}
@@ -518,7 +625,25 @@ export default function SuperadminAcademyPage() {
                       <td className="p-4 font-mono text-purple-300">{q.assetTag || 'BTCUSD'}</td>
                       <td className="p-4 font-mono text-amber-300">{q.difficulty}</td>
                       <td className="p-4 font-mono text-emerald-400 font-bold">
-                        Option #{q.correctOptionIndex + 1}: {q.options?.[q.correctOptionIndex] || 'Selected'}
+                        Option #{ (q.correctOptionIndex ?? q.correctOption ?? 0) + 1 }: {q.options?.[q.correctOptionIndex ?? q.correctOption ?? 0] || 'Selected'}
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleOpenEditQuestion(q)}
+                            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition"
+                            title="Edit Question"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-purple-300" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteQuestion(q.id)}
+                            className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition"
+                            title="Delete Question"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -538,7 +663,7 @@ export default function SuperadminAcademyPage() {
               <p className="text-xs text-slate-400 font-mono mt-0.5">Automated quizzes linked to courses, awarding XP points and generating AI insights.</p>
             </div>
             <button
-              onClick={() => setQuizModal(true)}
+              onClick={handleOpenCreateQuiz}
               className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white flex items-center gap-1.5 shadow"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -552,33 +677,64 @@ export default function SuperadminAcademyPage() {
                 No active quizzes. Click "Create Quiz" to configure a quiz from the Question Bank.
               </div>
             ) : (
-              quizzes.map((qz) => (
-                <div key={qz.id} className="glass-panel p-5 rounded-2xl border border-white/10 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
-                      PUBLISHED
-                    </span>
-                    <span className="text-xs font-mono text-purple-300 font-bold">+{qz.xpReward || 100} XP REWARD</span>
-                  </div>
+              quizzes.map((qz) => {
+                const questionCount = qz.quizQuestions?.length || qz.questionIds?.length || 0;
+                return (
+                  <div key={qz.id} className="glass-panel p-5 rounded-2xl border border-white/10 space-y-3 flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full border ${
+                          qz.status === 'PUBLISHED' || qz.isPublished
+                            ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                            : 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                        }`}>
+                          {qz.status || 'PUBLISHED'}
+                        </span>
+                        <span className="text-xs font-mono text-purple-300 font-bold">+{qz.xpReward || 100} XP REWARD</span>
+                      </div>
 
-                  <h3 className="text-base font-bold text-white font-outfit">{qz.title}</h3>
+                      <h3 className="text-base font-bold text-white font-outfit">{qz.title}</h3>
+                      {qz.course?.title && (
+                        <p className="text-xs text-purple-300 font-mono flex items-center gap-1">
+                          <BookOpen className="w-3 h-3" /> Course: {qz.course.title}
+                        </p>
+                      )}
 
-                  <div className="grid grid-cols-3 gap-2 text-xs font-mono pt-2 border-t border-white/5">
-                    <div className="p-2 rounded bg-white/5 text-center">
-                      <span className="text-slate-400 text-[10px] block">Questions</span>
-                      <span className="font-bold text-white">{qz.questions?.length || 0}</span>
+                      <div className="grid grid-cols-3 gap-2 text-xs font-mono pt-2 border-t border-white/5">
+                        <div className="p-2 rounded bg-white/5 text-center">
+                          <span className="text-slate-400 text-[10px] block">Questions</span>
+                          <span className="font-bold text-white">{questionCount}</span>
+                        </div>
+                        <div className="p-2 rounded bg-white/5 text-center">
+                          <span className="text-slate-400 text-[10px] block">Pass Mark</span>
+                          <span className="font-bold text-emerald-400">{qz.passMarkPct ?? qz.passMark ?? 70}%</span>
+                        </div>
+                        <div className="p-2 rounded bg-white/5 text-center">
+                          <span className="text-slate-400 text-[10px] block">Time Limit</span>
+                          <span className="font-bold text-amber-300">{qz.timeLimitMinutes ?? qz.timeLimit ?? 15} mins</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="p-2 rounded bg-white/5 text-center">
-                      <span className="text-slate-400 text-[10px] block">Pass Mark</span>
-                      <span className="font-bold text-emerald-400">{qz.passMark}%</span>
-                    </div>
-                    <div className="p-2 rounded bg-white/5 text-center">
-                      <span className="text-slate-400 text-[10px] block">Time Limit</span>
-                      <span className="font-bold text-amber-300">{qz.timeLimit} mins</span>
+
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
+                      <button
+                        onClick={() => handleOpenEditQuiz(qz)}
+                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition flex items-center gap-1"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-purple-300" />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteQuiz(qz.id, qz.title)}
+                        className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition"
+                        title="Delete Quiz"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -917,8 +1073,10 @@ export default function SuperadminAcademyPage() {
       {/* Quiz Modal */}
       {quizModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel p-6 rounded-2xl border border-white/10 w-full max-w-lg space-y-4">
-            <h3 className="text-base font-bold text-white font-outfit">Configure & Publish Quiz Assessment</h3>
+          <div className="glass-panel p-6 rounded-2xl border border-white/10 w-full max-w-xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-base font-bold text-white font-outfit">
+              {editingQuizId ? 'Edit Quiz Assessment' : 'Configure & Publish Quiz Assessment'}
+            </h3>
 
             <div className="space-y-3 text-xs">
               <div>
@@ -928,8 +1086,52 @@ export default function SuperadminAcademyPage() {
                   value={quizTitle}
                   onChange={(e) => setQuizTitle(e.target.value)}
                   placeholder="e.g. Master Class 1: Order Block Mastery Quiz"
-                  className="w-full p-2.5 bg-slate-900 border border-white/10 rounded-xl text-white focus:outline-none"
+                  className="w-full p-2.5 bg-slate-900 border border-white/10 rounded-xl text-white focus:outline-none focus:border-purple-500 font-semibold"
                 />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Description / Instructions (Optional)</label>
+                <textarea
+                  rows={2}
+                  value={quizDescription}
+                  onChange={(e) => setQuizDescription(e.target.value)}
+                  placeholder="Brief summary or instructions for students..."
+                  className="w-full p-2.5 bg-slate-900 border border-white/10 rounded-xl text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Associated Course</label>
+                  <select
+                    value={quizCourseId}
+                    onChange={(e) => {
+                      setQuizCourseId(e.target.value);
+                      setQuizLessonId('');
+                    }}
+                    className="w-full p-2.5 bg-slate-900 border border-white/10 rounded-xl text-white focus:outline-none font-mono"
+                  >
+                    <option value="">-- Standalone (No Course) --</option>
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.id}>{c.title}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-slate-300 font-semibold block mb-1">Associated Lesson</label>
+                  <select
+                    value={quizLessonId}
+                    onChange={(e) => setQuizLessonId(e.target.value)}
+                    className="w-full p-2.5 bg-slate-900 border border-white/10 rounded-xl text-white focus:outline-none font-mono"
+                  >
+                    <option value="">-- All Lessons / General Quiz --</option>
+                    {quizCourseId && courses.find((c) => c.id === quizCourseId)?.lessons?.map((l: any) => (
+                      <option key={l.id} value={l.id}>Lesson {l.orderIndex}: {l.title}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
@@ -961,6 +1163,70 @@ export default function SuperadminAcademyPage() {
                   />
                 </div>
               </div>
+
+              {/* Question Selection Checklist */}
+              <div className="space-y-2 pt-2 border-t border-white/10">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-200 font-semibold block">
+                    Select Questions from Question Bank ({selectedQuestionIds.length} selected)
+                  </label>
+                  {questions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedQuestionIds.length === questions.length) {
+                          setSelectedQuestionIds([]);
+                        } else {
+                          setSelectedQuestionIds(questions.map((q) => q.id));
+                        }
+                      }}
+                      className="text-[11px] font-mono text-purple-400 hover:text-purple-300 font-semibold"
+                    >
+                      {selectedQuestionIds.length === questions.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                  )}
+                </div>
+
+                {questions.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-slate-900 border border-white/10 text-slate-500 text-center font-mono">
+                    Question Bank is empty. Add questions under the "Question Bank" tab first.
+                  </div>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 p-2 rounded-xl bg-slate-900 border border-white/10">
+                    {questions.map((q) => {
+                      const isChecked = selectedQuestionIds.includes(q.id);
+                      return (
+                        <label
+                          key={q.id}
+                          className={`flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition ${
+                            isChecked ? 'bg-purple-500/10 border border-purple-500/30' : 'hover:bg-white/5'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedQuestionIds([...selectedQuestionIds, q.id]);
+                              } else {
+                                setSelectedQuestionIds(selectedQuestionIds.filter((id) => id !== q.id));
+                              }
+                            }}
+                            className="mt-0.5 accent-purple-500 w-4 h-4"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white font-medium line-clamp-1">{q.question || q.text}</p>
+                            <div className="flex items-center gap-2 mt-0.5 font-mono text-[10px]">
+                              <span className="text-purple-300">{q.skillTag || 'General'}</span>
+                              <span className="text-amber-400">{q.difficulty || 'INTERMEDIATE'}</span>
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-3 pt-2">
@@ -968,7 +1234,7 @@ export default function SuperadminAcademyPage() {
                 Cancel
               </button>
               <button onClick={handleSaveQuiz} className="flex-1 py-2 rounded-xl bg-purple-600 text-xs font-semibold text-white shadow-lg">
-                Publish Quiz
+                {editingQuizId ? 'Save Quiz Changes' : 'Publish Quiz'}
               </button>
             </div>
           </div>

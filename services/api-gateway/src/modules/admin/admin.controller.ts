@@ -132,6 +132,18 @@ export class AdminController {
     return this.adminService.createQuestion(req.user.userId, body);
   }
 
+  @Patch('academy/questions/:id')
+  @ApiOperation({ summary: 'Update item in central Question Bank' })
+  async updateQuestion(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.adminService.updateQuestion(req.user.userId, id, body);
+  }
+
+  @Delete('academy/questions/:id')
+  @ApiOperation({ summary: 'Delete item from central Question Bank' })
+  async deleteQuestion(@Req() req: any, @Param('id') id: string) {
+    return this.adminService.deleteQuestion(req.user.userId, id);
+  }
+
   @Get('academy/quizzes')
   @ApiOperation({ summary: 'Get all Quizzes for LMS management' })
   async getAdminQuizzes() {
@@ -142,6 +154,18 @@ export class AdminController {
   @ApiOperation({ summary: 'Create new Quiz with Question Bank items' })
   async createQuiz(@Req() req: any, @Body() body: any) {
     return this.adminService.createQuiz(req.user.userId, body);
+  }
+
+  @Patch('academy/quizzes/:id')
+  @ApiOperation({ summary: 'Update existing Quiz and questions' })
+  async updateQuiz(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.adminService.updateQuiz(req.user.userId, id, body);
+  }
+
+  @Delete('academy/quizzes/:id')
+  @ApiOperation({ summary: 'Delete Quiz from LMS' })
+  async deleteQuiz(@Req() req: any, @Param('id') id: string) {
+    return this.adminService.deleteQuiz(req.user.userId, id);
   }
 
   @Get('academy/analytics')

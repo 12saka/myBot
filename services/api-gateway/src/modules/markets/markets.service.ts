@@ -112,8 +112,8 @@ export class MarketsService implements OnModuleInit {
       'US100': '^NDX',
       'SPX500': '^GSPC',
       'DAX40': '^GDAXI',
-      'GOLD': 'GC=F',
-      'XAU/USD': 'GC=F',
+      'GOLD': 'XAUUSD=X',
+      'XAU/USD': 'XAUUSD=X',
       'OIL': 'CL=F',
       'EUR/USD': 'EURUSD=X',
       'GBP/USD': 'GBPUSD=X',
@@ -426,21 +426,33 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // Gold spot bounds check: Real Gold spot trades between $1800 and $3200 per oz.
-        // If currentPrice is corrupted (e.g. legacy 4406.80 mock data) or out of bounds, override with PAXGUSDT or GC=F
+        // Gold spot bounds check: Real Gold spot trades between $1800 and $3500 per oz.
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
-          if (currentPrice > 3200 || currentPrice < 1800) {
-            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1800 && cryptoPriceMap['PAXGUSDT'].price <= 3200) {
+          if (currentPrice > 3500 || currentPrice < 1800) {
+            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1800 && cryptoPriceMap['PAXGUSDT'].price <= 3500) {
               currentPrice = cryptoPriceMap['PAXGUSDT'].price;
               changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
               volume24h = cryptoPriceMap['PAXGUSDT'].volume;
-            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1800 && yahooPriceMap['GC=F'].price <= 3200) {
+            } else if (yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price >= 1800 && yahooPriceMap['XAUUSD=X'].price <= 3500) {
+              currentPrice = yahooPriceMap['XAUUSD=X'].price;
+              changePct24h = yahooPriceMap['XAUUSD=X'].changePct;
+              volume24h = yahooPriceMap['XAUUSD=X'].volume;
+            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1800 && yahooPriceMap['GC=F'].price <= 3500) {
               currentPrice = yahooPriceMap['GC=F'].price;
               changePct24h = yahooPriceMap['GC=F'].changePct;
               volume24h = yahooPriceMap['GC=F'].volume;
             } else {
-              currentPrice = 2405.50;
-              changePct24h = 0.15;
+              try {
+                const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT', {}, 2500);
+                if (paxgRes.ok) {
+                  const pData = await paxgRes.json();
+                  if (pData && Number(pData.lastPrice) >= 1800 && Number(pData.lastPrice) <= 3500) {
+                    currentPrice = Number(pData.lastPrice);
+                    changePct24h = Number(pData.priceChangePercent || 0);
+                    volume24h = Number(pData.volume || 1000);
+                  }
+                }
+              } catch (goldApiErr) {}
             }
           }
         }
@@ -505,30 +517,27 @@ export class MarketsService implements OnModuleInit {
         const currentPrice = marketData.bidPrice;
         let updatedStatus = status;
 
-        if (status === 'ACTIVE') {
-          // Check if entry price zone has been reached/crossed
-          const entryBoundLower = signal.entryPrice * 0.998;
-          const entryBoundUpper = signal.entryPrice * 1.002;
-          if (currentPrice >= entryBoundLower && currentPrice <= entryBoundUpper) {
-            updatedStatus = 'RUNNING';
-          }
-        } else if (status === 'RUNNING') {
-          // Check for SL or TPs
+        if (status === 'ACTIVE' || status === 'RUNNING') {
+          // Directly check for SL or TPs
           if (signal.direction === 'BUY') {
-            if (currentPrice <= signal.stopLoss) {
+            if (currentPrice <= signal.stopLoss && signal.stopLoss > 0) {
               updatedStatus = 'SL_HIT';
-            } else if (currentPrice >= signal.takeProfit2) {
+            } else if (currentPrice >= signal.takeProfit2 && signal.takeProfit2 > 0) {
               updatedStatus = 'TP2_HIT';
-            } else if (currentPrice >= signal.takeProfit1) {
+            } else if (currentPrice >= signal.takeProfit1 && signal.takeProfit1 > 0) {
               updatedStatus = 'TP1_HIT';
+            } else {
+              updatedStatus = 'RUNNING';
             }
-          } else { // SELL
-            if (currentPrice >= signal.stopLoss) {
+          } else if (signal.direction === 'SELL') {
+            if (currentPrice >= signal.stopLoss && signal.stopLoss > 0) {
               updatedStatus = 'SL_HIT';
-            } else if (currentPrice <= signal.takeProfit2) {
+            } else if (currentPrice <= signal.takeProfit2 && signal.takeProfit2 > 0) {
               updatedStatus = 'TP2_HIT';
-            } else if (currentPrice <= signal.takeProfit1) {
+            } else if (currentPrice <= signal.takeProfit1 && signal.takeProfit1 > 0) {
               updatedStatus = 'TP1_HIT';
+            } else {
+              updatedStatus = 'RUNNING';
             }
           }
         }

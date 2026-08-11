@@ -183,10 +183,10 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
     
-    # 2. RSI 14
+    # 2. RSI 14 (Wilder's Smoothing)
     delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
     rs = gain / (loss + 1e-9)
     df['rsi14'] = 100 - (100 / (1 + rs))
     
@@ -197,7 +197,7 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
     df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
     df['macd_hist'] = df['macd'] - df['macd_signal']
     
-    # 4. ATR
+    # 4. ATR (Wilder's Smoothing)
     df['tr'] = np.maximum(
         df['high'] - df['low'],
         np.maximum(
@@ -205,7 +205,7 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
             abs(df['low'] - df['close'].shift(1))
         )
     )
-    df['atr'] = df['tr'].rolling(window=14).mean()
+    df['atr'] = df['tr'].ewm(alpha=1/14, adjust=False).mean()
     
     # 5. Bollinger Bands
     df['bb_middle'] = df['close'].rolling(window=20).mean()
@@ -241,14 +241,19 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
     swing_high = float(df['high'].tail(20).max())
     swing_low = float(df['low'].tail(20).min())
     
-    # 11. RSI Divergence Detection
+    # 11. RSI Divergence Detection (Pivot Based)
     rsi_divergence = "none"
-    if len(df) >= 15 and not df['rsi14'].isna().all():
-        c_first, c_last = float(df['close'].iloc[-15]), float(df['close'].iloc[-1])
-        r_first, r_last = float(df['rsi14'].iloc[-15]), float(df['rsi14'].iloc[-1])
-        if c_last < c_first and r_last > r_first:
+    if len(df) >= 20 and not df['rsi14'].isna().all():
+        tail_df = df.tail(20)
+        min_close_idx = tail_df['close'].idxmin()
+        max_close_idx = tail_df['close'].idxmax()
+        last_idx = df.index[-1]
+        
+        # Bullish divergence: price made lower low, but RSI made higher low
+        if min_close_idx != last_idx and df.loc[min_close_idx, 'close'] > last_row['close'] and df.loc[min_close_idx, 'rsi14'] < last_row['rsi14']:
             rsi_divergence = "bullish_divergence"
-        elif c_last > c_first and r_last < r_first:
+        # Bearish divergence: price made higher high, but RSI made lower high
+        elif max_close_idx != last_idx and df.loc[max_close_idx, 'close'] < last_row['close'] and df.loc[max_close_idx, 'rsi14'] > last_row['rsi14']:
             rsi_divergence = "bearish_divergence"
 
     trend = "Neutral"
@@ -1006,7 +1011,7 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         
         tp1 = entry + tp1_dist
         tp2 = entry + tp2_dist
-    else:
+    elif rule_direction == "SELL":
         struct_sl = swing_high + (0.3 * atr_val if is_scalping else 0.5 * atr_val)
         sl_dist = max(struct_sl - entry, min_sl_pct * entry)
         sl_dist = min(sl_dist, max_sl_pct * entry)
@@ -1017,6 +1022,10 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         
         tp1 = entry - tp1_dist
         tp2 = entry - tp2_dist
+    else:
+        stop_loss = 0.0
+        tp1 = 0.0
+        tp2 = 0.0
 
     if 'tradingview_idea' not in dir() or not tradingview_idea:
         tradingview_idea = f"PRO 7-Step Institutional {rule_direction} trade setup for {symbol}. Retest Entry: {entry:.2f}, TP1: {tp1:.2f} (1:2.0 R:R), TP2: {tp2:.2f} (1:3.2 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."

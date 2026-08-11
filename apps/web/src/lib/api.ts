@@ -151,7 +151,9 @@ export function mapSignal(item: any): AISignal {
   const tp2 = Number(item.takeProfit2 ?? item.tp2 ?? item.take_profit_2 ?? 0);
   const tp3 = Number(item.takeProfit3 ?? item.tp3 ?? reasoning.take_profit_3 ?? 0);
 
-  const rrRatio = Number(item.riskRewardRatio ?? (Math.abs(tp1 - entry) / (Math.abs(entry - stopLoss) || 1))).toFixed(1);
+  const rrRatio = (direction === 'WAIT' || stopLoss === 0 || tp1 === 0) 
+    ? 'N/A' 
+    : `1:${Number(item.riskRewardRatio ?? (Math.abs(tp1 - entry) / (Math.abs(entry - stopLoss) || 1))).toFixed(1)}`;
   const strategyName = getAssetStrategyName(item.symbol || 'BTC/USD', item.strategyKey || reasoning.strategy_key);
 
   return {
@@ -165,8 +167,8 @@ export function mapSignal(item: any): AISignal {
     tp1,
     tp2,
     tp3: tp3 > 0 ? tp3 : undefined,
-    riskReward: `1:${rrRatio}`,
-    probability: direction === 'WAIT' ? 'No trade' : `${confidence}%`,
+    riskReward: rrRatio,
+    probability: direction === 'WAIT' ? 'Market Neutral' : `${confidence}%`,
     duration: item.durationEstimate || '4h (Day Trade)',
     strategy: strategyName,
     technicals: indicators.length ? indicators : [explanation],
