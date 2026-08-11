@@ -626,12 +626,15 @@ export default function SignalsPage() {
         body: JSON.stringify({ symbol, interval: selectedTimeframe })
       });
       const newSignal = mapSignal(rawSignal);
+      if (newSignal.direction === 'WAIT') {
+        return;
+      }
       
       const exists = signals.some(s => s.symbol === newSignal.symbol && s.direction === newSignal.direction);
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
 
       // Autonomous execution if bot is running
-      if (autonomousActive && newSignal.direction !== 'WAIT' && !exists) {
+      if (autonomousActive && !exists) {
         let quantity = 1.0;
         if (newSignal.entry > 1000) {
           quantity = parseFloat((100 / newSignal.entry).toFixed(4));
@@ -710,7 +713,10 @@ export default function SignalsPage() {
       });
       const newSignal = mapSignal(rawSignal);
       if (newSignal.direction === 'WAIT') {
-        setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+        const hasActiveForSymbol = signals.some(s => s.symbol === newSignal.symbol && s.direction !== 'WAIT');
+        if (!hasActiveForSymbol) {
+          setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+        }
         toast(`No high-probability setup for ${symbol}: ${newSignal.reasoning || 'market conditions are not clean.'}`, { id: toastId });
         return;
       }

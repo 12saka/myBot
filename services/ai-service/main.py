@@ -761,20 +761,20 @@ async def get_prediction(
             
             if is_btc or is_eth:
                 asset_class = "crypto"
-                engine_name = "Crypto AI Engine (BTC/ETH On-Chain & Liquidity)"
+                engine_name = "Crypto AI Engine (BTC/ETH Technical + Optional Flow Context)"
                 asset_guidance = f"""
                 CRYPTO ENGINE ({symbol_upper}):
-                - Priority Factors: On-chain exchange inflows/outflows, Whale accumulation, Open Interest, Funding Rates, Fear & Greed Index, and Spot ETF inflows.
-                - BTC Specifics: Bitcoin dictates overall market direction. Check 20/50/200 EMA alignment, 24/7 liquidity sweeps of previous high/lows, and NASDAQ correlation.
-                - ETH Specifics: Strongly correlated with BTC trend + Layer-2 TVL, staking inflows, and DeFi volume.
+                - Use computed candle indicators, market structure, volume, and supplied news first.
+                - Mention on-chain, funding, ETF, NASDAQ correlation, or DeFi factors only if those data points are explicitly present in the request.
                 - Execution Rule: Retest entry at Bullish Order Block or Fair Value Gap (FVG) with SL below swing low + 0.5x ATR.
                 """
             elif is_gold:
                 asset_class = "commodities"
-                engine_name = "Commodities AI Engine (XAU/USD Real Yields & Safe Haven)"
+                engine_name = "Commodities AI Engine (XAU/USD Technical + Optional Macro Context)"
                 asset_guidance = """
                 COMMODITIES ENGINE (XAU/USD GOLD):
-                - Priority Factors: US Dollar Index (DXY) inverse movement, US 10-Year Bond Yields, Real Interest Rates, CPI/PPI Inflation, and Safe-Haven geopolitical risk flows.
+                - Use computed candle indicators, market structure, volume, and supplied news first.
+                - Mention DXY, bond yields, real rates, inflation, or geopolitical flows only if those data points are explicitly present in the request.
                 - Execution Rule: Gold is highly volatile. Respect key daily support/resistance levels. Entry on Order Block retest with ATR volatility invalidation.
                 """
             elif is_eur or is_jpy:
@@ -783,13 +783,15 @@ async def get_prediction(
                 if is_jpy:
                     asset_guidance = """
                     FOREX ENGINE (USD/JPY):
-                    - Priority Factors: US 10-Year Treasury Yields (positive correlation), Bank of Japan (BoJ) rate policy & intervention warnings, and Fed vs BoJ rate differentials.
+                    - Use computed candle indicators, market structure, volume, and supplied news first.
+                    - Mention US yields, BoJ policy, intervention warnings, or Fed/BoJ rate differentials only if those data points are explicitly present in the request.
                     - Precision: Format prices to 3 decimal places (e.g. 158.240).
                     """
                 else:
                     asset_guidance = """
                     FOREX ENGINE (EUR/USD):
-                    - Priority Factors: US Dollar Index (DXY) inverse index, ECB vs Fed interest rate expectations, CPI inflation, and London/NY Session Overlap Judas Swing liquidity sweeps.
+                    - Use computed candle indicators, market structure, volume, and supplied news first.
+                    - Mention DXY, ECB/Fed rates, CPI, or session-liquidity narratives only if those data points are explicitly present in the request.
                     - Precision: Format prices to 4-5 decimal places (e.g. 1.08542).
                     """
             elif is_nas100 or is_us30:
@@ -798,13 +800,15 @@ async def get_prediction(
                 if is_nas100:
                     asset_guidance = """
                     INDICES ENGINE (US100 NASDAQ 100):
-                    - Priority Factors: Mega-cap Tech Earnings (NVIDIA, Apple, Microsoft, Amazon, Meta, Tesla), VIX Volatility Index, and 4H Trend Continuation.
+                    - Use computed candle indicators, market structure, volume, and supplied news first.
+                    - Mention mega-cap earnings, VIX, breadth, or sector flows only if those data points are explicitly present in the request.
                     - Execution Rule: Enter on 15M Fair Value Gap (FVG) retest with volume surge (RVOL > 1.2x).
                     """
                 else:
                     asset_guidance = """
                     INDICES ENGINE (US30 DOW JONES):
-                    - Priority Factors: US GDP Growth, Employment NFP data, Industrial earnings, and New York Session Opening Volume expansion.
+                    - Use computed candle indicators, market structure, volume, and supplied news first.
+                    - Mention GDP, NFP, industrial earnings, or New York opening flows only if those data points are explicitly present in the request.
                     - Execution Rule: Pullback retest of 20-period Swing High/Low support & resistance.
                     """
             else:
@@ -844,8 +848,8 @@ Market Structure (computed from price action):
 
 You MUST output ONLY a valid JSON object (no markdown, no extra text) with this EXACT structure:
 {{
-  "direction": "BUY" or "SELL",
-  "confidence": float between 0.50 and 0.98,
+  "direction": "BUY", "SELL", or "WAIT",
+  "confidence": float between 0.0 and 0.98. Use 0.0 to 0.54 for WAIT/no-trade setups,
   "explanation": "A detailed 3-paragraph analysis: (1) TREND CONTEXT - Describe the overall market structure, where price sits relative to EMAs, and whether the trend is mature or fresh. (2) ENTRY RATIONALE - Explain why this entry price is optimal based on support/resistance, order blocks, FVG confluence, and indicator alignment. Mention specific indicator values. (3) MARKET SENTIMENT & RISK MANAGEMENT - Incorporate recent news sentiment (if available) into the outlook. Explain stop loss placement logic, what would invalidate this trade, and why the take profit targets are realistic.",
   "category_scores": {{
     "technical": float (0.0 to 1.0),
@@ -892,8 +896,14 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
                         break
 
             if res_json:
-                direction = res_json.get("direction", direction)
-                confidence = float(res_json.get("confidence", confidence))
+                ai_direction = str(res_json.get("direction", direction)).upper()
+                if ai_direction in ["BUY", "SELL", "WAIT"]:
+                    direction = ai_direction
+
+                raw_ai_confidence = float(res_json.get("confidence", confidence))
+                if raw_ai_confidence > 1:
+                    raw_ai_confidence = raw_ai_confidence / 100.0
+                confidence = float(round(min(0.96, max(0.0, raw_ai_confidence)), 2))
                 ai_explanation = res_json.get("explanation", ai_explanation)
                 indicator_verdicts = res_json.get("indicator_verdicts", {})
                 market_structure_analysis = res_json.get("market_structure_analysis", "")

@@ -533,7 +533,7 @@ export class SignalsController implements OnModuleInit {
             tradingview_idea: `12-Layer Confluence ${direction} setup for ${symbol} (Score: ${calculatedWinProb}/100). Entry: ${entryPrice.toFixed(2)} [Zone: ${entryZone || 'Market'}], TP1: ${takeProfit1.toFixed(2)}, TP2: ${takeProfit2.toFixed(2)}, TP3: ${takeProfit3 || 'Open'}, Stop Loss: ${stopLoss.toFixed(2)} (R:R 1:${computedRR}).`,
             category_scores: this.computeCategoryScores(rsi14, ema20, ema50, direction),
             macro_context: this.getRichMacroContext(symbol, direction, rsi14, ema20, ema200),
-            correlation_analysis: `Cross-asset correlation matrix confirms USD liquidity alignment for ${symbol}.`,
+            correlation_analysis: `No live cross-asset correlation matrix is attached for ${symbol}; this signal is scored from available candle-derived technical data only.`,
             timeframe: interval,
             status: 'ACTIVE',
             signal_grade: customGrade || this.computeSignalGrade(calculatedWinProb, ema20, ema50, ema200, direction)
@@ -954,47 +954,9 @@ export class SignalsController implements OnModuleInit {
             console.warn(`[SignalsController] Real chart fetch failed for ${cleanSymbol}: ${err.message}`);
           }
 
-          // Guaranteed spot-anchored micro-candle generator (30 periods) if chart APIs failed
-          try {
-            console.log(`[SignalsController] Generating 30 spot-anchored micro-candles for ${cleanSymbol} at spot $${liveSpotPrice}`);
-            await this.prisma.historicalCandle.deleteMany({
-              where: { symbol: cleanSymbol, interval }
-            });
-
-            const syntheticCandles = [];
-            const stepMs = interval === '1m' ? 60000 : interval === '5m' ? 300000 : interval === '15m' ? 900000 : 3600000;
-            const nowMs = Date.now();
-            const volatilityPct = cleanSymbol.includes('BTC') ? 0.003 : cleanSymbol.includes('XAU') || cleanSymbol.includes('GOLD') ? 0.002 : 0.001;
-
-            let currClose = liveSpotPrice * (1 - volatilityPct * 5); // start slightly lower for organic trend
-            for (let i = 29; i >= 0; i--) {
-              const candleTime = new Date(nowMs - i * stepMs);
-              const drift = (Math.random() - 0.48) * volatilityPct * currClose;
-              const open = currClose;
-              const close = i === 0 ? liveSpotPrice : open + drift;
-              const high = Math.max(open, close) + Math.random() * volatilityPct * currClose * 0.5;
-              const low = Math.min(open, close) - Math.random() * volatilityPct * currClose * 0.5;
-              const volume = Math.floor(1000 + Math.random() * 5000);
-
-              const created = await this.prisma.historicalCandle.create({
-                data: {
-                  symbol: cleanSymbol,
-                  interval,
-                  timestamp: candleTime,
-                  open: parseFloat(open.toFixed(4)),
-                  high: parseFloat(high.toFixed(4)),
-                  low: parseFloat(low.toFixed(4)),
-                  close: parseFloat(close.toFixed(4)),
-                  volume: parseFloat(volume.toFixed(0)),
-                }
-              });
-              syntheticCandles.push(created);
-              currClose = close;
-            }
-            return syntheticCandles;
-          } catch (synthErr: any) {
-            console.warn(`[SignalsController] Synthetic candle build error: ${synthErr.message}`);
-          }
+          console.warn(
+            `[SignalsController] Spot price for ${cleanSymbol} is available (${liveSpotPrice}), but real candle history is unavailable. Refusing to synthesize candles for signal generation.`
+          );
         }
         
         console.warn(`[SignalsController] Insufficient live candlestick history for ${cleanSymbol}. Refusing synthetic signal generation.`);
@@ -1012,21 +974,21 @@ export class SignalsController implements OnModuleInit {
   private getRichMacroContext(symbol: string, direction: string, rsi: number, ema20: number, ema200: number): string {
     const s = symbol.toUpperCase();
     if (s.includes('US30') || s.includes('DOW')) {
-      return `Industrial blue-chip capital flows display ${direction === 'BUY' ? 'institutional accumulation' : 'profit taking'} near the ${ema20.toFixed(2)} EMA. Federal Reserve rate expectations and US 10Y Treasury yield fluctuations are shaping current index valuation bounds.`;
+      return `Technical-only index context: price is ${direction === 'BUY' ? 'holding above' : 'trading below'} the ${ema20.toFixed(2)} EMA with RSI at ${rsi.toFixed(1)}. No live Fed, yield, sector-breadth, or institutional-flow feed is attached to this signal.`;
     }
     if (s.includes('US100') || s.includes('NAS')) {
-      return `Mega-cap tech equities are leading market breadth with ${direction === 'BUY' ? 'strong upside volume' : 'distribution pressures'}. RSI at ${rsi.toFixed(1)} confirms ${direction === 'BUY' ? 'sustained buying pressure' : 'cooling momentum'} across semiconductor and enterprise software sectors.`;
+      return `Technical-only NASDAQ context: price is ${direction === 'BUY' ? 'holding above' : 'trading below'} the ${ema20.toFixed(2)} EMA and RSI is ${rsi.toFixed(1)}. No live sector breadth, mega-cap flow, or yield feed is attached to this signal.`;
     }
     if (s.includes('SPX') || s.includes('SP500')) {
-      return `S&P 500 institutional order flow indicates ${direction === 'BUY' ? 'broad-based market participation' : 'defensive sector rotation'}. Price alignment above ${ema200.toFixed(2)} 200-period EMA provides macro trend support.`;
+      return `Technical-only S&P context: price is ${direction === 'BUY' ? 'above' : 'below'} the ${ema200.toFixed(2)} 200-period EMA. No live breadth, sector rotation, or institutional-flow feed is attached to this signal.`;
     }
     if (s.includes('EUR') || s.includes('GBP') || s.includes('JPY')) {
-      return `Central Bank rate differential vectors (Fed vs ${s.includes('EUR') ? 'ECB' : s.includes('GBP') ? 'BoE' : 'BoJ'}) are driving liquidity sweeps. DXY Dollar Index movement reinforces ${direction === 'BUY' ? 'dollar weakness favoring currency appreciation' : 'dollar strength pressuring currency pairs'}.`;
+      return `Technical-only FX context: EMA alignment and RSI (${rsi.toFixed(1)}) support the current ${direction} bias. No live central-bank, DXY, yield-spread, or macro calendar feed is attached to this signal.`;
     }
     if (s.includes('XAU') || s.includes('GOLD')) {
-      return `Spot Gold is responding to real yield curve dynamics and central bank safe-haven reserve accumulation. Current price structure near ${ema20.toFixed(2)} reflects ${direction === 'BUY' ? 'bullish inflation hedge demand' : 'yield-driven dollar headwinds'}.`;
+      return `Technical-only gold context: current price structure near the ${ema20.toFixed(2)} EMA supports a ${direction} bias with RSI at ${rsi.toFixed(1)}. No live real-yield, dollar, futures-positioning, or central-bank flow feed is attached to this signal.`;
     }
-    return `Quantitative multi-factor momentum signals indicate strong ${direction} structure for ${symbol} supported by RSI-14 (${rsi.toFixed(1)}) and volume confirmation.`;
+    return `Technical-only context for ${symbol}: the setup is based on EMA alignment and RSI-14 (${rsi.toFixed(1)}). No external macro, correlation, or order-flow feed is attached to this signal.`;
   }
 
   private calculateWinProb(ema20: number, ema50: number, ema200: number, rsi: number, vwap: number, entryPrice: number, direction: string, candles?: any[]): number {
