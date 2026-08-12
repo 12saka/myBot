@@ -20,6 +20,7 @@ import { AcademyModule } from './modules/academy/academy.module';
 import { StrategiesModule } from './modules/strategies/strategies.module';
 import { AutomationModule } from './modules/automation/automation.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { InstructorModule } from './modules/instructor/instructor.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { AdminModule } from './modules/admin/admin.module';
     StrategiesModule,
     AutomationModule,
     AdminModule,
+    InstructorModule,
   ],
 })
 export class AppModule {}

@@ -4,13 +4,17 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AdminService } from './admin.service';
+import { AcademyAnalyticsService } from './academy-analytics.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly academyAnalyticsService: AcademyAnalyticsService,
+  ) {}
 
   @Post('claim-superadmin')
   @ApiOperation({ summary: 'Grant current logged in user full SUPER_ADMIN master privileges in database' })
@@ -22,6 +26,18 @@ export class AdminController {
   @ApiOperation({ summary: 'Get Superadmin executive overview stats & health' })
   async getOverview() {
     return this.adminService.getDashboardOverview();
+  }
+
+  @Get('academy/analytics')
+  @ApiOperation({ summary: 'Get Superadmin Academy Learning Funnel & Student Health Indicators' })
+  async getSuperadminAcademyAnalytics() {
+    return this.academyAnalyticsService.getSuperadminAcademyOverview();
+  }
+
+  @Get('academy/retention')
+  @ApiOperation({ summary: 'Get Content Quality & Lesson Drop-off Retention Curve Telemetry' })
+  async getContentQualityMetrics() {
+    return this.academyAnalyticsService.getContentQualityMetrics();
   }
 
   @Get('users')

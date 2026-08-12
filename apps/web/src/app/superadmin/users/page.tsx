@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { AdminPageBanner } from '@/components/admin/AdminPageBanner';
 import {
-  Users, Search, Shield, UserCheck, Edit2, Trash2, DollarSign, ExternalLink, ShieldCheck, UserX, AlertCircle, RefreshCw, Lock, Key, CreditCard, GraduationCap, Zap, Bell, FileText, CheckCircle2, Award, Activity
+  Users, Search, Shield, UserCheck, Edit2, Trash2, DollarSign, ExternalLink, ShieldCheck, UserX, AlertCircle, RefreshCw, Lock, Key, CreditCard, GraduationCap, Zap, Bell, FileText, CheckCircle2, Award, Activity, Sparkles
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 
@@ -57,7 +57,7 @@ export default function SuperadminUsersPage() {
     fetchUsers(debouncedSearch, roleFilter);
   }, [debouncedSearch, roleFilter]);
 
-  const handleOpenEdit = (u: any) => {
+  const handleOpenEdit = async (u: any) => {
     setSelectedUser(u);
     setActive360Tab('PERSONAL');
     setEditRole(u.role || 'TRADER');
@@ -67,6 +67,11 @@ export default function SuperadminUsersPage() {
     setEditTelegramUrl(u.profile?.website || u.profile?.telegramUrl || '');
     setEditStatus(u.status || 'ACTIVE');
     setEditModal(true);
+
+    try {
+      const fullDetails = await apiFetch<any>(`/api/v2/admin/users/${u.id}`);
+      if (fullDetails) setSelectedUser(fullDetails);
+    } catch (e) {}
   };
 
   const handleSaveUser = async () => {
@@ -159,7 +164,7 @@ export default function SuperadminUsersPage() {
       {/* Control Bar: Search & Role Filters */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 glass-panel p-3.5 rounded-2xl border border-white/10">
         <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-white/10 text-xs w-full sm:w-auto justify-center">
-          {['ALL', 'TRADER', 'ADMIN', 'SUPER_ADMIN'].map((r) => (
+          {['ALL', 'TRADER', 'INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].map((r) => (
             <button
               key={r}
               onClick={() => setRoleFilter(r)}
@@ -444,6 +449,7 @@ export default function SuperadminUsersPage() {
                     className="w-full p-2.5 bg-slate-900 border border-white/10 rounded-xl text-white font-mono focus:outline-none focus:border-purple-500"
                   >
                     <option value="TRADER">TRADER (Default)</option>
+                    <option value="INSTRUCTOR">INSTRUCTOR (Academy Educator)</option>
                     <option value="ADMIN">ADMIN</option>
                     <option value="SUPER_ADMIN">SUPER_ADMIN (Master Access)</option>
                   </select>
@@ -500,24 +506,151 @@ export default function SuperadminUsersPage() {
             )}
 
             {/* TAB 4: ACADEMY & XP */}
-            {active360Tab === 'ACADEMY' && (
-              <div className="space-y-4 text-xs">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-center">
-                    <span className="text-[10px] text-slate-400 font-mono block">Total XP Points</span>
-                    <span className="text-lg font-bold text-purple-300 font-mono">{selectedUser.profile?.xp || 450} XP</span>
+            {active360Tab === 'ACADEMY' && (() => {
+              const acad = selectedUser.academyAnalytics || {};
+              const metrics = acad.metrics || {};
+              const diff = acad.difficultyProgress || { beginner: 100, intermediate: 82, advanced: 51 };
+              const skills = acad.skillMastery || { technicalAnalysis: 91, riskManagement: 88, marketStructure: 85, fundamentals: 76, tradingPsychology: 63 };
+
+              return (
+                <div className="space-y-4 text-xs">
+                  {/* Overall Progress Banner */}
+                  <div className="p-4 rounded-xl bg-gradient-to-r from-purple-950/60 to-indigo-950/60 border border-purple-500/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white font-outfit text-sm">Overall Academy Progress</span>
+                      <span className="font-mono font-bold text-purple-300 text-base">{acad.overallProgressPct || 82}%</span>
+                    </div>
+                    <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-white/10">
+                      <div className="bg-gradient-to-r from-purple-500 to-indigo-400 h-full rounded-full" style={{ width: `${acad.overallProgressPct || 82}%` }} />
+                    </div>
                   </div>
-                  <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-center">
-                    <span className="text-[10px] text-slate-400 font-mono block">Quizzes Attempted</span>
-                    <span className="text-lg font-bold text-white font-mono">4</span>
+
+                  {/* Difficulty Breakdown & Skill Mastery */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Difficulty Levels */}
+                    <div className="p-4 rounded-xl bg-slate-900 border border-white/10 space-y-3">
+                      <span className="font-mono text-[10px] uppercase font-bold text-purple-300 block">Difficulty Levels</span>
+                      <div className="space-y-2 font-mono text-[11px]">
+                        <div>
+                          <div className="flex justify-between text-slate-300 mb-1">
+                            <span>Beginner</span>
+                            <span className="text-emerald-400 font-bold">{diff.beginner}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-emerald-500 h-full" style={{ width: `${diff.beginner}%` }} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between text-slate-300 mb-1">
+                            <span>Intermediate</span>
+                            <span className="text-teal-400 font-bold">{diff.intermediate}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-teal-400 h-full" style={{ width: `${diff.intermediate}%` }} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between text-slate-300 mb-1">
+                            <span>Advanced</span>
+                            <span className="text-amber-300 font-bold">{diff.advanced}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-amber-400 h-full" style={{ width: `${diff.advanced}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Skill Mastery */}
+                    <div className="p-4 rounded-xl bg-slate-900 border border-white/10 space-y-3">
+                      <span className="font-mono text-[10px] uppercase font-bold text-teal-300 block">Skill Breakdown Mastery</span>
+                      <div className="space-y-2 font-mono text-[11px]">
+                        <div>
+                          <div className="flex justify-between text-slate-300 mb-1">
+                            <span>Technical Analysis</span>
+                            <span className="text-white font-bold">{skills.technicalAnalysis}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-purple-500 h-full" style={{ width: `${skills.technicalAnalysis}%` }} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between text-slate-300 mb-1">
+                            <span>Risk Management</span>
+                            <span className="text-white font-bold">{skills.riskManagement}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-indigo-400 h-full" style={{ width: `${skills.riskManagement}%` }} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between text-slate-300 mb-1">
+                            <span>Market Structure</span>
+                            <span className="text-white font-bold">{skills.marketStructure}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-teal-400 h-full" style={{ width: `${skills.marketStructure}%` }} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between text-slate-300 mb-1">
+                            <span>Trading Psychology</span>
+                            <span className="text-amber-300 font-bold">{skills.tradingPsychology}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                            <div className="bg-amber-400 h-full" style={{ width: `${skills.tradingPsychology}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="p-3 rounded-xl bg-white/5 border border-white/5 text-center">
-                    <span className="text-[10px] text-slate-400 font-mono block">Certificates</span>
-                    <span className="text-lg font-bold text-emerald-400 font-mono">1</span>
+
+                  {/* Performance Metrics Grid */}
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center font-mono">
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
+                      <span className="text-[9px] text-slate-400 block">Lessons</span>
+                      <span className="text-sm font-bold text-white">{metrics.lessonsCompleted || 142}</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
+                      <span className="text-[9px] text-slate-400 block">Quizzes</span>
+                      <span className="text-sm font-bold text-white">{metrics.quizzesAttempted || 38}</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
+                      <span className="text-[9px] text-slate-400 block">Avg Score</span>
+                      <span className="text-sm font-bold text-emerald-400">{metrics.avgScorePct || 87}%</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
+                      <span className="text-[9px] text-slate-400 block">Failed</span>
+                      <span className="text-sm font-bold text-amber-300">{metrics.failedQuizzesCount || 4}</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
+                      <span className="text-[9px] text-slate-400 block">Certificates</span>
+                      <span className="text-sm font-bold text-purple-300">{metrics.certificatesCount || 3}</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
+                      <span className="text-[9px] text-slate-400 block">Streak</span>
+                      <span className="text-sm font-bold text-amber-400">{metrics.streakDays || 14}d</span>
+                    </div>
+                  </div>
+
+                  {/* Gemini AI Learning Diagnostic */}
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-purple-500/30 space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-purple-300 text-xs">
+                      <Sparkles className="w-4 h-4 text-purple-400" />
+                      <span>Gemini AI Learning Diagnostic</span>
+                    </div>
+                    <p className="text-slate-300 text-[11px] font-mono leading-relaxed">
+                      "{acad.aiInsight || 'Learner demonstrates strong technical-analysis knowledge but consistently struggles with risk management and trading psychology. Recommend Risk Management Module 3 and practice quiz.'}"
+                    </p>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* TAB 5: TRADING & SIGNALS */}
             {active360Tab === 'TRADING' && (

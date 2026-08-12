@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
-import { PrismaModule } from '../prisma/prisma.module';
-import { NotificationsModule } from '../notifications/notifications.module';
 import { SubscriptionController } from './subscription.controller';
 import { SubscriptionService } from './subscription.service';
+import { PayHeroService } from './payhero.service';
+import { EntitlementService } from './entitlement.service';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [PrismaModule, NotificationsModule],
+  imports: [PrismaModule],
   controllers: [SubscriptionController],
-  providers: [SubscriptionService],
-  exports: [SubscriptionService],
+  providers: [SubscriptionService, PayHeroService, EntitlementService],
+  exports: [SubscriptionService, PayHeroService, EntitlementService],
 })
 export class SubscriptionModule {}

@@ -79,6 +79,14 @@ export default function CourseDetailPage() {
   const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({});
   const [submittingQuiz, setSubmittingQuiz] = useState(false);
 
+  // Student Homework & Webinars State
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [mySubmissions, setMySubmissions] = useState<Record<string, any>>({});
+  const [webinars, setWebinars] = useState<any[]>([]);
+  const [homeworkText, setHomeworkText] = useState('');
+  const [homeworkLink, setHomeworkLink] = useState('');
+  const [submittingAssignmentId, setSubmittingAssignmentId] = useState<string | null>(null);
+
   const fetchCourse = async () => {
     setLoading(true);
     try {
@@ -87,10 +95,45 @@ export default function CourseDetailPage() {
       if (data.lessons && data.lessons.length > 0) {
         setSelectedLesson(data.lessons[0]);
       }
+
+      // Fetch Course Assignments & Webinars
+      try {
+        const [assData, webData] = await Promise.all([
+          apiFetch<any[]>('/api/v2/instructor/assignments'),
+          apiFetch<any[]>('/api/v2/instructor/webinars'),
+        ]);
+        const courseAss = (assData || []).filter((a) => a.courseId === courseId);
+        setAssignments(courseAss);
+        setWebinars(webData || []);
+      } catch (e) {}
     } catch (err: any) {
       toast.error('Failed to load course curriculum.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSubmitHomework = async (assignmentId: string) => {
+    if (!homeworkText.trim() && !homeworkLink.trim()) {
+      toast.error('Please provide notes or a deliverable link.');
+      return;
+    }
+    setSubmittingAssignmentId(assignmentId);
+    try {
+      await apiFetch(`/api/v2/academy/assignments/${assignmentId}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({
+          submissionText: homeworkText.trim(),
+          linkUrl: homeworkLink.trim() || undefined,
+        }),
+      });
+      toast.success('Homework submitted to instructor for grading!');
+      setHomeworkText('');
+      setHomeworkLink('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to submit homework');
+    } finally {
+      setSubmittingAssignmentId(null);
     }
   };
 

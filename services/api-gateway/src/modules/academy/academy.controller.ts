@@ -41,4 +41,14 @@ export class AcademyController {
   async registerLiveSession(@Request() req: any, @Param('id') sessionId: string) {
     return this.academyService.registerLiveSession(req.user.userId || req.user.id, sessionId);
   }
+
+  @Post('assignments/:id/submit')
+  async submitAssignment(@Request() req: any, @Param('id') assignmentId: string, @Body() body: any) {
+    return this.academyService.submitAssignment(req.user.userId || req.user.id, assignmentId, body);
+  }
+
+  @Get('assignments/:id/submission')
+  async getAssignmentSubmission(@Request() req: any, @Param('id') assignmentId: string) {
+    return this.academyService.getAssignmentSubmission(req.user.userId || req.user.id, assignmentId);
+  }
 }

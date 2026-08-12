@@ -456,4 +456,48 @@ export class AcademyService implements OnModuleInit {
       };
     }
   }
+
+  // Student Assignment Submission
+  async submitAssignment(userId: string, assignmentId: string, body: any) {
+    const assignment = await this.prisma.assignment.findUnique({ where: { id: assignmentId } });
+    if (!assignment) throw new NotFoundException('Assignment not found');
+
+    const existing = await this.prisma.assignmentSubmission.findFirst({
+      where: { assignmentId, userId },
+    });
+
+    if (existing) {
+      return this.prisma.assignmentSubmission.update({
+        where: { id: existing.id },
+        data: {
+          submissionText: body.submissionText?.trim() || existing.submissionText,
+          linkUrl: body.linkUrl?.trim() || existing.linkUrl,
+          fileUrl: body.fileUrl?.trim() || existing.fileUrl,
+          status: 'SUBMITTED',
+          submittedAt: new Date(),
+        },
+      });
+    }
+
+    return this.prisma.assignmentSubmission.create({
+      data: {
+        assignmentId,
+        userId,
+        submissionText: body.submissionText?.trim() || null,
+        linkUrl: body.linkUrl?.trim() || null,
+        fileUrl: body.fileUrl?.trim() || null,
+        status: 'SUBMITTED',
+        submittedAt: new Date(),
+      },
+    });
+  }
+
+  async getAssignmentSubmission(userId: string, assignmentId: string) {
+    return this.prisma.assignmentSubmission.findFirst({
+      where: { assignmentId, userId },
+      include: {
+        gradedBy: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } },
+      },
+    });
+  }
 }

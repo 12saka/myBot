@@ -42,6 +42,19 @@ model User {
   signals            Signal[]
   brokerProfile      UserBrokerProfile?
   liveSessionRegistrations LiveSessionRegistration[]
+  instructorCourses    Course[]               @relation("InstructorCourses")
+  createdAssignments   Assignment[]
+  studentSubmissions   AssignmentSubmission[] @relation("StudentSubmissions")
+  gradedSubmissions    AssignmentSubmission[] @relation("GradedSubmissions")
+  hostedLiveSessions   LiveSession[]
+  dailyActivities      DailyActivity[]
+  qotdCreated          QuestionOfTheDay[]
+  qotdResponses        QotdResponse[]
+  discussions          AcademyDiscussion[]
+  discussionResponses  DiscussionResponse[]
+  gamification         UserGamification?
+  payments             Payment[]
+  usageLimits          UsageLimit[]
 
   @@index([createdAt])
 }
@@ -263,35 +276,61 @@ model Report {
 }
 
 model Course {
-  id           String        @id @default(uuid())
-  title        String
-  description  String
-  difficulty   String
-  category     String?       @default("CRYPTO")
-  imageUrl     String?
-  isPublished  Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  certificates Certificate[]
-  lessons      Lesson[]
-  quizzes      Quiz[]
+  id             String         @id @default(uuid())
+  instructorId   String?
+  title          String
+  description    String
+  difficulty     String
+  category       String?        @default("CRYPTO")
+  imageUrl       String?
+  workflowStatus String         @default("PUBLISHED") // DRAFT, PENDING_REVIEW, APPROVED, REJECTED, PUBLISHED
+  isPublished    Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  instructor     User?          @relation("InstructorCourses", fields: [instructorId], references: [id], onDelete: SetNull)
+  certificates   Certificate[]
+  modules        CourseModule[]
+  lessons        Lesson[]
+  quizzes        Quiz[]
+  assignments    Assignment[]
+}
+
+model CourseModule {
+  id          String   @id @default(uuid())
+  courseId    String
+  title       String
+  description String?
+  orderIndex  Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons     Lesson[]
+  quizzes     Quiz[]
 }
 
 model Lesson {
-  id           String        @id @default(uuid())
-  courseId     String
-  title        String
-  content      String
-  orderIndex   Int
-  course       Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  quizzes      Quiz[]
-  quizAttempts QuizAttempt[]
+  id                 String        @id @default(uuid())
+  courseId           String
+  moduleId           String?
+  title              String
+  content            String
+  orderIndex         Int
+  learningObjectives Json?
+  practicalExercise  Json?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  course             Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module             CourseModule? @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  quizzes            Quiz[]
+  quizAttempts       QuizAttempt[]
+  assignments        Assignment[]
 }
 
 model Quiz {
   id               String            @id @default(uuid())
   lessonId         String?
   courseId         String?
+  moduleId         String?
   title            String
   description      String?
   difficulty       String            @default("INTERMEDIATE")
@@ -303,8 +342,134 @@ model Quiz {
   updatedAt        DateTime          @updatedAt
   lesson           Lesson?           @relation(fields: [lessonId], references: [id], onDelete: Cascade)
   course           Course?           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module           CourseModule?     @relation(fields: [moduleId], references: [id], onDelete: SetNull)
   quizQuestions    QuizQuestion[]
   attempts         QuizAttempt[]
+}
+
+model DailyActivity {
+  id           String   @id @default(uuid())
+  instructorId String
+  type         String   @default("TIP")
+  title        String
+  content      String
+  chartUrl     String?
+  publishedAt  DateTime @default(now())
+  instructor   User     @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+}
+
+model QuestionOfTheDay {
+  id                 String         @id @default(uuid())
+  instructorId       String
+  date               String         @unique
+  title              String
+  questionText       String
+  chartUrl           String?
+  options            Json
+  correctOptionIndex Int            @default(0)
+  explanation        String
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  instructor         User           @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  responses          QotdResponse[]
+}
+
+model QotdResponse {
+  id                  String           @id @default(uuid())
+  qotdId              String
+  userId              String
+  selectedOptionIndex Int
+  isCorrect           Boolean
+  createdAt           DateTime         @default(now())
+  qotd                QuestionOfTheDay @relation(fields: [qotdId], references: [id], onDelete: Cascade)
+  user                User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([qotdId, userId])
+}
+
+model AcademyDiscussion {
+  id               String               @id @default(uuid())
+  userId           String
+  courseId         String?
+  lessonId         String?
+  title            String
+  content          String
+  isSolved         Boolean              @default(false)
+  pinnedResponseId String?
+  upvotes          Int                  @default(0)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  responses        DiscussionResponse[]
+
+  @@index([userId, courseId])
+}
+
+model DiscussionResponse {
+  id                String            @id @default(uuid())
+  discussionId      String
+  userId            String
+  content           String
+  isInstructorReply Boolean           @default(false)
+  isPinned          Boolean           @default(false)
+  upvotes           Int               @default(0)
+  createdAt         DateTime          @default(now())
+  discussion        AcademyDiscussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserGamification {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  xpPoints          Int      @default(0)
+  currentStreakDays Int      @default(0)
+  highestStreakDays Int      @default(0)
+  badges            Json?
+  lastActiveDate    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Assignment {
+  id            String                 @id @default(uuid())
+  courseId      String
+  lessonId      String?
+  instructorId  String
+  title         String
+  description   String?
+  instructions  String
+  attachmentUrl String?
+  dueDate       DateTime?
+  maxScore      Float                  @default(100.0)
+  xpReward      Int                    @default(150)
+  isPublished   Boolean                @default(true)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  course        Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson        Lesson?                @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  instructor    User                   @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  submissions   AssignmentSubmission[]
+}
+
+model AssignmentSubmission {
+  id             String     @id @default(uuid())
+  assignmentId   String
+  userId         String
+  submissionText String?
+  fileUrl        String?
+  linkUrl        String?
+  status         String     @default("SUBMITTED")
+  score          Float?
+  feedback       String?
+  gradedById     String?
+  submittedAt    DateTime   @default(now())
+  gradedAt       DateTime?
+  assignment     Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user           User       @relation("StudentSubmissions", fields: [userId], references: [id], onDelete: Cascade)
+  gradedBy       User?      @relation("GradedSubmissions", fields: [gradedById], references: [id], onDelete: SetNull)
+
+  @@index([assignmentId, userId])
 }
 
 model QuestionBank {
@@ -378,15 +543,25 @@ model Certificate {
 
 model LiveSession {
   id              String                     @id @default(uuid())
+  instructorId    String?
   title           String
+  description     String?
   instructor      String
   startTime       DateTime
   durationMinutes Int
-  category        String
+  category        String                     @default("WEBINAR")
   meetingUrl      String?
+  zoomMeetingId   String?
+  passcode        String?
+  joinUrl         String?
+  startUrl        String?
+  recordingUrl    String?
+  status          String                     @default("SCHEDULED")
+  maxCapacity     Int                        @default(500)
   isActive        Boolean                    @default(true)
   createdAt       DateTime                   @default(now())
   updatedAt       DateTime                   @updatedAt
+  instructorUser  User?                      @relation(fields: [instructorId], references: [id], onDelete: SetNull)
   registrations   LiveSessionRegistration[]
 }
 
@@ -576,22 +751,95 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model Plan {
+  id                 String         @id @default(uuid())
+  name               String
+  code               String         @unique
+  description        String?
+  priceKes           Float          @default(0.0)
+  priceUsd           Float          @default(0.0)
+  billingInterval    String         @default("MONTHLY")
+  trialDays          Int            @default(14)
+  signalLimitWeekly  Int            @default(10)
+  aiAnalysisLevel    String         @default("BASIC")
+  academyAccessLevel String         @default("FULL")
+  marketAssets       String         @default("ALL")
+  advancedIndicators Boolean        @default(false)
+  active             Boolean        @default(true)
+  version            Int            @default(1)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  subscriptions      Subscription[]
+  payments           Payment[]
+}
+
 model Subscription {
-  id        String             @id @default(uuid())
-  userId    String             @unique
-  plan      PlanType
-  status    SubscriptionStatus
-  startDate DateTime           @default(now())
-  endDate   DateTime?
-  autoRenew Boolean            @default(true)
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @updatedAt
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                 String             @id @default(uuid())
+  userId             String             @unique
+  planId             String?
+  planType           PlanType           @default(FREE_TRIAL)
+  status             SubscriptionStatus @default(TRIALING)
+  startDate          DateTime           @default(now())
+  endDate            DateTime?
+  trialStart         DateTime           @default(now())
+  trialEnd           DateTime?
+  currentPeriodStart DateTime           @default(now())
+  currentPeriodEnd   DateTime?
+  nextBillingDate    DateTime?
+  autoRenew          Boolean            @default(true)
+  cancelAtPeriodEnd  Boolean            @default(false)
+  paymentMethod      String             @default("MPESA")
+  payheroCustomerRef String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan               Plan?              @relation(fields: [planId], references: [id], onDelete: SetNull)
+  payments           Payment[]
+}
+
+model Payment {
+  id                    String          @id @default(uuid())
+  userId                String
+  subscriptionId        String?
+  planId                String?
+  amount                Float
+  currency              String          @default("KES")
+  provider              PaymentProvider @default(PAYHERO)
+  providerTransactionId String?
+  externalReference     String?         @unique
+  status                PaymentStatus   @default(PENDING)
+  paymentType           String          @default("SUBSCRIPTION")
+  phoneNumber           String?
+  failureReason         String?
+  idempotencyKey        String?         @unique
+  paidAt                DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription          Subscription?   @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  plan                  Plan?           @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+}
+
+model UsageLimit {
+  id              String   @id @default(uuid())
+  userId          String
+  weekStartDate   String
+  signalCount     Int      @default(0)
+  aiAnalysisCount Int      @default(0)
+  alertCount      Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStartDate])
 }
 
 enum Role {
   SUPER_ADMIN
   ADMIN
+  INSTRUCTOR
   COMPLIANCE_OFFICER
   SUPPORT_AGENT
   TRADER
@@ -652,16 +900,39 @@ enum KycStatus {
 }
 
 enum PlanType {
-  STARTER
+  FREE_TRIAL
+  BASIC
+  ADVANCED
   PRO
+  STARTER
   PREMIUM
 }
 
 enum SubscriptionStatus {
+  TRIALING
   TRIAL
   ACTIVE
-  EXPIRED
+  RENEWAL_PENDING
+  PAST_DUE
+  PAYMENT_FAILED
   CANCELLED
+  EXPIRED
+}
+
+enum PaymentProvider {
+  PAYHERO
+  MPESA
+  STRIPE
+  MANUAL
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  CANCELLED
+  REFUNDED
 }
 
 model UserBrokerProfile {

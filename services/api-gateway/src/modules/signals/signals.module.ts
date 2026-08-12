@@ -4,12 +4,17 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { generateHmacSignature } from '../../utils/hmac-signer';
 import { Interval } from '@nestjs/schedule';
+import { EntitlementService } from '../subscription/entitlement.service';
+import { SubscriptionModule } from '../subscription/subscription.module';
 import axios from 'axios';
 
 @ApiTags('signals')
 @Controller('signals')
 export class SignalsController implements OnModuleInit {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly entitlementService: EntitlementService,
+  ) {}
 
   async onModuleInit() {
     console.log('[SignalsController] Ensuring database schema columns are migrated on remote database...');
@@ -114,11 +119,16 @@ export class SignalsController implements OnModuleInit {
   }
 
   @Post('generate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Request generation of a fresh AI trading signal for a specific market' })
-  async generateSignal(@Body() dto: { symbol: string; interval?: string }) {
+  async generateSignal(@Req() req: any, @Body() dto: { symbol: string; interval?: string }) {
+    const userId = req.user?.userId;
+    if (userId) {
+      await this.entitlementService.checkAndConsumeSignal(userId);
+    }
     const symbol = this.normalizeSymbol(dto.symbol);
-    // User triggered manually ➔ force fresh signal generation
-    return this.generateSignalRequest(symbol, dto.interval || '1h', true);
+    return this.generateSignalRequest(symbol, dto.interval || '1h', true, userId);
   }
 
   private normalizeSymbol(symbol: string): string {
@@ -2595,5 +2605,8 @@ export class SignalsController implements OnModuleInit {
   }
 }
 
-@Module({ controllers: [SignalsController] })
+@Module({
+  imports: [SubscriptionModule],
+  controllers: [SignalsController],
+})
 export class SignalsModule {}

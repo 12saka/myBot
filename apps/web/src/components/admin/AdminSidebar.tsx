@@ -15,6 +15,7 @@ import {
   LogOut,
   X,
   TrendingUp,
+  CreditCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -22,6 +23,7 @@ const ADMIN_NAV_ITEMS = [
   { name: 'Overview', href: '/superadmin/dashboard', icon: LayoutDashboard },
   { name: 'User Management', href: '/superadmin/users', icon: Users },
   { name: 'KYC & Verification', href: '/superadmin/kyc', icon: ShieldCheck },
+  { name: 'Financials & Billing', href: '/superadmin/subscriptions', icon: CreditCard },
   { name: 'Academy LMS', href: '/superadmin/academy', icon: GraduationCap },
   { name: 'Signal Audit & Override', href: '/superadmin/signals', icon: Zap },
   { name: 'Audit Logs', href: '/superadmin/audit-logs', icon: FileText },
