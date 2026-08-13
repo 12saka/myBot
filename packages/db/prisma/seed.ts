@@ -105,7 +105,29 @@ async function main() {
     },
   });
 
-  console.log(`Created users: Admin (${admin.email}), Trader (${trader.email})`);
+  const superadmin = await prisma.user.create({
+    data: {
+      email: 'sakatimoz7@gmail.com',
+      passwordHash: DEFAULT_PASSWORD_HASH,
+      role: 'SUPER_ADMIN',
+      profile: {
+        create: {
+          firstName: 'Timo',
+          lastName: 'Saka',
+          country: 'Kenya',
+          avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=timo',
+        },
+      },
+      wallet: {
+        create: {
+          balance: 500000.0,
+          currency: 'USD',
+        },
+      },
+    },
+  });
+
+  console.log(`Created users: Admin (${admin.email}), Trader (${trader.email}), SuperAdmin (${superadmin.email})`);
 
   // 3. Create Trading Strategies
   console.log('Creating trading strategies...');
