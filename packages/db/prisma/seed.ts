@@ -161,7 +161,7 @@ async function main() {
 
   // 5. Create Educational Courses
   console.log('Creating courses...');
-  const course1 = await prisma.course.create({
+  await prisma.course.create({
     data: {
       title: 'Introduction to Algorithmic Trading',
       description: 'Learn the core concepts of automated market trading, system structures, and indicators.',
@@ -172,46 +172,18 @@ async function main() {
             title: 'Understanding Market Microstructure',
             content: 'Market microstructure deals with how exchange execution happens. We look at bids, asks, spreads, order books, and liquidity pools.',
             orderIndex: 1,
-            quizzes: {
-              create: [
-                {
-                  question: 'What is the bid-ask spread?',
-                  options: [
-                    'The fee charged by an exchange',
-                    'The difference between the highest bid price and the lowest ask price',
-                    'The total trading volume in 24 hours',
-                    'The speed of order execution'
-                  ],
-                  correctOption: 1,
-                },
-              ],
-            },
           },
           {
             title: 'Moving Averages and Trend Following',
             content: 'Trend following is the concept of going with the market direction. Moving averages smooth out price fluctuations to show the general path.',
             orderIndex: 2,
-            quizzes: {
-              create: [
-                {
-                  question: 'What does EMA stand for?',
-                  options: [
-                    'Exponential Moving Average',
-                    'Equal Market Allocation',
-                    'Estimated Margin Amount',
-                    'Exchange Market Arbitrage'
-                  ],
-                  correctOption: 0,
-                },
-              ],
-            },
           },
         ],
       },
     },
   });
 
-  const course2 = await prisma.course.create({
+  await prisma.course.create({
     data: {
       title: 'Risk Management in Automated Systems',
       description: 'Master advanced risk control protocols, position sizing, and leverage constraints.',
@@ -222,27 +194,13 @@ async function main() {
             title: 'Position Sizing and Leverage',
             content: 'Position sizing determines how much of your account capital is allocated to a single trade. Leverage amplifies your exposure but increases liquidation risks.',
             orderIndex: 1,
-            quizzes: {
-              create: [
-                {
-                  question: 'What happens when your leverage is too high?',
-                  options: [
-                    'Your trading fees are eliminated',
-                    'Your potential profit increases and your risk of liquidation increases',
-                    'The exchange guarantees your trade is filled',
-                    'Your win rate increases automatically'
-                  ],
-                  correctOption: 1,
-                },
-              ],
-            },
           },
         ],
       },
     },
   });
 
-  console.log('Courses, lessons, and quizzes seeded.');
+  console.log('Courses and lessons seeded.');
   console.log('🌿 Seeding completed successfully!');
 }
 
