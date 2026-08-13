@@ -66,14 +66,25 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <span className="font-display font-bold text-white text-lg">{signal.symbol}</span>
             <Badge variant={isBuy ? 'buy' : 'sell'}>{signal.direction}</Badge>
             <Badge variant="neutral" size="xs">{signal.type}</Badge>
+            {(() => {
+              const rawGrade = signal.signalGrade || signal.aiReasoning?.signal_grade || signal.aiReasoning?.signalGrade || (signal.confidence >= 88 ? 'A+ Setup' : signal.confidence >= 80 ? 'A Setup' : signal.confidence >= 70 ? 'B+ Setup' : signal.confidence >= 60 ? 'B Setup' : 'C Setup');
+              const letter = rawGrade.includes('A+') ? 'A+' : rawGrade.includes('A') ? 'A' : rawGrade.includes('B+') ? 'B+' : rawGrade.includes('B') ? 'B' : 'C';
+              const isA = letter.startsWith('A');
+              const isB = letter.startsWith('B');
+              return (
+                <span className={cn(
+                  "px-2 py-0.5 rounded text-[11px] font-black font-mono flex items-center gap-1 border shadow-sm",
+                  isA ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10" :
+                  isB ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-cyan-500/10" :
+                  "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                )}>
+                  {isA ? '🏆 GRADE' : isB ? '📊 GRADE' : '⚠️ GRADE'} {letter} ({rawGrade.replace(/^(A\+|A|B\+|B|C)\s*/, '') || 'Institutional'})
+                </span>
+              );
+            })()}
             <Badge variant={!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? 'buy' : 'blue'} size="xs">
               {!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
             </Badge>
-            {signal.signalGrade && (
-              <Badge variant={signal.signalGrade.startsWith('A') ? 'buy' : signal.signalGrade.startsWith('B') ? 'blue' : 'sell'} size="xs">
-                {signal.signalGrade.startsWith('A') ? '🏆' : signal.signalGrade.startsWith('B') ? '📊' : '⚠️'} {signal.signalGrade}
-              </Badge>
-            )}
           </div>
           <div className="flex items-center gap-3">
             <span className="text-[10px] text-slate-500">{signal.strategy}</span>

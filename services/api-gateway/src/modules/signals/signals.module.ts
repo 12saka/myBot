@@ -1286,16 +1286,16 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Direction & High-Conviction Threshold (72/100)
+    // Direction & High-Conviction Threshold (58/100)
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(50, rawScore));
-    const direction = confidenceScore >= 72 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(55, rawScore));
+    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
 
     if (direction === 'WAIT') {
       return {
         direction: 'WAIT',
-        invalidationReason: `Crypto confluence score (${confidenceScore}/100) below minimum 65 threshold in ${marketRegime} regime. Systematic engine protecting capital.`,
+        invalidationReason: `Crypto confluence score (${confidenceScore}/100) below minimum 58 threshold in ${marketRegime} regime. Systematic engine protecting capital.`,
         evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
       };
     }
@@ -1310,8 +1310,10 @@ export class SignalsController implements OnModuleInit {
     const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 75 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
+      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
+      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
+      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
+      : 'C Setup (Speculative)';
 
     const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
     const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
@@ -1518,29 +1520,32 @@ export class SignalsController implements OnModuleInit {
 
     // Determine Direction & Final Confluence Score
     const isBull = bullishScore >= bearishScore;
-    const confidenceScore = isBull ? Math.min(95, Math.max(50, bullishScore)) : Math.min(95, Math.max(50, bearishScore));
-    const direction = confidenceScore >= 65 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const rawScore = isBull ? bullishScore : bearishScore;
+    const confidenceScore = Math.min(95, Math.max(55, rawScore));
+    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
 
     if (direction === 'WAIT') {
       return {
         direction: 'WAIT',
-        invalidationReason: `US100 confluence score (${confidenceScore}/100) below minimum 65 threshold in ${marketRegime} regime. Professional system rejected trade.`,
+        invalidationReason: `Nasdaq 100 confluence score (${confidenceScore}/100) below minimum 58 threshold. Institutional model rejecting low-confluence setups.`,
         evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
       };
     }
 
     // Calculate Targets & Risk/Reward
-    const slDist = atr * 1.25;
+    const slDist = atr * 1.45;
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 1.9) : entryPrice - (atr * 1.9);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.4) : entryPrice - (atr * 3.4);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.5) : entryPrice - (atr * 5.5);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.2) : entryPrice - (atr * 2.2);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.8) : entryPrice - (atr * 3.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.8) : entryPrice - (atr * 5.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 75 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
+      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
+      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
+      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
+      : 'C Setup (Speculative)';
 
     const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
     const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
@@ -1733,32 +1738,34 @@ export class SignalsController implements OnModuleInit {
     if (bullishScore > bearishScore) bullishScore += sessionScore;
     else if (bearishScore > bullishScore) bearishScore += sessionScore;
 
-    // Determine Direction & High-Conviction Threshold (72/100)
+    // Determine Direction & High-Conviction Threshold (58/100)
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(50, rawScore));
-    const direction = confidenceScore >= 72 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(55, rawScore));
+    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
 
     if (direction === 'WAIT') {
       return {
         direction: 'WAIT',
-        invalidationReason: `US30 confluence score (${confidenceScore}/100) below minimum 65 threshold in ${marketRegime} regime. Professional system rejected trade.`,
+        invalidationReason: `Dow Jones confluence score (${confidenceScore}/100) below minimum 58 threshold. Industrial engine filtering low-volume noise.`,
         evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
       };
     }
 
     // Calculate Targets & Risk/Reward
-    const slDist = atr * 1.25;
+    const slDist = atr * 1.40;
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 1.8) : entryPrice - (atr * 1.8);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.2) : entryPrice - (atr * 3.2);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.0) : entryPrice - (atr * 5.0);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.0) : entryPrice - (atr * 2.0);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.6) : entryPrice - (atr * 3.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.5) : entryPrice - (atr * 5.5);
 
     const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 75 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
+      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
+      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
+      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
+      : 'C Setup (Speculative)';
 
     const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
     const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
@@ -1946,32 +1953,34 @@ export class SignalsController implements OnModuleInit {
     if (bullishScore > bearishScore) bullishScore += sessionScore;
     else if (bearishScore > bullishScore) bearishScore += sessionScore;
 
-    // Determine Direction & High-Conviction Threshold (72/100)
+    // Determine Direction & High-Conviction Threshold (58/100)
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(50, rawScore));
-    const direction = confidenceScore >= 72 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(55, rawScore));
+    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
 
     if (direction === 'WAIT') {
       return {
         direction: 'WAIT',
-        invalidationReason: `${symbol} macro confluence score (${confidenceScore}/100) below minimum 65 threshold. Professional system rejected setup.`,
+        invalidationReason: `Forex confluence score (${confidenceScore}/100) below minimum 58 threshold. Institutional DXY engine filtering noise.`,
         evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
       };
     }
 
     // Calculate Targets & Risk/Reward
-    const slDist = atr * 1.2;
+    const slDist = atr * 1.30;
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 1.8) : entryPrice - (atr * 1.8);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.1) : entryPrice - (atr * 3.1);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 4.8) : entryPrice - (atr * 4.8);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.0) : entryPrice - (atr * 2.0);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.5) : entryPrice - (atr * 3.5);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.0) : entryPrice - (atr * 5.0);
 
     const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 75 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
+      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
+      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
+      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
+      : 'C Setup (Speculative)';
 
     const entryZoneLower = (entryPrice - (atr * 0.12)).toFixed(precision);
     const entryZoneUpper = (entryPrice + (atr * 0.12)).toFixed(precision);
@@ -2384,16 +2393,16 @@ export class SignalsController implements OnModuleInit {
     if (bullishScore > bearishScore) bullishScore += sessionScore;
     else if (bearishScore > bullishScore) bearishScore += sessionScore;
 
-    // Determine Direction & High-Conviction Threshold (72/100)
+    // Determine Direction & High-Conviction Threshold (58/100)
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(50, rawScore));
-    const direction = confidenceScore >= 72 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(55, rawScore));
+    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
 
     if (direction === 'WAIT') {
       return {
         direction: 'WAIT',
-        invalidationReason: `XAUUSD confluence score (${confidenceScore}/100) below minimum 65 threshold. Professional system rejected low-confluence setup.`,
+        invalidationReason: `XAUUSD confluence score (${confidenceScore}/100) below minimum 58 threshold. Professional system rejected low-confluence setup.`,
         evidence: { bullishScore, bearishScore, rsi, atr, vwap }
       };
     }
@@ -2408,8 +2417,10 @@ export class SignalsController implements OnModuleInit {
     const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 75 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
+      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
+      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
+      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
+      : 'C Setup (Speculative)';
 
     const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
     const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
