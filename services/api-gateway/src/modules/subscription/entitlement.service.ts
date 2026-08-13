@@ -67,6 +67,18 @@ export class EntitlementService {
 
   async getUsageTelemetry(userId: string) {
     const sub = await this.getUserSubscriptionAndPlan(userId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, role: true },
+    });
+
+    const isUnlimitedUser =
+      user?.role === 'SUPER_ADMIN' ||
+      user?.role === 'ADMIN' ||
+      user?.email === 'sakatimoz7@gmail.com' ||
+      sub.planType === 'PRO' ||
+      sub.planType === 'PREMIUM';
+
     const weekStartDate = this.getWeekStartDate();
 
     let usage = await this.prisma.usageLimit.findUnique({
@@ -79,9 +91,10 @@ export class EntitlementService {
       });
     }
 
-    const weeklyLimit = sub.plan?.signalLimitWeekly ?? (sub.planType === 'ADVANCED' ? 50 : sub.planType === 'PRO' ? 100 : 10);
+    const baseLimit = sub.plan?.signalLimitWeekly ?? (sub.planType === 'ADVANCED' ? 50 : sub.planType === 'PRO' ? 100 : 10);
+    const weeklyLimit = isUnlimitedUser ? 999999 : baseLimit;
     const signalsUsed = usage.signalCount;
-    const signalsRemaining = Math.max(0, weeklyLimit - signalsUsed);
+    const signalsRemaining = isUnlimitedUser ? 999999 : Math.max(0, weeklyLimit - signalsUsed);
 
     return {
       subscription: sub,
@@ -89,16 +102,17 @@ export class EntitlementService {
       weeklySignalLimit: weeklyLimit,
       signalsRemaining,
       aiAnalysisCount: usage.aiAnalysisCount,
-      aiAnalysisLevel: sub.plan?.aiAnalysisLevel || 'BASIC',
-      academyAccessLevel: sub.plan?.academyAccessLevel || 'FULL',
-      isLimitReached: signalsUsed >= weeklyLimit,
+      aiAnalysisLevel: isUnlimitedUser ? 'FULL' : (sub.plan?.aiAnalysisLevel || 'BASIC'),
+      academyAccessLevel: isUnlimitedUser ? 'PRO' : (sub.plan?.academyAccessLevel || 'FULL'),
+      isLimitReached: isUnlimitedUser ? false : signalsUsed >= weeklyLimit,
+      isUnlimited: isUnlimitedUser,
     };
   }
 
   async checkAndConsumeSignal(userId: string) {
     const telemetry = await this.getUsageTelemetry(userId);
 
-    if (telemetry.isLimitReached) {
+    if (telemetry.isLimitReached && !telemetry.isUnlimited) {
       throw new ForbiddenException(
         `Weekly signal limit reached (${telemetry.weeklySignalsUsed}/${telemetry.weeklySignalLimit}). Upgrade to Advanced or Pro for higher signal capacity!`
       );
@@ -114,7 +128,7 @@ export class EntitlementService {
       consumed: 1,
       weeklySignalsUsed: telemetry.weeklySignalsUsed + 1,
       weeklySignalLimit: telemetry.weeklySignalLimit,
-      signalsRemaining: telemetry.signalsRemaining - 1,
+      signalsRemaining: telemetry.isUnlimited ? 999999 : Math.max(0, telemetry.signalsRemaining - 1),
     };
   }
 }

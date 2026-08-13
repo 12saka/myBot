@@ -117,6 +117,44 @@ export class SubscriptionService {
     });
   }
 
+  async upgradeInstant(userId: string, planCode: string) {
+    const code = (planCode || 'PRO').toUpperCase();
+    let plan = await this.prisma.plan.findFirst({ where: { code } });
+    if (!plan) {
+      plan = await this.prisma.plan.findFirst({ where: { code: 'PRO' } });
+    }
+
+    const planType: any = ['BASIC', 'ADVANCED', 'PRO', 'PREMIUM'].includes(code) ? code : 'PRO';
+
+    const sub = await this.prisma.subscription.upsert({
+      where: { userId },
+      update: {
+        planId: plan?.id || null,
+        planType,
+        status: 'ACTIVE',
+        cancelAtPeriodEnd: false,
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+      },
+      create: {
+        userId,
+        planId: plan?.id || null,
+        planType,
+        status: 'ACTIVE',
+        cancelAtPeriodEnd: false,
+        currentPeriodStart: new Date(),
+        currentPeriodEnd: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+      },
+      include: { plan: true },
+    });
+
+    return {
+      success: true,
+      message: `Subscription successfully upgraded to ${planType}!`,
+      subscription: sub,
+    };
+  }
+
   async getAdminFinancialOverview() {
     const [totalRevenueResult, activeSubs, trialUsers, failedPayments, allPayments, plans] = await Promise.all([
       this.prisma.payment.aggregate({

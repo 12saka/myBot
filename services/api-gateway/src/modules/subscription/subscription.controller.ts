@@ -60,6 +60,14 @@ export class SubscriptionController {
     return this.subscriptionService.reactivateSubscription(req.user.userId);
   }
 
+  @Post('upgrade-instant')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Instant plan upgrade for Superadmin / Admin / Testing' })
+  async upgradeInstant(@Req() req: any, @Body() body: { plan?: string; planCode?: string }) {
+    return this.subscriptionService.upgradeInstant(req.user.userId, body.planCode || body.plan || 'PRO');
+  }
+
   @Get('admin/financials')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')

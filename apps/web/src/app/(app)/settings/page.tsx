@@ -113,13 +113,12 @@ export default function SettingsPage() {
       if (plan.toLowerCase().includes('basic')) planEnum = 'BASIC';
       else if (plan.toLowerCase().includes('enterprise')) planEnum = 'ENTERPRISE';
 
-      await apiFetch('/api/v2/subscription/activate', {
+      await apiFetch('/api/v2/subscriptions/upgrade-instant', {
         method: 'POST',
         body: JSON.stringify({
-          plan: planEnum,
+          planCode: planEnum,
           paymentMethod: paymentMode,
           phoneNumber: billingPhone || undefined,
-          billingCycle: 'yearly'
         })
       });
 

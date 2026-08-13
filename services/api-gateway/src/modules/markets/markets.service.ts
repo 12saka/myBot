@@ -10,7 +10,8 @@ export class MarketsService implements OnModuleInit {
     { name: 'SOL/USD', type: 'crypto', binanceSymbol: 'SOLUSDT',  volatility: 1.5 },
     { name: 'BNB/USD', type: 'crypto', binanceSymbol: 'BNBUSDT',  volatility: 1.5 },
     { name: 'XRP/USD', type: 'crypto', binanceSymbol: 'XRPUSDT',  volatility: 0.005 },
-    { name: 'XAU/USD', type: 'commodity', binanceSymbol: null,        volatility: 5.0 },
+    { name: 'XAU/USD', type: 'commodity', binanceSymbol: 'PAXGUSDT', volatility: 5.0 },
+    { name: 'GOLD',    type: 'commodity', binanceSymbol: 'PAXGUSDT', volatility: 5.0 },
     { name: 'AAPL',    type: 'stock',  binanceSymbol: null,       volatility: 0.6 },
     { name: 'TSLA',    type: 'stock',  binanceSymbol: null,       volatility: 1.2 },
     { name: 'NVDA',    type: 'stock',  binanceSymbol: null,       volatility: 3.0 },
@@ -426,18 +427,18 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // Gold spot bounds check: Real Gold spot trades between $1800 and $3500 per oz.
+        // Gold spot bounds check: Real Gold spot / PAXG trades between $1500 and $10000 per oz.
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
-          if (currentPrice > 3500 || currentPrice < 1800) {
-            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1800 && cryptoPriceMap['PAXGUSDT'].price <= 3500) {
+          if (currentPrice > 10000 || currentPrice < 1500) {
+            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1500 && cryptoPriceMap['PAXGUSDT'].price <= 10000) {
               currentPrice = cryptoPriceMap['PAXGUSDT'].price;
               changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
               volume24h = cryptoPriceMap['PAXGUSDT'].volume;
-            } else if (yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price >= 1800 && yahooPriceMap['XAUUSD=X'].price <= 3500) {
+            } else if (yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price >= 1500 && yahooPriceMap['XAUUSD=X'].price <= 10000) {
               currentPrice = yahooPriceMap['XAUUSD=X'].price;
               changePct24h = yahooPriceMap['XAUUSD=X'].changePct;
               volume24h = yahooPriceMap['XAUUSD=X'].volume;
-            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1800 && yahooPriceMap['GC=F'].price <= 3500) {
+            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1500 && yahooPriceMap['GC=F'].price <= 10000) {
               currentPrice = yahooPriceMap['GC=F'].price;
               changePct24h = yahooPriceMap['GC=F'].changePct;
               volume24h = yahooPriceMap['GC=F'].volume;
@@ -446,7 +447,7 @@ export class MarketsService implements OnModuleInit {
                 const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT', {}, 2500);
                 if (paxgRes.ok) {
                   const pData = await paxgRes.json();
-                  if (pData && Number(pData.lastPrice) >= 1800 && Number(pData.lastPrice) <= 3500) {
+                  if (pData && Number(pData.lastPrice) >= 1500 && Number(pData.lastPrice) <= 10000) {
                     currentPrice = Number(pData.lastPrice);
                     changePct24h = Number(pData.priceChangePercent || 0);
                     volume24h = Number(pData.volume || 1000);
@@ -454,6 +455,21 @@ export class MarketsService implements OnModuleInit {
                 }
               } catch (goldApiErr) {}
             }
+          }
+        }
+
+        if ((asset.name === 'XAU/USD' || asset.name === 'GOLD') && currentPrice <= 0) {
+          const tdKey = process.env.TWELVE_DATA_API_KEY;
+          if (tdKey) {
+            try {
+              const tdRes = await this.fetchWithTimeout(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${tdKey}`, {}, 3000);
+              if (tdRes.ok) {
+                const tdData = await tdRes.json();
+                if (tdData && Number(tdData.price) >= 1800) {
+                  currentPrice = Number(tdData.price);
+                }
+              }
+            } catch (e) {}
           }
         }
 
