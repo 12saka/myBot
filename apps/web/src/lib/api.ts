@@ -171,6 +171,7 @@ export function mapSignal(item: any): AISignal {
     sentiment: 84
   };
 
+  const strategyName = getAssetStrategyName(item.symbol || 'BTC/USD', item.strategyKey || reasoning.strategy_key);
   const explanation = rawExplanation || `${direction} signal on ${sym} triggered by institutional ${strategyName} model. Confluence score ${confidence}%.`;
 
   const entry = Number(item.entryPrice ?? item.entry ?? 0);
@@ -182,7 +183,6 @@ export function mapSignal(item: any): AISignal {
   const rrRatio = (direction === 'WAIT' || stopLoss === 0 || tp1 === 0) 
     ? 'N/A' 
     : `1:${Number(item.riskRewardRatio ?? (Math.abs(tp1 - entry) / (Math.abs(entry - stopLoss) || 1))).toFixed(1)}`;
-  const strategyName = getAssetStrategyName(item.symbol || 'BTC/USD', item.strategyKey || reasoning.strategy_key);
 
   const signalGrade = reasoning.signal_grade || item.signalGrade || (confidence >= 85 ? 'A+ Institutional' : confidence >= 75 ? 'A Premium' : 'B+ Standard');
 
