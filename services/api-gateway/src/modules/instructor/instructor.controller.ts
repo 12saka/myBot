@@ -10,7 +10,7 @@ import { InstructorCommunityService } from './instructor-community.service';
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN')
-@Controller('api/v2/instructor')
+@Controller('instructor')
 export class InstructorController {
   constructor(
     private readonly instructorService: InstructorService,
