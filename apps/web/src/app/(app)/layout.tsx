@@ -12,6 +12,7 @@ import { useMarketStore } from '@/store/useMarketStore';
 import { useAIStore } from '@/store/useAIStore';
 import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
+import { toast } from 'react-hot-toast';
 import {
   LayoutDashboard,
   TrendingUp,
@@ -96,7 +97,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }, [router, setPortfolio, setSignals, setTickers, setWatchlist]);
 
   // Global background signal engine loop (remains active across all pages until user toggles off)
-  const { autoGenerate, autonomousActive } = useAIStore();
+  const { autoGenerate, autoInterval, autonomousActive } = useAIStore();
   const { watchlist } = useMarketStore();
 
   useEffect(() => {
@@ -106,14 +107,48 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       try {
         const userWatchlist = watchlist.length > 0 ? watchlist : ['BTC/USD', 'ETH/USD', 'XAU/USD', 'EUR/USD', 'US100', 'US30'];
         const randSymbol = userWatchlist[Math.floor(Math.random() * userWatchlist.length)];
+        const targetTimeframe = autoInterval || '15m';
+
         const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
           method: 'POST',
-          body: JSON.stringify({ symbol: randSymbol, interval: '1h' })
+          body: JSON.stringify({ symbol: randSymbol, interval: targetTimeframe })
         });
         if (rawSignal) {
           const newSignal = mapSignal(rawSignal);
           const currentSignals = useAIStore.getState().signals || [];
           useAIStore.getState().setSignals([newSignal, ...currentSignals.filter(s => s.symbol !== newSignal.symbol)]);
+
+          // Global notification toast across all pages
+          const grade = newSignal.signalGrade || 'A+ Institutional';
+          toast(
+            (t) => (
+              <div className="flex items-start gap-3 text-left">
+                <div className="text-xl shrink-0">⚡</div>
+                <div>
+                  <div className="font-bold text-xs text-white flex items-center gap-2">
+                    <span>{targetTimeframe.toUpperCase()} SIGNAL: {newSignal.direction} {newSignal.symbol}</span>
+                    <span className="text-[10px] bg-purple-500/20 text-purple-300 font-mono px-1.5 py-0.5 rounded border border-purple-500/30">
+                      {grade}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Entry: ${newSignal.entry} • SL: ${newSignal.stopLoss} • TP1: ${newSignal.tp1} ({newSignal.confidence}% Confluence)
+                  </p>
+                </div>
+              </div>
+            ),
+            {
+              duration: 6000,
+              style: {
+                background: '#090d16',
+                color: '#fff',
+                border: '1px solid rgba(168, 85, 247, 0.4)',
+                borderRadius: '16px',
+                padding: '12px 16px',
+                boxShadow: '0 20px 40px -15px rgba(168, 85, 247, 0.3)',
+              },
+            }
+          );
 
           // Autonomous bot execution if active
           if (autonomousActive && newSignal.direction !== 'WAIT') {
@@ -137,7 +172,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }, 20000);
 
     return () => clearInterval(interval);
-  }, [autoGenerate, autonomousActive, watchlist]);
+  }, [autoGenerate, autoInterval, autonomousActive, watchlist]);
 
   return (
     <WebSocketProvider>

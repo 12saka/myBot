@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { InstructorSidebar } from '@/components/instructor/InstructorSidebar';
 import { InstructorTopbar } from '@/components/instructor/InstructorTopbar';
+import { apiFetch } from '@/lib/api';
 
 export default function InstructorLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -11,29 +12,41 @@ export default function InstructorLayout({ children }: { children: React.ReactNo
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('trademind_token');
-    const profile = localStorage.getItem('trademind_profile');
+    const checkAuth = async () => {
+      const token = localStorage.getItem('trademind_token');
+      if (!token) {
+        router.push('/login');
+        return;
+      }
 
-    if (!token) {
-      router.push('/login');
-      return;
-    }
+      const profile = localStorage.getItem('trademind_profile');
+      let role = '';
 
-    if (profile) {
+      if (profile) {
+        try {
+          const parsed = JSON.parse(profile);
+          role = parsed.role || parsed.profileData?.role;
+        } catch (e) {}
+      }
+
+      if (role === 'INSTRUCTOR' || role === 'SUPER_ADMIN' || role === 'ADMIN') {
+        setAuthorized(true);
+        return;
+      }
+
       try {
-        const parsed = JSON.parse(profile);
-        const role = parsed.role || parsed.profileData?.role;
-        if (role === 'INSTRUCTOR' || role === 'SUPER_ADMIN' || role === 'ADMIN') {
+        const user = await apiFetch<any>('/api/v2/users/me');
+        if (user && ['INSTRUCTOR', 'SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
           setAuthorized(true);
         } else {
           router.push('/dashboard');
         }
-      } catch (e) {
+      } catch (err) {
         router.push('/login');
       }
-    } else {
-      router.push('/login');
-    }
+    };
+
+    checkAuth();
   }, [router]);
 
   if (!authorized) {

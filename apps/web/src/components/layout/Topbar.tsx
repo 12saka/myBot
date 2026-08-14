@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User, ShieldAlert } from 'lucide-react';
+import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User, ShieldAlert, GraduationCap } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { useMarketStore } from '@/store/useMarketStore';
 import { cn } from '@/lib/utils';
@@ -303,6 +303,16 @@ export function Topbar() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Instructor Studio Button */}
+          {(profile.role === 'INSTRUCTOR' || profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
+            <Link href="/instructor/dashboard">
+              <button className="px-3 py-1.5 rounded-xl bg-teal-600/30 hover:bg-teal-600/50 border border-teal-500/50 text-teal-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-teal-500/10 transition-all cursor-pointer">
+                <GraduationCap size={14} className="text-teal-400" />
+                <span className="hidden xs:inline">Instructor Studio</span>
+              </button>
+            </Link>
+          )}
+
           {/* Admin Back Link Button for Superadmins */}
           {(profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
             <Link href="/superadmin/dashboard">

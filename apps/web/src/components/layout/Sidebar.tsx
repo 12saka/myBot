@@ -8,7 +8,7 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-  Cpu, LogOut, User, Newspaper, ShieldAlert
+  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
@@ -242,6 +242,32 @@ export function Sidebar() {
               )}
             </AnimatePresence>
           </Link>
+          {/* Instructor Portal Link (Instructor / Admin / Superadmin) */}
+          {(profile.role === 'INSTRUCTOR' || profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
+            <Link href="/instructor/dashboard" onClick={() => isMobile && setSidebarOpen(false)}>
+              <div
+                className={cn(
+                  'flex items-center gap-3 p-2.5 rounded-xl bg-teal-600/15 hover:bg-teal-600/25 border border-teal-500/30 text-teal-300 hover:text-teal-200 cursor-pointer transition-all mb-1',
+                  isCollapsed && 'justify-center'
+                )}
+              >
+                <GraduationCap size={18} className="flex-shrink-0 text-teal-400" />
+                <AnimatePresence>
+                  {!isCollapsed && (
+                    <motion.span
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="text-xs font-semibold whitespace-nowrap"
+                    >
+                      Instructor Studio
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </div>
+            </Link>
+          )}
+
           {/* Superadmin Panel Link (Admin/Super_Admin only) */}
           {(profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
             <Link href="/superadmin/dashboard" onClick={() => isMobile && setSidebarOpen(false)}>

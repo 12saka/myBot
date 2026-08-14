@@ -55,6 +55,7 @@ model User {
   gamification         UserGamification?
   payments             Payment[]
   usageLimits          UsageLimit[]
+  brokerAccounts       BrokerAccount[]
 
   @@index([createdAt])
 }
@@ -956,6 +957,53 @@ model UserBrokerProfile {
   lastSyncedAt              DateTime?
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model BrokerAccount {
+  id                    String    @id @default(uuid())
+  userId                String
+  broker                String    // JustMarkets, FBS, Exness, XM, IC Markets, Pepperstone, Deriv
+  accountType           String    @default("LIVE") // LIVE, DEMO
+  platform              String    @default("MT5")  // MT5, MT4, cTrader
+  server                String
+  accountNumber         String
+  encryptedCredentials  String
+  connectionStatus      String    @default("CONNECTED") // CONNECTED, DISCONNECTED, ERROR
+  aiTradingEnabled      Boolean   @default(false)
+  viewBalance           Boolean   @default(true)
+  viewPositions         Boolean   @default(true)
+  viewOrders            Boolean   @default(true)
+  marketAnalysis        Boolean   @default(true)
+  generateSignals       Boolean   @default(true)
+  placeTrades           Boolean   @default(false)
+  modifySlTp            Boolean   @default(false)
+  closePositions        Boolean   @default(false)
+  
+  // AI Risk Guard settings per account
+  maxRiskPerTrade       Float     @default(1.0)
+  maxDailyLoss          Float     @default(3.0)
+  maxOpenTrades         Int       @default(5)
+  maxExposure           Float     @default(10.0)
+  minRiskReward         Float     @default(2.0)
+  tradingSessions       String    @default("London + NY")
+  riskGuardActive       Boolean   @default(true)
+  
+  balance               Float     @default(0.0)
+  equity                Float     @default(0.0)
+  margin                Float     @default(0.0)
+  freeMargin            Float     @default(0.0)
+  unrealizedPl          Float     @default(0.0)
+  todayPl               Float     @default(0.0)
+  overallPl             Float     @default(0.0)
+  currency              String    @default("USD")
+  leverage              String    @default("1:500")
+  lastSyncedAt          DateTime? @default(now())
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }

@@ -64,6 +64,7 @@ interface AIState {
   aiMode: 'CONSERVATIVE' | 'BALANCED' | 'AGGRESSIVE' | 'CUSTOM';
   autonomousActive: boolean;
   autoGenerate: boolean;
+  autoInterval: string;
   allocation: number;
   riskLimit: number;
   maxDrawdown: number;
@@ -72,6 +73,7 @@ interface AIState {
   setAIMode: (mode: AIState['aiMode']) => void;
   setAutonomous: (active: boolean) => void;
   setAutoGenerate: (active: boolean) => void;
+  setAutoInterval: (interval: string) => void;
   setAllocation: (pct: number) => void;
   setRiskLimit: (pct: number) => void;
   setMaxDrawdown: (pct: number) => void;
@@ -83,6 +85,11 @@ const getInitialBool = (key: string, defaultValue = false): boolean => {
   const val = localStorage.getItem(key);
   if (val !== null) return val === 'true';
   return defaultValue;
+};
+
+const getInitialStr = (key: string, defaultValue = '15m'): string => {
+  if (typeof window === 'undefined') return defaultValue;
+  return localStorage.getItem(key) || defaultValue;
 };
 
 export const useAIStore = create<AIState>((set) => ({
@@ -99,6 +106,7 @@ export const useAIStore = create<AIState>((set) => ({
   aiMode: 'BALANCED',
   autonomousActive: getInitialBool('trademind_autonomous_active', false),
   autoGenerate: getInitialBool('trademind_auto_generate', false),
+  autoInterval: getInitialStr('trademind_auto_interval', '15m'),
   allocation: 50,
   riskLimit: 2,
   maxDrawdown: 10,
@@ -116,6 +124,12 @@ export const useAIStore = create<AIState>((set) => ({
       localStorage.setItem('trademind_auto_generate', String(autoGenerate));
     }
     set({ autoGenerate });
+  },
+  setAutoInterval: (autoInterval) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trademind_auto_interval', autoInterval);
+    }
+    set({ autoInterval });
   },
   setAllocation: (allocation) => set({ allocation }),
   setRiskLimit: (riskLimit) => set({ riskLimit }),
