@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { QueryProvider } from '@/providers/QueryProvider';
 import { Toaster } from 'react-hot-toast';
@@ -7,6 +7,13 @@ import PWAInstallPrompt from '@/components/pwa/PWAInstallPrompt';
 const inter = { variable: 'font-sans' };
 const outfit = { variable: 'font-display' };
 const jetbrainsMono = { variable: 'font-mono' };
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
 
 export const metadata: Metadata = {
   manifest: '/manifest.json',

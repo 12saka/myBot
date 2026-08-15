@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User, ShieldAlert, GraduationCap } from 'lucide-react';
+import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User, ShieldAlert, GraduationCap, MessageCircle } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { useMarketStore } from '@/store/useMarketStore';
 import { cn } from '@/lib/utils';
@@ -331,6 +331,17 @@ export function Topbar() {
             </span>
             <span className="text-xs font-semibold text-purple-300">AI Engine Active</span>
           </div>
+
+          {/* WhatsApp Admin Support Button */}
+          <a
+            href="https://wa.me/254712345678?text=Hello%20TradeMind%20Admin%2C%20I%20need%20assistance"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-bold transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
+          >
+            <MessageCircle size={14} className="text-emerald-400" />
+            <span className="hidden md:inline">WhatsApp Admin</span>
+          </a>
 
           {/* Notifications Bell */}
           <div className="relative notifications-bell-container">

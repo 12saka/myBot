@@ -165,4 +165,49 @@ export class InstructorController {
   async getWeeklyLeaderboard() {
     return this.communityService.getWeeklyLeaderboard();
   }
+
+  // Question Bank & Quiz Management
+  @Get('question-bank')
+  @Get('questions')
+  async getQuestionBank() {
+    return this.instructorService.getQuestionBank();
+  }
+
+  @Post('question-bank')
+  @Post('questions')
+  async createQuestion(@Req() req: any, @Body() body: any) {
+    return this.instructorService.createQuestion(req.user.userId, body);
+  }
+
+  @Patch('question-bank/:id')
+  @Patch('questions/:id')
+  async updateQuestion(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.instructorService.updateQuestion(req.user.userId, id, body);
+  }
+
+  @Delete('question-bank/:id')
+  @Delete('questions/:id')
+  async deleteQuestion(@Req() req: any, @Param('id') id: string) {
+    return this.instructorService.deleteQuestion(req.user.userId, id);
+  }
+
+  @Get('quizzes')
+  async getQuizzes() {
+    return this.instructorService.getQuizzes();
+  }
+
+  @Post('quizzes')
+  async createQuiz(@Req() req: any, @Body() body: any) {
+    return this.instructorService.createQuiz(req.user.userId, body);
+  }
+
+  @Patch('quizzes/:id')
+  async updateQuiz(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.instructorService.updateQuiz(req.user.userId, id, body);
+  }
+
+  @Delete('quizzes/:id')
+  async deleteQuiz(@Req() req: any, @Param('id') id: string) {
+    return this.instructorService.deleteQuiz(req.user.userId, id);
+  }
 }

@@ -46,8 +46,8 @@ export default function InstructorQuizzesPage() {
     setLoading(true);
     try {
       const [qzData, qData, crsData] = await Promise.all([
-        apiFetch<any[]>('/api/v2/admin/academy/quizzes'),
-        apiFetch<any[]>('/api/v2/admin/academy/question-bank'),
+        apiFetch<any[]>('/api/v2/instructor/quizzes'),
+        apiFetch<any[]>('/api/v2/instructor/question-bank'),
         apiFetch<any[]>('/api/v2/instructor/courses'),
       ]);
       setQuizzes(qzData || []);
@@ -93,13 +93,13 @@ export default function InstructorQuizzesPage() {
       };
 
       if (editingQId) {
-        await apiFetch(`/api/v2/admin/academy/questions/${editingQId}`, {
+        await apiFetch(`/api/v2/instructor/question-bank/${editingQId}`, {
           method: 'PATCH',
           body: JSON.stringify(payload),
         });
         toast.success('Question updated!');
       } else {
-        await apiFetch('/api/v2/admin/academy/questions', {
+        await apiFetch('/api/v2/instructor/question-bank', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -163,13 +163,13 @@ export default function InstructorQuizzesPage() {
       };
 
       if (editingQuizId) {
-        await apiFetch(`/api/v2/admin/academy/quizzes/${editingQuizId}`, {
+        await apiFetch(`/api/v2/instructor/quizzes/${editingQuizId}`, {
           method: 'PATCH',
           body: JSON.stringify(payload),
         });
         toast.success('Quiz updated!');
       } else {
-        await apiFetch('/api/v2/admin/academy/quizzes', {
+        await apiFetch('/api/v2/instructor/quizzes', {
           method: 'POST',
           body: JSON.stringify(payload),
         });

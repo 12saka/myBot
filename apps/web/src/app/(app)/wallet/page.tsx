@@ -6,7 +6,7 @@ import {
   ShieldCheck, Lock, Plus, ArrowUpRight, ArrowDownLeft, RefreshCw,
   TrendingUp, DollarSign, Activity, CheckCircle2, AlertTriangle, X,
   Sliders, ShieldAlert, Cpu, Eye, Check, Key, Search, ChevronRight,
-  Server, Zap, FileText, Ban, Power
+  Server, Zap, FileText, Ban, Power, Wallet as WalletIcon
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
@@ -28,72 +28,16 @@ const SUPPORTED_BROKERS = [
 export default function SecureWalletPage() {
   const [data, setData] = useState<any>({
     summary: {
-      totalBalance: 12.96,
-      totalEquity: 12.96,
-      availableMargin: 12.96,
+      totalBalance: 0.0,
+      totalEquity: 0.0,
+      availableMargin: 0.0,
       usedMargin: 0.0,
       unrealizedPl: 0.0,
-      todayPl: 0.85,
-      overallPl: 2.40
+      todayPl: 0.0,
+      overallPl: 0.0
     },
-    liveAccounts: [
-      {
-        id: 'acc-justmarkets-1',
-        broker: 'JustMarkets',
-        accountType: 'LIVE',
-        platform: 'MT5',
-        server: 'JustMarkets-Live2',
-        accountNumber: '5892104',
-        balance: 12.96,
-        equity: 12.96,
-        freeMargin: 12.96,
-        margin: 0.0,
-        unrealizedPl: 0.0,
-        todayPl: 0.85,
-        overallPl: 2.40,
-        currency: 'USD',
-        leverage: '1:500',
-        connectionStatus: 'CONNECTED',
-        aiTradingEnabled: false,
-        maxRiskPerTrade: 1.0,
-        maxDailyLoss: 3.0,
-        maxOpenTrades: 5,
-        maxExposure: 10.0,
-        minRiskReward: 2.0,
-        tradingSessions: 'London + NY',
-        riskGuardActive: true,
-        lastSyncedAt: new Date().toISOString()
-      }
-    ],
-    demoAccounts: [
-      {
-        id: 'acc-fbs-demo-1',
-        broker: 'FBS',
-        accountType: 'DEMO',
-        platform: 'MT5',
-        server: 'FBS-Demo-01',
-        accountNumber: '9204112',
-        balance: 10000.00,
-        equity: 10245.50,
-        freeMargin: 10095.50,
-        margin: 150.00,
-        unrealizedPl: 245.50,
-        todayPl: 120.00,
-        overallPl: 245.50,
-        currency: 'USD',
-        leverage: '1:500',
-        connectionStatus: 'CONNECTED',
-        aiTradingEnabled: true,
-        maxRiskPerTrade: 1.0,
-        maxDailyLoss: 3.0,
-        maxOpenTrades: 5,
-        maxExposure: 10.0,
-        minRiskReward: 2.0,
-        tradingSessions: 'London + NY',
-        riskGuardActive: true,
-        lastSyncedAt: new Date().toISOString()
-      }
-    ]
+    liveAccounts: [],
+    demoAccounts: []
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -235,9 +179,9 @@ export default function SecureWalletPage() {
   return (
     <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
       <PageHeader
-        title="🔐 TradeMind AI — Secure Wallet"
+        title="TradeMind AI — Secure Wallet"
         subtitle="Financial command center & encrypted credential vault for broker account integration, risk guard, and AI execution permissions."
-        icon={Lock}
+        icon={WalletIcon}
       >
         <div className="flex items-center gap-3">
           <button

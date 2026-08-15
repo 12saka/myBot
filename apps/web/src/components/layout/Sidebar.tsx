@@ -8,7 +8,7 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap
+  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
@@ -293,6 +293,31 @@ export function Sidebar() {
               </div>
             </Link>
           )}
+          {/* Official WhatsApp Support Button */}
+          <a
+            href="https://wa.me/254712345678?text=Hello%20TradeMind%20Admin%2C%20I%20need%20assistance"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              'flex items-center gap-3 p-2.5 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 text-emerald-300 hover:text-emerald-200 cursor-pointer transition-all mb-1',
+              isCollapsed && 'justify-center'
+            )}
+          >
+            <MessageCircle size={18} className="flex-shrink-0 text-emerald-400" />
+            <AnimatePresence>
+              {!isCollapsed && (
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="text-xs font-semibold whitespace-nowrap"
+                >
+                  WhatsApp Support
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </a>
+
           <button
             onClick={handleLogout}
             className={cn(

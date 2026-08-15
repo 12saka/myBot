@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID, randomInt } from 'crypto';
@@ -223,6 +223,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
+    if ((user as any).status === 'SUSPENDED' || (user as any).isSuspended) {
+      throw new ForbiddenException('Your account has been suspended by Admin. Please contact support via WhatsApp (+254712345678) or email.');
+    }
+
     const isPasswordValid = await bcrypt.compare(passwordPlain, user.passwordHash);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid email or password.');
@@ -252,6 +256,10 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException('Invalid 2FA session.');
+    }
+
+    if ((user as any).status === 'SUSPENDED' || (user as any).isSuspended) {
+      throw new ForbiddenException('Your account has been suspended by Admin. Please contact support via WhatsApp (+254712345678) or email.');
     }
 
     return this.createLoginSession(user, ipAddress, userAgent, '2FA');

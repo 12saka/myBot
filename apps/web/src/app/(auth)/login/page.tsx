@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   ShieldCheck, Lock, Mail, ChevronRight, ArrowLeft,
-  Eye, EyeOff, Key, Sparkles, AlertCircle
+  Eye, EyeOff, Key, Sparkles, AlertCircle, AlertTriangle, MessageCircle
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { apiFetch } from '@/lib/api';
@@ -19,6 +19,7 @@ export default function LoginPage() {
   const [is2FA, setIs2FA] = useState(false);
   const [code2fa, setCode2fa] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [suspendedMsg, setSuspendedMsg] = useState('');
   const [mouseCoords, setMouseCoords] = useState({ x: 0, y: 0 });
   const [devOtp, setDevOtp] = useState('');
   type LoginResponse = {
@@ -80,15 +81,15 @@ export default function LoginPage() {
         const role = data.user?.role;
         toast.success('Successfully authenticated! Redirecting to command center...');
         setTimeout(() => {
-          if (role === 'SUPER_ADMIN' || role === 'ADMIN') {
-            router.push('/superadmin/dashboard');
-          } else {
-            router.push('/dashboard');
-          }
+          router.push('/dashboard');
         }, 1000);
       }
     } catch (err: any) {
-      toast.error(err.message || 'Authentication failed. Please check your credentials and API gateway.');
+      const msg = err.message || 'Authentication failed. Please check your credentials.';
+      if (msg.toLowerCase().includes('suspended')) {
+        setSuspendedMsg(msg);
+      }
+      toast.error(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -126,13 +127,32 @@ export default function LoginPage() {
         </Link>
 
         <div className="glass-card rounded-3xl p-8 border border-white/8 bg-slate-950/40 backdrop-blur-2xl">
-          <div className="text-center mb-8">
+          <div className="text-center mb-6">
             <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/25 flex items-center justify-center mx-auto mb-4">
               <Lock className="text-purple-400" size={20} />
             </div>
             <h2 className="text-2xl font-display font-bold text-white">Enter the Ecosystem</h2>
             <p className="text-xs text-slate-400 mt-2">Access TradeMind AI autonomous trading center</p>
           </div>
+
+          {suspendedMsg && (
+            <div className="p-4 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs space-y-3 mb-6">
+              <div className="flex items-center gap-2 font-bold text-red-200">
+                <AlertTriangle size={16} className="text-red-400 shrink-0" />
+                <span>Account Suspended by Admin</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-slate-300">{suspendedMsg}</p>
+              <a
+                href="https://wa.me/254712345678?text=Hello%20TradeMind%20Admin%2C%20my%20account%20has%20been%20suspended.%20Please%20assist."
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-all shadow-md cursor-pointer"
+              >
+                <MessageCircle size={14} />
+                <span>Chat Admin on WhatsApp (+254712345678)</span>
+              </a>
+            </div>
+          )}
 
           <form onSubmit={handleLogin} className="space-y-5 text-xs">
             <AnimatePresence mode="wait">

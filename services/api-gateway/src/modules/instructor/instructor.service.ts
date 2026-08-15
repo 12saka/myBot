@@ -385,4 +385,133 @@ export class InstructorService {
       certificatesEarned: s._count.certificates,
     }));
   }
+
+  // 6. Question Bank & Quizzes Management
+  async getQuestionBank() {
+    const questions = await this.prisma.questionBank.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+    return questions.map((q) => {
+      const opts = (q.options as any) || {};
+      const choices = Array.isArray(opts) ? opts : Array.isArray(opts.choices) ? opts.choices : [];
+      const correctOptionIndex = opts.correctOptionIndex ?? 0;
+      return { ...q, options: choices, correctOptionIndex };
+    });
+  }
+
+  async createQuestion(userId: string, payload: any) {
+    const choices = Array.isArray(payload.options) ? payload.options : [];
+    const correctOptionIndex = payload.correctOptionIndex ?? 0;
+    const question = await this.prisma.questionBank.create({
+      data: {
+        question: payload.question || payload.text || '',
+        type: payload.type || 'MULTIPLE_CHOICE',
+        options: { choices, correctOptionIndex },
+        explanation: payload.explanation || null,
+        assetTag: payload.assetTag || null,
+        skillTag: payload.skillTag || 'Technical Analysis',
+        difficulty: payload.difficulty || 'INTERMEDIATE',
+      },
+    });
+    return { ...question, options: choices, correctOptionIndex };
+  }
+
+  async updateQuestion(userId: string, id: string, payload: any) {
+    const choices = Array.isArray(payload.options) ? payload.options : [];
+    const correctOptionIndex = payload.correctOptionIndex ?? 0;
+    const question = await this.prisma.questionBank.update({
+      where: { id },
+      data: {
+        ...(payload.question || payload.text ? { question: payload.question || payload.text } : {}),
+        ...(payload.options ? { options: { choices, correctOptionIndex } } : {}),
+        ...(payload.explanation !== undefined ? { explanation: payload.explanation } : {}),
+        ...(payload.assetTag !== undefined ? { assetTag: payload.assetTag } : {}),
+        ...(payload.skillTag ? { skillTag: payload.skillTag } : {}),
+        ...(payload.difficulty ? { difficulty: payload.difficulty } : {}),
+      },
+    });
+    return { ...question, options: choices, correctOptionIndex };
+  }
+
+  async deleteQuestion(userId: string, id: string) {
+    return this.prisma.questionBank.delete({ where: { id } });
+  }
+
+  async getQuizzes() {
+    return this.prisma.quiz.findMany({
+      include: {
+        course: { select: { title: true } },
+        lesson: { select: { title: true } },
+        quizQuestions: { include: { question: true } },
+        attempts: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createQuiz(userId: string, payload: any) {
+    const quiz = await this.prisma.quiz.create({
+      data: {
+        title: payload.title,
+        description: payload.description || null,
+        courseId: payload.courseId || null,
+        lessonId: payload.lessonId || null,
+        difficulty: payload.difficulty || 'INTERMEDIATE',
+        timeLimitMinutes: Number(payload.timeLimitMinutes ?? payload.timeLimit ?? 15),
+        passMarkPct: Number(payload.passMarkPct ?? payload.passMark ?? 70),
+        xpReward: Number(payload.xpReward ?? 100),
+        status: payload.isPublished === false ? 'DRAFT' : 'PUBLISHED',
+      },
+    });
+
+    if (Array.isArray(payload.questionIds) && payload.questionIds.length > 0) {
+      for (let i = 0; i < payload.questionIds.length; i++) {
+        await this.prisma.quizQuestion.create({
+          data: {
+            quizId: quiz.id,
+            questionId: payload.questionIds[i],
+            orderIndex: i + 1,
+          },
+        }).catch(() => null);
+      }
+    }
+
+    return quiz;
+  }
+
+  async updateQuiz(userId: string, id: string, payload: any) {
+    const updated = await this.prisma.quiz.update({
+      where: { id },
+      data: {
+        ...(payload.title && { title: payload.title }),
+        ...(payload.description !== undefined && { description: payload.description }),
+        ...(payload.courseId !== undefined && { courseId: payload.courseId }),
+        ...(payload.lessonId !== undefined && { lessonId: payload.lessonId }),
+        ...(payload.difficulty && { difficulty: payload.difficulty }),
+        ...(payload.timeLimitMinutes !== undefined && { timeLimitMinutes: Number(payload.timeLimitMinutes) }),
+        ...(payload.passMarkPct !== undefined && { passMarkPct: Number(payload.passMarkPct) }),
+        ...(payload.xpReward !== undefined && { xpReward: Number(payload.xpReward) }),
+        ...(payload.status && { status: payload.status }),
+      },
+    });
+
+    if (Array.isArray(payload.questionIds)) {
+      await this.prisma.quizQuestion.deleteMany({ where: { quizId: id } });
+      for (let i = 0; i < payload.questionIds.length; i++) {
+        await this.prisma.quizQuestion.create({
+          data: {
+            quizId: id,
+            questionId: payload.questionIds[i],
+            orderIndex: i + 1,
+          },
+        }).catch(() => null);
+      }
+    }
+
+    return updated;
+  }
+
+  async deleteQuiz(userId: string, id: string) {
+    return this.prisma.quiz.delete({ where: { id } });
+  }
 }

@@ -437,7 +437,7 @@ export class AcademyService implements OnModuleInit {
     }
   }
 
-  // Register for Live Session in Database
+  // Register for Live Session in Database & Notify User
   async registerLiveSession(userId: string, sessionId: string) {
     try {
       await (this.prisma as any).liveSessionRegistration.upsert({
@@ -445,8 +445,21 @@ export class AcademyService implements OnModuleInit {
         update: {},
         create: { userId, sessionId }
       });
+
+      const session = await (this.prisma as any).liveSession.findUnique({ where: { id: sessionId } });
+
+      await this.prisma.notification.create({
+        data: {
+          userId,
+          title: `📹 Webinar Registration Confirmed: ${session?.title || 'Live Webinar'}`,
+          message: `You have successfully registered for "${session?.title || 'Live Session'}". Please check your registered email inbox for webinar access link & schedule reminders.`,
+          type: 'ACADEMY',
+          linkUrl: '/academy'
+        }
+      }).catch(() => {});
+
       return {
-        message: 'Successfully registered for live trading session! Confirmation sent.',
+        message: `Successfully registered for "${session?.title || 'Live Session'}"! Access details & email reminders sent to your inbox.`,
         sessionId
       };
     } catch (err: any) {

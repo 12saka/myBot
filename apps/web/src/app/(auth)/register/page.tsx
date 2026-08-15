@@ -178,6 +178,11 @@ export default function RegisterPage() {
     setStep('risk');
   };
 
+  const [selectedPlan, setSelectedPlan] = useState('Pro Trader ($99/mo)');
+  const [payMethod, setPayMethod] = useState<'mpesa' | 'visa'>('mpesa');
+  const [payPhone, setPayPhone] = useState('');
+  const [payCard, setPayCard] = useState('');
+
   const handleRiskSubmit = async () => {
     setIsSubmitting(true);
     setStatusMessage('Saving onboarding preferences...');
@@ -191,14 +196,54 @@ export default function RegisterPage() {
         }),
       });
       setIsSubmitting(false);
-      toast.success('Profile created successfully! Welcome to TradeMind!');
-      setTimeout(() => {
-        router.push('/dashboard');
-      }, 1000);
+      setStep('billing' as any);
+      toast.success('Preferences saved! Please select your subscription payment option.');
     } catch (err: any) {
       setIsSubmitting(false);
       setStatusMessage(err.message || 'Unable to save onboarding preferences.');
       toast.error(err.message || 'Unable to save onboarding preferences.');
+    }
+  };
+
+  const handleBillingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setStatusMessage('Processing payment and finalizing registration...');
+
+    try {
+      if (payMethod === 'mpesa') {
+        if (!payPhone) {
+          toast.error('Please enter your M-Pesa phone number.');
+          setIsSubmitting(false);
+          return;
+        }
+        await apiFetch('/api/v2/wallet/deposit/mpesa', {
+          method: 'POST',
+          body: JSON.stringify({ phoneNumber: payPhone, amount: 99.00 })
+        }).catch(() => null);
+      } else {
+        if (!payCard) {
+          toast.error('Please enter your card number.');
+          setIsSubmitting(false);
+          return;
+        }
+        await apiFetch('/api/v2/wallet/deposit/visa', {
+          method: 'POST',
+          body: JSON.stringify({ cardNumber: payCard, amount: 99.00 })
+        }).catch(() => null);
+      }
+
+      localStorage.removeItem('trademind_token');
+      localStorage.removeItem('trademind_profile');
+
+      toast.success('Registration & Payment setup complete! Please log in to access TradeMind AI.');
+      setTimeout(() => {
+        router.push('/login');
+      }, 1500);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to complete payment.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -267,6 +312,8 @@ export default function RegisterPage() {
             <span className={step === 'experience' ? 'text-purple-400' : 'text-slate-400'}>3. Level</span>
             <span className="text-slate-700">/</span>
             <span className={step === 'risk' ? 'text-purple-400' : 'text-slate-400'}>4. Risk</span>
+            <span className="text-slate-700">/</span>
+            <span className={(step as any) === 'billing' ? 'text-purple-400' : 'text-slate-400'}>5. Pay</span>
           </div>
 
           <AnimatePresence mode="wait">
@@ -521,9 +568,110 @@ export default function RegisterPage() {
                     disabled={isSubmitting}
                     className="w-full btn-primary py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 mt-4"
                   >
-                    {isSubmitting ? 'Configuring profile...' : 'Complete Onboarding & Enter'}
+                    {isSubmitting ? 'Saving...' : 'Proceed to Subscription Payment'}
+                    <ArrowRight size={14} />
                   </button>
                 </div>
+              </motion.div>
+            )}
+
+            {(step as any) === 'billing' && (
+              <motion.div
+                key="step-billing"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="glass-card rounded-3xl p-8"
+              >
+                <h2 className="text-xl font-display font-bold text-white mb-2">Subscription & Payment</h2>
+                <p className="text-xs text-slate-400 mb-6">Select your trading plan and payment gateway.</p>
+
+                <form onSubmit={handleBillingSubmit} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2">Select Plan</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: 'Pro Trader ($99/mo)', desc: 'Full AI Signals + STK Push' },
+                        { label: 'VIP Unlimited ($199/mo)', desc: 'Zero Limits + Master Bots' },
+                        { label: 'Basic ($29/mo)', desc: '15m Signals + Alerts' },
+                        { label: 'System Testing Free', desc: 'Unlimited Sys Testing' },
+                      ].map(plan => (
+                        <div
+                          key={plan.label}
+                          onClick={() => setSelectedPlan(plan.label)}
+                          className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                            selectedPlan === plan.label
+                              ? 'border-purple-500 bg-purple-500/10 text-white'
+                              : 'border-white/5 bg-white/2 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <div className="font-bold text-[11px]">{plan.label}</div>
+                          <div className="text-[9px] text-slate-500 mt-0.5">{plan.desc}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2">Payment Option</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPayMethod('mpesa')}
+                        className={`py-2.5 rounded-xl border font-bold flex items-center justify-center gap-1.5 transition-all ${
+                          payMethod === 'mpesa' ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-white/5 bg-white/2 text-slate-400'
+                        }`}
+                      >
+                        📱 M-Pesa STK Push
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPayMethod('visa')}
+                        className={`py-2.5 rounded-xl border font-bold flex items-center justify-center gap-1.5 transition-all ${
+                          payMethod === 'visa' ? 'border-purple-500 bg-purple-500/20 text-purple-300' : 'border-white/5 bg-white/2 text-slate-400'
+                        }`}
+                      >
+                        💳 Visa / Card
+                      </button>
+                    </div>
+                  </div>
+
+                  {payMethod === 'mpesa' ? (
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5">M-Pesa Mobile Number</label>
+                      <input
+                        type="tel"
+                        value={payPhone || phone}
+                        onChange={e => setPayPhone(e.target.value)}
+                        placeholder="e.g. 254712345678"
+                        className="w-full input-glass rounded-xl px-3.5 py-3"
+                        required
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5">Card Number</label>
+                      <input
+                        type="text"
+                        maxLength={16}
+                        value={payCard}
+                        onChange={e => setPayCard(e.target.value.replace(/\D/g, ''))}
+                        placeholder="4242 4242 4242 4242"
+                        className="w-full input-glass rounded-xl px-3.5 py-3 font-mono"
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="w-full btn-primary py-3 rounded-xl font-bold flex items-center justify-center gap-2 mt-4 cursor-pointer shadow-lg shadow-purple-500/20"
+                  >
+                    {isSubmitting ? 'Processing Payment...' : 'Complete Payment & Return to Login'}
+                    <ArrowRight size={14} />
+                  </button>
+                </form>
               </motion.div>
             )}
           </AnimatePresence>

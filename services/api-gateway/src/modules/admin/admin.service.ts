@@ -336,6 +336,16 @@ export class AdminService {
       },
     });
 
+    await this.prisma.notification.create({
+      data: {
+        userId: record.userId,
+        title: '🛡️ KYC Identity Verification Approved',
+        message: 'Your KYC documents have been reviewed and approved by Admin. You now have full verified access!',
+        type: 'SYSTEM',
+        isRead: false,
+      },
+    }).catch(() => null);
+
     return updated;
   }
 
@@ -355,6 +365,16 @@ export class AdminService {
         details: { kycId, targetUserId: record.userId, reason },
       },
     });
+
+    await this.prisma.notification.create({
+      data: {
+        userId: record.userId,
+        title: '⚠️ KYC Identity Verification Feedback',
+        message: `Your KYC submission was reviewed by Admin and REJECTED. Feedback/Reason: ${reason || 'Documents unclear or invalid'}. Please update your files in Settings.`,
+        type: 'SYSTEM',
+        isRead: false,
+      },
+    }).catch(() => null);
 
     return updated;
   }

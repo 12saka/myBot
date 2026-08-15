@@ -271,11 +271,11 @@ export default function SettingsPage() {
           body: JSON.stringify({ documentType: 'ID_CARD', documentUrl: file.name })
         });
         setIdCardFile(file.name);
-        const updatedKyc = { ...kycDocs, idVerified: 'verified' };
+        const updatedKyc = { ...kycDocs, idVerified: 'pending' };
         setKycDocs(updatedKyc);
         saveToLocalStorage(profileData, profilePhoto, file.name, selfieFile, addressFile, updatedKyc);
         addActivityLog('KYC Document uploaded: Identity Card');
-        toast.success('Identity card ID uploaded and verified!');
+        toast.success('Identity card uploaded! Status: PENDING (Under Admin Review).');
       } catch (err: any) {
         toast.error(`KYC submission failed: ${err.message}`);
       }
@@ -291,11 +291,11 @@ export default function SettingsPage() {
           body: JSON.stringify({ documentType: 'SELFIE', documentUrl: file.name })
         });
         setSelfieFile(file.name);
-        const updatedKyc = { ...kycDocs, selfieVerified: 'verified' };
+        const updatedKyc = { ...kycDocs, selfieVerified: 'pending' };
         setKycDocs(updatedKyc);
         saveToLocalStorage(profileData, profilePhoto, idCardFile, file.name, addressFile, updatedKyc);
         addActivityLog('KYC Selfie liveness upload completed');
-        toast.success('Selfie verification photo uploaded!');
+        toast.success('Selfie uploaded! Status: PENDING (Under Admin Review).');
       } catch (err: any) {
         toast.error(`KYC selfie upload failed: ${err.message}`);
       }
@@ -311,11 +311,11 @@ export default function SettingsPage() {
           body: JSON.stringify({ documentType: 'ADDRESS_PROOF', documentUrl: file.name })
         });
         setAddressFile(file.name);
-        const updatedKyc = { ...kycDocs, addressVerified: 'verified' };
+        const updatedKyc = { ...kycDocs, addressVerified: 'pending' };
         setKycDocs(updatedKyc);
         saveToLocalStorage(profileData, profilePhoto, idCardFile, selfieFile, file.name, updatedKyc);
         addActivityLog('KYC Document uploaded: Address Proof');
-        toast.success('Residential address proof uploaded and verified!');
+        toast.success('Residential address proof uploaded! Status: PENDING (Under Admin Review).');
       } catch (err: any) {
         toast.error(`KYC address upload failed: ${err.message}`);
       }
@@ -1238,50 +1238,6 @@ export default function SettingsPage() {
                     </button>
                   </div>
                 </div>
-
-                {/* API Keys */}
-                <div className="glass-card rounded-2xl p-6 border border-white/5">
-                  <h3 className="font-display font-bold text-white text-sm mb-4 flex items-center gap-2 border-b border-white/5 pb-3">
-                    <Plus size={16} className="text-purple-400" />
-                    External API Connection Keys
-                  </h3>
-
-                  <div className="space-y-3 mb-5 text-xs">
-                    {apiKeys.map((k) => (
-                      <div key={k.id} className="flex items-center justify-between p-3.5 rounded-xl border border-white/5 bg-white/2">
-                        <div>
-                          <div className="font-semibold text-slate-100 text-sm">{k.name}</div>
-                          <div className="font-mono text-[10px] text-slate-500 mt-1">{k.key}</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-600">Created: {k.created}</span>
-                          <button
-                            onClick={() => handleDeleteKey(k.id)}
-                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all cursor-pointer"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <form onSubmit={handleCreateKey} className="flex gap-3 text-xs">
-                    <input
-                      type="text"
-                      value={newKeyName}
-                      onChange={e => setNewKeyName(e.target.value)}
-                      placeholder="Key label (e.g., Python Bot Client)"
-                      className="input-glass flex-1 rounded-xl px-3"
-                    />
-                    <button
-                      type="submit"
-                      className="btn-ghost px-4 py-2.5 rounded-xl font-bold flex items-center gap-1.5 hover:bg-purple-500 hover:text-white hover:border-purple-600 transition-all"
-                    >
-                      <Plus size={14} /> Add Key
-                    </button>
-                  </form>
-                </div>
               </motion.div>
             )}
 
@@ -1940,140 +1896,10 @@ export default function SettingsPage() {
               <span className={cn("font-bold font-mono", portfolioStats.totalProfit >= 0 ? "text-emerald-400" : "text-red-400")}>
                 {portfolioStats.totalProfit >= 0 ? '+' : ''}${portfolioStats.totalProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
-            </div>
-          </div>
-
-          {/* Broker Connections */}
-          <div className="glass-card rounded-2xl p-5 space-y-4">
-            <div className="flex justify-between items-center">
-              <h4 className="font-display font-bold text-white text-xs uppercase tracking-wider text-slate-500">Connected Broker</h4>
-            </div>
-            
-            <div className="flex gap-1.5 p-1 rounded-xl bg-slate-900/60 border border-white/5">
-              {[
-                { id: 'alpaca', label: 'Alpaca API' },
-                { id: 'mt5', label: 'MetaTrader 5 (MT5)' },
-                { id: 'custom', label: 'Custom Broker' }
-              ].map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setBrokerType(id as any)}
-                  className={cn(
-                    "flex-1 text-[9px] font-bold py-1.5 rounded-lg transition-all cursor-pointer text-center",
-                    brokerType === id ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" : "text-slate-400 hover:text-slate-200"
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {editedData.brokerType?.toLowerCase() === brokerType ? (
-              <div className="space-y-3.5">
-                <div className="p-3.5 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-center text-xs">
-                  <div>
-                    <div className="font-bold text-slate-200">
-                      {brokerType === 'alpaca' ? 'Alpaca Securities LLC' : brokerType === 'mt5' ? 'MetaTrader 5 Client' : 'Custom Broker Terminal'}
-                    </div>
-                    <div className="text-[10px] text-slate-500 mt-1">
-                      Account ID: {editedData.brokerKey ? `${editedData.brokerKey.slice(0, 8)}••••••••` : '••••••••'}
-                    </div>
-                    {editedData.brokerServer && (
-                      <div className="text-[9px] text-slate-600 mt-0.5">
-                        Server/Endpoint: {editedData.brokerServer}
-                      </div>
-                    )}
-                  </div>
-                  <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONNECTED</Badge>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleBrokerSync}
-                    className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <RefreshCw size={12} /> Sync
-                  </button>
-                  <button
-                    onClick={handleDisconnectBroker}
-                    className="btn-ghost flex-1 text-xs py-2 rounded-xl font-bold text-red-400 hover:text-red-300 border-red-500/20 cursor-pointer"
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3.5 text-xs">
-                <p className="text-[10px] text-slate-500 leading-normal">
-                  {brokerType === 'alpaca'
-                    ? 'Enter your Alpaca Paper or Live API keys to authorize auto-trading execution.'
-                    : brokerType === 'mt5'
-                      ? 'Enter your MetaTrader 5 Login ID, password, and broker server details.'
-                      : 'Enter your custom broker API key and endpoint gateway server.'}
-                </p>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">
-                      {brokerType === 'alpaca' ? 'API Key ID' : brokerType === 'mt5' ? 'MT5 Login ID' : 'Broker API Key / ID'}
-                    </label>
-                    <input
-                      type="text"
-                      placeholder={brokerType === 'alpaca' ? 'e.g. CKEW3CS6HQ6ULMVSIDHQ' : brokerType === 'mt5' ? 'e.g. 509214' : 'API Key ID'}
-                      value={editedData.brokerKey || ''}
-                      onChange={(e) => setEditedData(prev => ({ ...prev, brokerKey: e.target.value }))}
-                      className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">
-                      {brokerType === 'alpaca' ? 'Secret Key' : brokerType === 'mt5' ? 'MT5 Password' : 'Secret Key / Password'}
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="••••••••••••••••••••••••••••••••••••••••"
-                      value={editedData.brokerSecret || ''}
-                      onChange={(e) => setEditedData(prev => ({ ...prev, brokerSecret: e.target.value }))}
-                      className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
-                    />
-                  </div>
-                  {brokerType !== 'alpaca' ? (
-                    <div>
-                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">
-                        {brokerType === 'mt5' ? 'MT5 Server Host' : 'API Endpoint Server'}
-                      </label>
-                      <input
-                        type="text"
-                        placeholder={brokerType === 'mt5' ? 'e.g. ICMarkets-Demo' : 'e.g. https://api.custombroker.com'}
-                        value={editedData.brokerServer || ''}
-                        onChange={(e) => setEditedData(prev => ({ ...prev, brokerServer: e.target.value }))}
-                        className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
-                      />
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="block text-[9px] uppercase font-bold text-slate-500 tracking-wider mb-1">API Endpoint environment</label>
-                      <select
-                        value={editedData.brokerServer || 'https://paper-api.alpaca.markets'}
-                        onChange={(e) => setEditedData(prev => ({ ...prev, brokerServer: e.target.value }))}
-                        className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
-                      >
-                        <option value="https://paper-api.alpaca.markets">Paper Sandbox (Demo)</option>
-                        <option value="https://api.alpaca.markets">Live Account (Production)</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleConnectBroker(brokerType)}
-                  className="w-full btn-primary py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                >
-                  Authenticate {brokerType === 'alpaca' ? 'Alpaca API' : brokerType === 'mt5' ? 'MT5 Account' : 'Custom Broker'}
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </div>
+    </div>
 
       {/* --- Floating Bottom Edit Action Bar (shows only when editMode active) --- */}
       <AnimatePresence>
