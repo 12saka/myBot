@@ -427,18 +427,18 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // Gold spot bounds check: Real Gold spot / PAXG trades between $1500 and $10000 per oz.
+        // Gold spot bounds check: Real Gold spot / PAXG trades between $1800 and $3500 per troy oz.
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
-          if (currentPrice > 10000 || currentPrice < 1500) {
-            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1500 && cryptoPriceMap['PAXGUSDT'].price <= 10000) {
+          if (currentPrice > 3500 || currentPrice < 1800) {
+            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1800 && cryptoPriceMap['PAXGUSDT'].price <= 3500) {
               currentPrice = cryptoPriceMap['PAXGUSDT'].price;
               changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
               volume24h = cryptoPriceMap['PAXGUSDT'].volume;
-            } else if (yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price >= 1500 && yahooPriceMap['XAUUSD=X'].price <= 10000) {
+            } else if (yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price >= 1800 && yahooPriceMap['XAUUSD=X'].price <= 3500) {
               currentPrice = yahooPriceMap['XAUUSD=X'].price;
               changePct24h = yahooPriceMap['XAUUSD=X'].changePct;
               volume24h = yahooPriceMap['XAUUSD=X'].volume;
-            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1500 && yahooPriceMap['GC=F'].price <= 10000) {
+            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1800 && yahooPriceMap['GC=F'].price <= 3500) {
               currentPrice = yahooPriceMap['GC=F'].price;
               changePct24h = yahooPriceMap['GC=F'].changePct;
               volume24h = yahooPriceMap['GC=F'].volume;
@@ -447,7 +447,7 @@ export class MarketsService implements OnModuleInit {
                 const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT', {}, 2500);
                 if (paxgRes.ok) {
                   const pData = await paxgRes.json();
-                  if (pData && Number(pData.lastPrice) >= 1500 && Number(pData.lastPrice) <= 10000) {
+                  if (pData && Number(pData.lastPrice) >= 1800 && Number(pData.lastPrice) <= 3500) {
                     currentPrice = Number(pData.lastPrice);
                     changePct24h = Number(pData.priceChangePercent || 0);
                     volume24h = Number(pData.volume || 1000);
