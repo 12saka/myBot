@@ -58,9 +58,10 @@ export class CopilotService {
         timestamp: response.data.timestamp,
       };
     } catch (err: any) {
-      console.error('[CopilotService] Python AI call failed, returning fallback.', err.message);
+      console.error('[CopilotService] Python AI call failed:', err.message);
+      const fallbackDetail = err.response?.data?.reply || err.response?.data?.detail || err.response?.data?.message;
       return {
-        reply: "I am having difficulty connecting to my analytical backend. Market sentiment remains bullish. Please try again shortly.",
+        reply: fallbackDetail || "⚠️ **TradeMind AI Copilot**: Analytical backend is currently synchronizing or waking up on Render. If you recently updated your Gemini API key in `.env`, please ensure your AI service has restarted with valid Google AI Studio quota.",
         timestamp: new Date().toISOString(),
       };
     }
