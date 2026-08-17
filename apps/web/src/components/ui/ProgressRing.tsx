@@ -8,6 +8,7 @@ interface ProgressRingProps {
   trackColor?: string;
   label?: string;
   sublabel?: string;
+  children?: React.ReactNode;
 }
 
 export function ProgressRing({
@@ -18,6 +19,7 @@ export function ProgressRing({
   trackColor = 'rgba(255,255,255,0.06)',
   label,
   sublabel,
+  children,
 }: ProgressRingProps) {
   const r = (size - strokeWidth) / 2;
   const circ = 2 * Math.PI * r;
@@ -40,8 +42,12 @@ export function ProgressRing({
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        {label && <div className="font-display font-bold text-white" style={{ fontSize: size * 0.18 }}>{label}</div>}
-        {sublabel && <div className="text-slate-400" style={{ fontSize: size * 0.1 }}>{sublabel}</div>}
+        {children ? children : (
+          <>
+            {label && <div className="font-display font-bold text-white" style={{ fontSize: size * 0.18 }}>{label}</div>}
+            {sublabel && <div className="text-slate-400" style={{ fontSize: size * 0.1 }}>{sublabel}</div>}
+          </>
+        )}
       </div>
     </div>
   );
