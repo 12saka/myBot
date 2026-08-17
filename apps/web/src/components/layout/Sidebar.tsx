@@ -44,6 +44,7 @@ const NAV_GROUPS = [
   {
     label: 'Account',
     items: [
+      { href: '/notifications', label: 'Notifications', icon: Bell           },
       { href: '/settings',   label: 'Settings',     icon: Settings2        },
     ],
   },
@@ -295,7 +296,7 @@ export function Sidebar() {
           )}
           {/* Official WhatsApp Support Button */}
           <a
-            href="https://wa.me/254712345678?text=Hello%20TradeMind%20Admin%2C%20I%20need%20assistance"
+            href="https://wa.me/254780566096?text=Hello%20TradeMind%20Admin%2C%20I%20need%20assistance"
             target="_blank"
             rel="noopener noreferrer"
             className={cn(

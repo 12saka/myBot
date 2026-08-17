@@ -5,13 +5,15 @@ import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import {
   BookOpen, Play, Calendar, Star, Clock,
-  ArrowRight, Search, Award, GraduationCap, Video, RefreshCw, AlertTriangle
+  ArrowRight, Search, Award, GraduationCap, Video, RefreshCw, AlertTriangle,
+  HelpCircle, CheckCircle2, ShieldCheck, Flame, Zap
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from 'react-hot-toast';
 import { apiFetch } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { QuizModal } from '@/components/academy/QuizModal';
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
 
@@ -26,6 +28,27 @@ interface CourseItem {
   completedLessons: number;
   progressPercent: number;
   hasCertificate: boolean;
+}
+
+interface QuizItem {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: string;
+  timeLimitMinutes: number;
+  passMarkPct: number;
+  xpReward: number;
+  questionCount: number;
+  courseTitle?: string;
+  courseImageUrl?: string;
+  lessonTitle?: string;
+  skillTags: string[];
+  userAttempt?: {
+    score: number;
+    percentage: number;
+    passed: boolean;
+    completedAt: string;
+  } | null;
 }
 
 interface LiveSession {
@@ -50,7 +73,9 @@ export default function AcademyPage() {
   const router = useRouter();
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [errorMessage, setErrorMessage] = useState('');
+  const [mainTab, setMainTab] = useState<'COURSES' | 'QUIZZES'>('COURSES');
   const [courses, setCourses] = useState<CourseItem[]>([]);
+  const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [liveSessions, setLiveSessions] = useState<LiveSession[]>([]);
   const [progress, setProgress] = useState<UserProgress>({
     totalCourses: 0,
@@ -60,6 +85,10 @@ export default function AcademyPage() {
     progressPercent: 0
   });
 
+  // Quiz Modal State
+  const [selectedQuizId, setSelectedQuizId] = useState<string | null>(null);
+  const [isQuizModalOpen, setIsQuizModalOpen] = useState(false);
+
   const [activeLevel, setActiveLevel] = useState<'All' | 'Beginner' | 'Intermediate' | 'Advanced'>('All');
   const [search, setSearch] = useState('');
 
@@ -67,10 +96,11 @@ export default function AcademyPage() {
     setLoadState('loading');
     setErrorMessage('');
     try {
-      const [coursesRes, progressRes, liveRes] = await Promise.allSettled([
+      const [coursesRes, progressRes, liveRes, quizzesRes] = await Promise.allSettled([
         apiFetch<CourseItem[]>('/api/v2/academy/courses'),
         apiFetch<UserProgress>('/api/v2/academy/progress'),
-        apiFetch<LiveSession[]>('/api/v2/academy/live-sessions')
+        apiFetch<LiveSession[]>('/api/v2/academy/live-sessions'),
+        apiFetch<QuizItem[]>('/api/v2/academy/quizzes')
       ]);
 
       let fetchedCourses: CourseItem[] = [];
@@ -87,14 +117,18 @@ export default function AcademyPage() {
         setLiveSessions(liveRes.value);
       }
 
-      if (fetchedCourses.length === 0) {
+      if (quizzesRes.status === 'fulfilled' && Array.isArray(quizzesRes.value)) {
+        setQuizzes(quizzesRes.value);
+      }
+
+      if (fetchedCourses.length === 0 && (!quizzesRes || quizzesRes.status !== 'fulfilled' || quizzesRes.value.length === 0)) {
         setLoadState('empty');
       } else {
         setLoadState('ready');
       }
     } catch (err: any) {
       console.warn('[Academy] API load notice:', err);
-      setErrorMessage(err.message || 'Cannot reach API Gateway at http://localhost:4000');
+      setErrorMessage(err.message || 'Cannot reach API Gateway');
       setLoadState('error');
     }
   };
@@ -105,7 +139,13 @@ export default function AcademyPage() {
 
   const filteredCourses = courses.filter(course => {
     const matchLevel = activeLevel === 'All' || course.difficulty.toLowerCase() === activeLevel.toLowerCase();
-    const matchSearch = course.title.toLowerCase().includes(search.toLowerCase()) || course.description.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = course.title.toLowerCase().includes(search.toLowerCase()) || (course.description && course.description.toLowerCase().includes(search.toLowerCase()));
+    return matchLevel && matchSearch;
+  });
+
+  const filteredQuizzes = quizzes.filter(quiz => {
+    const matchLevel = activeLevel === 'All' || quiz.difficulty.toLowerCase() === activeLevel.toLowerCase();
+    const matchSearch = quiz.title.toLowerCase().includes(search.toLowerCase()) || (quiz.description && quiz.description.toLowerCase().includes(search.toLowerCase()));
     return matchLevel && matchSearch;
   });
 
@@ -113,18 +153,50 @@ export default function AcademyPage() {
     const toastId = toast.loading(`Registering for "${session.title}"...`);
     try {
       await apiFetch(`/api/v2/academy/live-sessions/${session.id}/register`, { method: 'POST' });
+      toast.success(`Successfully registered for ${session.title}!`, { id: toastId });
     } catch (err: any) {
       toast.error(err.message || `Failed to register for live webinar "${session.title}". Please try again.`, { id: toastId });
     }
   };
 
+  const handleStartQuiz = (quizId: string) => {
+    setSelectedQuizId(quizId);
+    setIsQuizModalOpen(true);
+  };
+
   return (
     <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
       <PageHeader
-        title="Academy LMS Hub"
-        subtitle="Master institutional trading strategies, quantitative backtesting, and Smart Money Concepts (SMC)."
+        title="Academy LMS & Mastery Hub"
+        subtitle="Master institutional SMC, liquidity footprints, quantitative scalping, and pass strict certification assessments."
         icon={BookOpen}
       />
+
+      {/* Main Tab Switcher */}
+      <div className="flex border-b border-white/5 pb-2 gap-4">
+        <button
+          onClick={() => setMainTab('COURSES')}
+          className={cn(
+            "flex items-center gap-2 pb-2 px-2 text-sm font-bold transition-all border-b-2 cursor-pointer",
+            mainTab === 'COURSES'
+              ? "border-purple-500 text-white"
+              : "border-transparent text-slate-400 hover:text-white"
+          )}
+        >
+          <GraduationCap size={16} /> Courses & Modules ({courses.length})
+        </button>
+        <button
+          onClick={() => setMainTab('QUIZZES')}
+          className={cn(
+            "flex items-center gap-2 pb-2 px-2 text-sm font-bold transition-all border-b-2 cursor-pointer",
+            mainTab === 'QUIZZES'
+              ? "border-purple-500 text-white"
+              : "border-transparent text-slate-400 hover:text-white"
+          )}
+        >
+          <HelpCircle size={16} /> Quizzes & Strict Assessments ({quizzes.length})
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Core content */}
@@ -149,7 +221,7 @@ export default function AcademyPage() {
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text"
-                  placeholder="Search curriculum..."
+                  placeholder={mainTab === 'COURSES' ? "Search curriculum..." : "Search quizzes..."}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   className="input-glass pl-8 pr-4 py-2 rounded-xl text-xs w-full sm:w-52 md:w-64"
@@ -158,7 +230,7 @@ export default function AcademyPage() {
               <button
                 onClick={fetchAcademyData}
                 className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                title="Refresh Course Directory"
+                title="Refresh Directory"
               >
                 <RefreshCw size={14} className={cn(loadState === 'loading' && "animate-spin")} />
               </button>
@@ -195,15 +267,7 @@ export default function AcademyPage() {
             </div>
           )}
 
-          {loadState === 'empty' && (
-            <div className="glass-card rounded-2xl p-8 border border-white/5 text-center space-y-3">
-              <BookOpen size={32} className="text-slate-500 mx-auto" />
-              <h3 className="font-bold text-white text-base">No Courses Published Yet</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">The institutional LMS course directory is currently empty.</p>
-            </div>
-          )}
-
-          {loadState === 'ready' && (
+          {loadState === 'ready' && mainTab === 'COURSES' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {filteredCourses.map((course) => (
                 <div key={course.id} className="glass-card rounded-2xl overflow-hidden flex flex-col justify-between border border-white/5 hover:border-purple-500/30 transition-all duration-300">
@@ -215,7 +279,6 @@ export default function AcademyPage() {
                         alt={course.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         onError={(e) => {
-                          // Image fallback if URL fails to load
                           (e.target as HTMLElement).style.display = 'none';
                         }}
                       />
@@ -253,6 +316,95 @@ export default function AcademyPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Quizzes & Strict Assessment Tab */}
+          {loadState === 'ready' && mainTab === 'QUIZZES' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {filteredQuizzes.length === 0 ? (
+                <div className="col-span-2 glass-card rounded-2xl p-8 border border-white/5 text-center space-y-2">
+                  <HelpCircle size={32} className="text-slate-500 mx-auto" />
+                  <p className="text-sm font-semibold text-slate-300">No quizzes match your filter criteria.</p>
+                </div>
+              ) : (
+                filteredQuizzes.map((quiz) => {
+                  const isPassed = quiz.userAttempt?.passed;
+                  const hasAttempt = Boolean(quiz.userAttempt);
+
+                  return (
+                    <div
+                      key={quiz.id}
+                      className="glass-card rounded-2xl overflow-hidden flex flex-col justify-between border border-white/5 hover:border-purple-500/30 transition-all duration-300 p-5 space-y-4"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant={quiz.difficulty === 'BEGINNER' ? 'blue' : quiz.difficulty === 'INTERMEDIATE' ? 'purple' : 'amber'} size="xs">
+                              {quiz.difficulty}
+                            </Badge>
+                            <span className="text-[10px] font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              Pass: {quiz.passMarkPct}%
+                            </span>
+                          </div>
+
+                          {hasAttempt && (
+                            <span
+                              className={cn(
+                                "text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1",
+                                isPassed
+                                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                  : "bg-red-500/20 text-red-300 border border-red-500/30"
+                              )}
+                            >
+                              {isPassed ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
+                              {isPassed ? `Passed (${quiz.userAttempt?.score}%)` : `Retake Needed (${quiz.userAttempt?.score}%)`}
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <h3 className="font-bold text-slate-100 text-sm leading-snug">{quiz.title}</h3>
+                          {quiz.courseTitle && (
+                            <p className="text-[10px] text-purple-300 font-semibold mt-0.5">📚 {quiz.courseTitle}</p>
+                          )}
+                          <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed mt-2">{quiz.description}</p>
+                        </div>
+
+                        {/* Skill Badges */}
+                        {quiz.skillTags && quiz.skillTags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {quiz.skillTags.map(tag => (
+                              <span key={tag} className="text-[9px] bg-white/5 text-slate-300 px-2 py-0.5 rounded border border-white/5">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-white/5">
+                          <span className="flex items-center gap-1"><HelpCircle size={12} className="text-purple-400" /> {quiz.questionCount} Questions</span>
+                          <span className="flex items-center gap-1"><Clock size={12} className="text-purple-400" /> {quiz.timeLimitMinutes} Mins</span>
+                          <span className="flex items-center gap-1 text-emerald-400 font-bold"><Award size={12} /> +{quiz.xpReward} XP</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleStartQuiz(quiz.id)}
+                        className={cn(
+                          "w-full py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-lg",
+                          isPassed
+                            ? "bg-white/5 hover:bg-purple-500 text-slate-200 hover:text-white border border-white/10"
+                            : "bg-purple-500 hover:bg-purple-600 text-white shadow-purple-500/20"
+                        )}
+                      >
+                        <Zap size={13} />
+                        {isPassed ? 'Retake Assessment' : 'Start Strict Timed Quiz'}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
           )}
         </div>
@@ -301,12 +453,12 @@ export default function AcademyPage() {
                 <h3 className="font-display font-bold text-white text-sm">Certification Progress</h3>
               </div>
               <p className="text-[11px] text-slate-500 leading-normal">
-                Complete all course modules to earn institutional certification badges.
+                Pass all strict lesson quizzes to earn verified institutional trading certificates.
               </p>
             </div>
             <div className="space-y-1.5 mt-2">
               <div className="flex justify-between text-[10px] text-slate-400">
-                <span>Completed Lessons</span>
+                <span>Completed Modules</span>
                 <span className="text-white font-bold">{progress.completedLessons} / {progress.totalLessons}</span>
               </div>
               <div className="progress-track h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -316,6 +468,19 @@ export default function AcademyPage() {
           </div>
         </div>
       </div>
+
+      {/* Interactive Strict Timed Quiz Modal */}
+      <QuizModal
+        quizId={selectedQuizId}
+        isOpen={isQuizModalOpen}
+        onClose={() => {
+          setIsQuizModalOpen(false);
+          setSelectedQuizId(null);
+        }}
+        onCompleted={() => {
+          fetchAcademyData();
+        }}
+      />
     </motion.div>
   );
 }

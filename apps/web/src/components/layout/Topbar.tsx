@@ -334,13 +334,13 @@ export function Topbar() {
 
           {/* WhatsApp Admin Support Button */}
           <a
-            href="https://wa.me/254712345678?text=Hello%20TradeMind%20Admin%2C%20I%20need%20assistance"
+            href="https://wa.me/254780566096?text=Hello%20TradeMind%20Admin%2C%20I%20need%20assistance"
             target="_blank"
             rel="noopener noreferrer"
             className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-bold transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
           >
             <MessageCircle size={14} className="text-emerald-400" />
-            <span className="hidden md:inline">WhatsApp Admin</span>
+            <span className="hidden md:inline">WhatsApp Admin (0780566096)</span>
           </a>
 
           {/* Notifications Bell */}
@@ -376,7 +376,7 @@ export function Topbar() {
                       No new notifications
                     </div>
                   ) : (
-                    notifications.filter(n => !n.isRead).slice(0, 4).map((notif) => (
+                    notifications.filter(n => !n.isRead).slice(0, 8).map((notif) => (
                       <div
                         key={notif.id}
                         onClick={() => handleMarkSingleRead(notif.id)}
@@ -397,7 +397,7 @@ export function Topbar() {
 
                 <div className="border-t border-white/5 pt-2 flex justify-center">
                   <Link
-                    href="/settings?tab=notifications"
+                    href="/notifications"
                     onClick={() => setDropdownOpen(false)}
                     className="text-[10px] text-center font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 hover:underline transition-colors"
                   >

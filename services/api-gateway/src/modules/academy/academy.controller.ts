@@ -17,6 +17,26 @@ export class AcademyController {
     return this.academyService.getUserProgress(req.user.userId || req.user.id);
   }
 
+  @Get('quizzes')
+  async getAvailableQuizzes(@Request() req: any) {
+    return this.academyService.getAvailableQuizzes(req.user.userId || req.user.id);
+  }
+
+  @Get('quizzes/stats')
+  async getUserQuizStats(@Request() req: any) {
+    return this.academyService.getUserQuizStats(req.user.userId || req.user.id);
+  }
+
+  @Get('quizzes/:id')
+  async getQuizById(@Request() req: any, @Param('id') quizId: string) {
+    return this.academyService.getQuizById(req.user.userId || req.user.id, quizId);
+  }
+
+  @Post('quizzes/:id/submit')
+  async submitQuiz(@Request() req: any, @Param('id') quizId: string, @Body() body: any) {
+    return this.academyService.submitQuiz(req.user.userId || req.user.id, quizId, body);
+  }
+
   @Get('live-sessions')
   async getLiveSessions() {
     return this.academyService.getLiveSessions();

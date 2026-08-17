@@ -207,4 +207,21 @@ export class AdminController {
   async getAuditLogs(@Query('page') page?: number, @Query('limit') limit?: number) {
     return this.adminService.getAuditLogs(Number(page || 1), Number(limit || 50));
   }
+  @Post('notifications/broadcast')
+  @ApiOperation({ summary: 'Broadcast a notification to ALL users' })
+  async broadcastNotification(@Req() req: any, @Body() body: { title: string; message: string; type?: string }) {
+    return this.adminService.broadcastNotification(req.user.userId, body);
+  }
+
+  @Post('notifications/send')
+  @ApiOperation({ summary: 'Send notification to a specific user' })
+  async sendNotificationToUser(@Req() req: any, @Body() body: { userId: string; title: string; message: string; type?: string }) {
+    return this.adminService.sendNotificationToUser(req.user.userId, body);
+  }
+
+  @Get('notifications/history')
+  @ApiOperation({ summary: 'Get recent admin-sent notifications (last 50)' })
+  async getNotificationHistory() {
+    return this.adminService.getNotificationHistory();
+  }
 }

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, BrainCircuit, TrendingUp, TrendingDown,
-  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles, AlertTriangle, Trophy, Target
+  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles, AlertTriangle, Trophy, Target, Bell, BellRing
 } from 'lucide-react';
 import { useAIStore, AISignal } from '@/store/useAIStore';
 import { useMarketStore } from '@/store/useMarketStore';
@@ -15,6 +15,8 @@ import { StatCard } from '@/components/ui/StatCard';
 import { cn } from '@/lib/utils';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
 import { TradingViewWidget } from '@/components/charts/TradingViewWidget';
+import { SignalPositionTool } from '@/components/charts/SignalPositionTool';
+import { playSignalChime, sendDeviceNotification, requestDeviceNotificationPermission } from '@/lib/notifications';
 import { toast } from 'react-hot-toast';
 import { apiFetch, mapSignal } from '@/lib/api';
 
@@ -35,6 +37,56 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [isTradeOpen, setIsTradeOpen] = useState(false);
   const isBuy = signal.direction === 'BUY';
+
+  // Real-time Relative Timestamp (Ticks live)
+  const [timeAgo, setTimeAgo] = useState('Just now');
+  const [waitCountdown, setWaitCountdown] = useState(10);
+
+  useEffect(() => {
+    const updateRelative = () => {
+      const ts = signal.updatedAt || signal.createdAt;
+      if (!ts) {
+        setTimeAgo('Just now');
+        return;
+      }
+      const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+      if (diff < 5) setTimeAgo('Just now');
+      else if (diff < 60) setTimeAgo(`${diff}s ago`);
+      else if (diff < 3600) setTimeAgo(`${Math.floor(diff / 60)}m ago`);
+      else setTimeAgo(new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    };
+
+    updateRelative();
+    const interval = setInterval(updateRelative, 1000);
+    return () => clearInterval(interval);
+  }, [signal.updatedAt, signal.createdAt]);
+
+  // Strict 10-Second Wait Signal Auto-Dismissal
+  useEffect(() => {
+    if (signal.direction !== 'WAIT') return;
+    const createdMs = signal.createdAt ? new Date(signal.createdAt).getTime() : Date.now();
+    const elapsed = Math.floor((Date.now() - createdMs) / 1000);
+    const remaining = Math.max(0, 10 - elapsed);
+    setWaitCountdown(remaining);
+
+    if (remaining === 0) {
+      onDelete(signal.id);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setWaitCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onDelete(signal.id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [signal.id, signal.direction, signal.createdAt, onDelete]);
 
   return (
     <motion.div
@@ -86,11 +138,16 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               {!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
             </Badge>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] text-slate-500">{signal.strategy}</span>
-            <span className="text-[10px] text-cyan-400 font-mono flex items-center gap-1 bg-cyan-950/40 px-1.5 py-0.5 rounded border border-cyan-500/20">
-              <Clock size={10} /> Generated {signal.createdAt ? new Date(signal.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Just now'}
+            <span className="text-[10px] text-cyan-300 font-mono flex items-center gap-1 bg-cyan-950/50 px-2 py-0.5 rounded border border-cyan-500/30">
+              <Clock size={10} className="text-cyan-400" /> Updated: {timeAgo}
             </span>
+            {signal.direction === 'WAIT' && (
+              <span className="text-[10px] text-amber-300 font-mono font-bold flex items-center gap-1 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40 animate-pulse">
+                ⏳ Auto-Dismissing in {waitCountdown}s...
+              </span>
+            )}
           </div>
         </div>
         <ProgressRing
@@ -173,6 +230,21 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
           </span>
         </div>
       </div>
+
+      {/* TradingView Long / Short Position Visual Tool */}
+      {signal.direction !== 'WAIT' && (
+        <div className="pt-1">
+          <SignalPositionTool
+            symbol={signal.symbol}
+            direction={signal.direction}
+            entryPrice={signal.entry}
+            stopLoss={signal.stopLoss}
+            takeProfit={signal.tp1}
+            accountSize={10000}
+            riskPercent={1.0}
+          />
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-4 text-xs">
         {[
           { label: 'Risk:Reward', value: signal.riskReward, icon: BarChart3 },
@@ -514,7 +586,7 @@ const AVAILABLE_MARKETS = [
 
 export default function SignalsPage() {
   const { signals, setSignals, autonomousActive, autoGenerate, setAutoGenerate } = useAIStore();
-  const { watchlist } = useMarketStore();
+  const { watchlist, tickers } = useMarketStore();
   const [activeTab, setActiveTab] = useState<'all'|'crypto'|'stocks'|'indices'|'forex'|'commodities'>('all');
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1m'|'3m'|'5m'|'15m'|'30m'|'1h'>('1h');
   
@@ -522,6 +594,7 @@ export default function SignalsPage() {
   const [generatingSymbol, setGeneratingSymbol] = useState<string | null>(null);
   const [showManualModal, setShowManualModal] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   
   // Chart drawer states
   const [selectedChartSignal, setSelectedChartSignal] = useState<AISignal | null>(null);
@@ -538,17 +611,80 @@ export default function SignalsPage() {
   const [manualStrategy, setManualStrategy] = useState('Manual Pivot Strategy');
   const [manualExplanation, setManualExplanation] = useState('');
 
+  // Check notification permission on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationsEnabled(Notification.permission === 'granted');
+    }
+  }, []);
+
+  const handleToggleNotifications = async () => {
+    const granted = await requestDeviceNotificationPermission();
+    setNotificationsEnabled(granted);
+    if (granted) {
+      playSignalChime('NEW_SIGNAL');
+      sendDeviceNotification('TradeMind AI Alerts Active', {
+        body: 'Device notifications activated! You will receive instant push alerts when new trade signals trigger or reach take profit.'
+      });
+      toast.success('On-device notifications enabled!');
+    } else {
+      toast.error('Device notification permission was not granted.');
+    }
+  };
+
+  // Real-time Target Price & TP Monitor (Checks live market prices vs active targets every 2.5s)
+  useEffect(() => {
+    const checkTargets = async () => {
+      const activeList = useAIStore.getState().signals || [];
+      if (activeList.length === 0 || !tickers || tickers.length === 0) return;
+
+      for (const sig of activeList) {
+        if (sig.direction === 'WAIT' || !sig.entry || !sig.tp1) continue;
+
+        const norm = sig.symbol.replace('/USD', '').toUpperCase();
+        const ticker = tickers.find((t) => t.symbol.toUpperCase().replace('/USD', '') === norm || t.symbol.toUpperCase() === norm);
+        if (!ticker || !ticker.price) continue;
+
+        const curr = ticker.price;
+        const isBuy = sig.direction === 'BUY';
+        const hitTP = isBuy ? curr >= sig.tp1 : curr <= sig.tp1;
+
+        if (hitTP) {
+          playSignalChime('TP_HIT');
+          sendDeviceNotification(`🎯 Take Profit Hit: ${sig.symbol}!`, {
+            body: `${sig.direction} target achieved at ${sig.tp1} (+${sig.riskReward} R:R). Generating next fresh signal...`,
+          });
+          toast.success(`🎉 TARGET HIT on ${sig.symbol} at ${sig.tp1}! Closed in full profit (+${sig.riskReward}). Generating replacement signal...`, {
+            duration: 6000,
+            icon: '🎯',
+          });
+
+          // Auto-dismiss the hit signal
+          handleDeleteSignal(sig.id);
+
+          // Immediately generate replacement fresh signal
+          setTimeout(() => {
+            handleGenerateSignalSilent(sig.symbol);
+          }, 1000);
+          break;
+        }
+      }
+    };
+
+    const interval = setInterval(checkTargets, 2500);
+    return () => clearInterval(interval);
+  }, [tickers]);
+
   const filtered = activeTab === 'all' ? signals : signals.filter(s => s.type === activeTab);
   const buySignals  = signals.filter(s => s.direction === 'BUY');
   const sellSignals = signals.filter(s => s.direction === 'SELL');
   const avgConf     = signals.length > 0 ? Math.round(signals.reduce((a, s) => a + s.confidence, 0) / signals.length) : 0;
 
-  // Background Auto-Generator loop (priors watchlisted items, triggers custom toast alerts for incoming signals)
+  // Background Auto-Generator loop
   useEffect(() => {
     if (!autoGenerate) return;
 
     const interval = setInterval(() => {
-      // Prioritize symbols from user's watchlist
       const userWatchlist = watchlist || [];
       const sourceList = userWatchlist.length > 0
         ? userWatchlist
@@ -561,7 +697,7 @@ export default function SignalsPage() {
     return () => clearInterval(interval);
   }, [autoGenerate, signals, watchlist]);
 
-  // Initial load and continuous live background polling (every 10 seconds)
+  // Initial load and continuous live background polling
   useEffect(() => {
     fetchActiveSignalsSilent();
     const pollInterval = setInterval(() => {
@@ -571,7 +707,6 @@ export default function SignalsPage() {
   }, []);
 
   const fetchActiveSignalsSilent = async () => {
-    // Skip polling update if a signal generation is currently in progress
     if (generatingSymbol) return;
 
     try {
@@ -579,14 +714,16 @@ export default function SignalsPage() {
       if (Array.isArray(raw)) {
         const nowMs = Date.now();
         const activeOnly = raw.map(mapSignal).filter(s => {
-          // Allow WAIT signals or signals created in the last 30s to stay visible even if near expiry
-          const isRecent = s.createdAt && (nowMs - new Date(s.createdAt).getTime() < 30000);
-          if (!isRecent && s.expiresAt && new Date(s.expiresAt).getTime() < nowMs) return false;
+          // Filter out WAIT signals older than 10s
+          if (s.direction === 'WAIT') {
+            const ageMs = s.createdAt ? (nowMs - new Date(s.createdAt).getTime()) : 0;
+            if (ageMs > 10000) return false;
+          }
+          if (s.expiresAt && new Date(s.expiresAt).getTime() < nowMs) return false;
           if (s.status === 'EXPIRED' || s.status === 'CLOSED') return false;
           return true;
         });
 
-        // Preserve any freshly generated signals from local state that might be missing from backend list temporarily
         const currentSignals = useAIStore.getState().signals || [];
         const recentLocalSignals = currentSignals.filter(s => s.createdAt && (nowMs - new Date(s.createdAt).getTime() < 30000));
         
@@ -616,6 +753,10 @@ export default function SignalsPage() {
       if (Array.isArray(raw)) {
         const nowMs = Date.now();
         const activeOnly = raw.map(mapSignal).filter(s => {
+          if (s.direction === 'WAIT') {
+            const ageMs = s.createdAt ? (nowMs - new Date(s.createdAt).getTime()) : 0;
+            if (ageMs > 10000) return false;
+          }
           if (s.expiresAt && new Date(s.expiresAt).getTime() < nowMs) return false;
           if (s.status === 'EXPIRED' || s.status === 'CLOSED') return false;
           return true;
@@ -644,6 +785,12 @@ export default function SignalsPage() {
       const exists = signals.some(s => s.symbol === newSignal.symbol && s.direction === newSignal.direction);
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
 
+      // Trigger Acoustic Chime & Native OS Device Push Alert
+      playSignalChime('NEW_SIGNAL');
+      sendDeviceNotification(`⚡ New AI Signal: ${newSignal.direction} ${newSignal.symbol}`, {
+        body: `Entry: ${newSignal.entry} | Target: ${newSignal.tp1} | R:R: ${newSignal.riskReward}`,
+      });
+
       // Autonomous execution if bot is running
       if (autonomousActive && !exists) {
         let quantity = 1.0;
@@ -671,7 +818,7 @@ export default function SignalsPage() {
         }
       }
 
-      // Display dynamic custom visual notification alert toast for incoming signal
+      // Display dynamic custom visual notification alert toast
       if (!exists) {
         toast.custom((t) => (
           <div
@@ -701,11 +848,6 @@ export default function SignalsPage() {
                 <X size={14} />
               </button>
             </div>
-            {newSignal.technicals && newSignal.technicals.length > 0 && (
-              <p className="text-[10px] text-slate-500 bg-white/3 p-2 rounded-lg italic">
-                "{newSignal.technicals[0]}"
-              </p>
-            )}
           </div>
         ), { duration: 6000 });
       }
@@ -728,10 +870,17 @@ export default function SignalsPage() {
         if (!hasActiveForSymbol) {
           setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
         }
-        toast(`No high-probability setup for ${symbol}: ${newSignal.reasoning || 'market conditions are not clean.'}`, { id: toastId });
+        toast(`No clean setup for ${symbol}: ${newSignal.reasoning || 'market consolidating.'}`, { id: toastId });
         return;
       }
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
+      
+      // Trigger Acoustic Chime & Native OS Device Push Alert
+      playSignalChime('NEW_SIGNAL');
+      sendDeviceNotification(`⚡ Generated Signal: ${newSignal.direction} ${newSignal.symbol}`, {
+        body: `Entry: ${newSignal.entry} | Target: ${newSignal.tp1} | R:R: ${newSignal.riskReward}`,
+      });
+      
       toast.success(`Generated AI Signal for ${symbol} successfully!`, { id: toastId });
 
       // Autonomous execution if bot is running
@@ -829,6 +978,21 @@ export default function SignalsPage() {
         icon={Zap}
       >
         <div className="flex items-center gap-3">
+          {/* Native Device Notifications Button */}
+          <button
+            onClick={handleToggleNotifications}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-sm",
+              notificationsEnabled
+                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10"
+                : "bg-white/5 hover:bg-white/10 text-slate-300 border-white/10"
+            )}
+            title={notificationsEnabled ? "Device Push Alerts Active" : "Enable On-Device Push Alerts"}
+          >
+            {notificationsEnabled ? <BellRing size={14} className="text-emerald-400 animate-bounce" /> : <Bell size={14} />}
+            <span>{notificationsEnabled ? "Alerts On" : "Enable Alerts"}</span>
+          </button>
+
           {/* Refresh Button */}
           <button
             onClick={fetchActiveSignals}
@@ -866,51 +1030,98 @@ export default function SignalsPage() {
         </div>
       </PageHeader>
 
-      {/* Live Economic News Protection Banner & CFTC COT Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Economic News Calendar Feed */}
-        {/* Operational Market Risk & Volatility Monitor */}
-        <div className="glass-card rounded-2xl p-4 border border-blue-500/20 bg-blue-950/10 flex flex-col gap-2">
+      {/* Live Operational Engines & Global Market Sessions */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Volatility Protection Engine */}
+        <div className="glass-card rounded-2xl p-4 border border-blue-500/20 bg-blue-950/10 flex flex-col justify-between gap-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-              <Clock size={14} /> Volatility & Volatility Protection Engine
+              <Clock size={14} /> Volatility & Risk Guard
             </span>
             <Badge variant="green" size="sm">Active Engine</Badge>
           </div>
           <div className="flex items-center justify-between bg-slate-900/60 p-2.5 rounded-xl border border-white/5 text-xs text-slate-300">
             <div>
               <div className="font-bold text-white">Dynamic Volatility Filter (ATR-14)</div>
-              <div className="text-[10px] text-slate-400">Status: Operational │ Risk Boundaries: Active │ Drawdown Guard: Enabled</div>
+              <div className="text-[10px] text-slate-400">Risk Boundaries: Active │ Drawdown Guard: Enabled</div>
             </div>
             <div className="text-right font-mono font-bold text-emerald-400 text-xs">
               Optimal
             </div>
           </div>
           <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
-            <Shield size={12} className="text-emerald-400" /> Dynamic Risk Guard: Auto ATR stop-loss buffer active for all trade setups.
+            <Shield size={12} className="text-emerald-400 shrink-0" /> Auto ATR stop-loss buffer active for all direct market setups.
+          </div>
+        </div>
+
+        {/* Global Trading Sessions Engine */}
+        <div className="glass-card rounded-2xl p-4 border border-emerald-500/20 bg-emerald-950/10 flex flex-col justify-between gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <Sparkles size={14} /> Global Market Sessions
+            </span>
+            {(() => {
+              const h = new Date().getUTCHours();
+              const isOverlap = h >= 13 && h < 17;
+              const isLondon = h >= 8 && h < 17;
+              const isNY = h >= 13 && h < 22;
+              return (
+                <span className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-bold font-mono",
+                  isOverlap ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse" :
+                  isLondon || isNY ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40" :
+                  "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                )}>
+                  {isOverlap ? "🔥 LONDON/NY OVERLAP" : isLondon ? "🟢 LONDON OPEN" : isNY ? "🟢 NEW YORK OPEN" : "🌙 ASIAN GLOBEX"}
+                </span>
+              );
+            })()}
+          </div>
+          
+          <div className="grid grid-cols-4 gap-1.5 text-center font-mono text-[10px]">
+            {(() => {
+              const h = new Date().getUTCHours();
+              const sessions = [
+                { name: 'London', open: h >= 8 && h < 17, hours: '08-17 UTC' },
+                { name: 'New York', open: h >= 13 && h < 22, hours: '13-22 UTC' },
+                { name: 'Tokyo', open: h >= 0 && h < 9, hours: '00-09 UTC' },
+                { name: 'Sydney', open: h >= 22 || h < 7, hours: '22-07 UTC' },
+              ];
+              return sessions.map(s => (
+                <div key={s.name} className={cn("p-1.5 rounded-lg border", s.open ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-300 font-bold" : "bg-white/2 border-white/5 text-slate-500")}>
+                  <div>{s.name}</div>
+                  <div className="text-[8px] opacity-75">{s.open ? "● OPEN" : "○ CLOSED"}</div>
+                </div>
+              ));
+            })()}
+          </div>
+
+          <div className="text-[10px] text-slate-400 font-mono flex items-center justify-between">
+            <span>Server Time: {new Date().toISOString().substring(11, 16)} UTC</span>
+            <span className="text-emerald-400 font-bold">Max Execution Volatility</span>
           </div>
         </div>
 
         {/* Technical Structure Confluence Engine */}
-        <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col gap-2">
+        <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col justify-between gap-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
-              <BrainCircuit size={14} /> Market Structure Confluence Engine
+              <BrainCircuit size={14} /> Market Confluence Engine
             </span>
             <Badge variant="purple" size="sm">7-Step Confluence</Badge>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="bg-slate-900/60 p-2 rounded-xl border border-white/5">
               <div className="text-[10px] text-slate-400 uppercase font-bold">Fair Value Gap (FVG)</div>
-              <div className="font-bold text-emerald-400 text-xs">3-Candle Imbalance Scanner</div>
+              <div className="font-bold text-emerald-400 text-[11px]">3-Candle Imbalance</div>
             </div>
             <div className="bg-slate-900/60 p-2 rounded-xl border border-white/5">
-              <div className="text-[10px] text-slate-400 uppercase font-bold">Institutional Order Block</div>
-              <div className="font-bold text-emerald-400 text-xs">Liquidity Sweep Detector</div>
+              <div className="text-[10px] text-slate-400 uppercase font-bold">Institutional Block</div>
+              <div className="font-bold text-emerald-400 text-[11px]">Liquidity Sweeps</div>
             </div>
           </div>
           <div className="text-[10px] text-slate-400 italic">
-            Structure Alignment: Signals require multi-timeframe EMA trend and RSI momentum confluence before publishing.
+            Structure: Signals enforce multi-timeframe EMA & RSI momentum confluence.
           </div>
         </div>
       </div>

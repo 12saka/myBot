@@ -5,7 +5,8 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import {
   BrainCircuit, Activity, TrendingUp, TrendingDown, Zap, Shield,
-  BarChart3, RefreshCw, Newspaper
+  BarChart3, RefreshCw, Newspaper, HelpCircle, Award, CheckCircle2,
+  Clock, ArrowRight, GraduationCap, Flame, Sparkles, BookOpen
 } from 'lucide-react';
 import { useAIStore } from '@/store/useAIStore';
 import { usePortfolioStore } from '@/store/usePortfolioStore';
@@ -18,9 +19,9 @@ import { MiniSparkline } from '@/components/charts/MiniSparkline';
 import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 import { AnimatePresence } from 'framer-motion';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
+import { QuizModal } from '@/components/academy/QuizModal';
+import { SignalPositionTool } from '@/components/charts/SignalPositionTool';
 import { apiFetch } from '@/lib/api';
-
-
 
 const CONTAINER = {
   hidden: { opacity: 0 },
@@ -42,6 +43,19 @@ export default function DashboardPage() {
   const [tradeSymbol, setTradeSymbol] = useState('BTC');
   const [tradeDirection, setTradeDirection] = useState<'BUY' | 'SELL'>('BUY');
 
+  // Quiz Modal & Stats State
+  const [quizStats, setQuizStats] = useState<any>({
+    totalQuizzes: 0,
+    passedCount: 0,
+    passRate: 0,
+    totalXp: 0,
+    skillsMastery: { "Market Structure": 80, "Technical Analysis": 85, "Risk Management": 90 },
+    recentAttempts: []
+  });
+  const [featuredQuiz, setFeaturedQuiz] = useState<any>(null);
+  const [selectedQuizId, setSelectedQuizId] = useState<string | null>(null);
+  const [isQuizModalOpen, setIsQuizModalOpen] = useState(false);
+
   const openTrade = (symbol: string, direction: 'BUY' | 'SELL') => {
     setTradeSymbol(symbol);
     setTradeDirection(direction);
@@ -53,26 +67,47 @@ export default function DashboardPage() {
   const [dashboardNews, setDashboardNews] = useState<any[]>([]);
   const [newsLoading, setNewsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        const statsData = await apiFetch<any>('/api/v2/portfolio/stats');
-        if (statsData) setStats(statsData);
-      } catch (err) {
-        console.warn('[Dashboard] Failed to fetch stats:', err);
+  const fetchDashboardData = async () => {
+    try {
+      const statsData = await apiFetch<any>('/api/v2/portfolio/stats');
+      if (statsData) setStats(statsData);
+    } catch (err) {
+      console.warn('[Dashboard] Failed to fetch stats:', err);
+    }
+
+    try {
+      const newsData = await apiFetch<any[]>('/api/v2/markets/news');
+      if (Array.isArray(newsData)) {
+        setDashboardNews(newsData.slice(0, 5));
+      }
+    } catch (err) {
+      console.warn('[Dashboard] Failed to fetch news:', err);
+    } finally {
+      setNewsLoading(false);
+    }
+
+    // Fetch Academy Quiz Stats & Featured Quiz
+    try {
+      const [qStats, qList] = await Promise.allSettled([
+        apiFetch<any>('/api/v2/academy/quizzes/stats'),
+        apiFetch<any[]>('/api/v2/academy/quizzes')
+      ]);
+
+      if (qStats.status === 'fulfilled' && qStats.value) {
+        setQuizStats(qStats.value);
       }
 
-      try {
-        const newsData = await apiFetch<any[]>('/api/v2/markets/news');
-        if (Array.isArray(newsData)) {
-          setDashboardNews(newsData.slice(0, 5));
-        }
-      } catch (err) {
-        console.warn('[Dashboard] Failed to fetch news:', err);
-      } finally {
-        setNewsLoading(false);
+      if (qList.status === 'fulfilled' && Array.isArray(qList.value) && qList.value.length > 0) {
+        // Pick first unpassed quiz or flagship quiz
+        const unpassed = qList.value.find((q: any) => !q.userAttempt?.passed);
+        setFeaturedQuiz(unpassed || qList.value[0]);
       }
-    };
+    } catch (err) {
+      console.warn('[Dashboard] Failed to load quiz metrics:', err);
+    }
+  };
+
+  useEffect(() => {
     fetchDashboardData();
   }, []);
 
@@ -97,6 +132,11 @@ export default function DashboardPage() {
 
   const filteredSignals = activeTab === 'all' ? signals : signals.filter((s) => s.type === activeTab);
   const topTickers = tickers.slice(0, 6);
+
+  const handleLaunchQuiz = (quizId: string) => {
+    setSelectedQuizId(quizId);
+    setIsQuizModalOpen(true);
+  };
 
   return (
     <motion.div className="space-y-6" variants={CONTAINER} initial="hidden" animate="show">
@@ -154,50 +194,202 @@ export default function DashboardPage() {
         />
       </motion.div>
 
+      {/* Academy Quizzes & Knowledge Mastery Widget on Dashboard */}
+      <motion.div variants={ITEM} className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left 2 Cols: Featured Quiz & Active Assessment Challenge */}
+        <div className="lg:col-span-2 glass-panel rounded-2xl border border-white/10 p-6 flex flex-col justify-between relative overflow-hidden bg-gradient-to-r from-purple-950/30 via-slate-900/60 to-indigo-950/30 shadow-xl">
+          <div className="absolute top-0 right-0 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+          
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-purple-500/20 text-purple-400">
+                  <HelpCircle size={16} />
+                </span>
+                <span className="font-display font-bold text-white text-xs uppercase tracking-wider">
+                  Academy Knowledge Check & Strict Assessments
+                </span>
+              </div>
+              <Link
+                href="/academy"
+                className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                All Quizzes <ArrowRight size={13} />
+              </Link>
+            </div>
+
+            {featuredQuiz ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="purple" size="xs">{featuredQuiz.difficulty || 'INTERMEDIATE'}</Badge>
+                  <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                    Strict Pass Mark: {featuredQuiz.passMarkPct || 75}%
+                  </span>
+                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                    <Clock size={11} className="text-purple-400" /> {featuredQuiz.timeLimitMinutes || 15} Mins
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                    <Award size={11} /> +{featuredQuiz.xpReward || 150} XP
+                  </span>
+                </div>
+
+                <div>
+                  <h3 className="text-base font-bold text-white leading-snug">{featuredQuiz.title}</h3>
+                  <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed mt-1">{featuredQuiz.description}</p>
+                </div>
+
+                {featuredQuiz.skillTags && featuredQuiz.skillTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {featuredQuiz.skillTags.map((t: string) => (
+                      <span key={t} className="text-[9px] bg-white/5 text-purple-300 px-2 py-0.5 rounded-md border border-white/5">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-slate-400">
+                Sharpen your trading edge with institutional quizzes and SMC assessments.
+              </div>
+            )}
+          </div>
+
+          <div className="pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-white/5 mt-4">
+            <div className="flex items-center gap-4 text-xs text-slate-400 w-full sm:w-auto">
+              <div>
+                <span className="block text-[10px] text-slate-500 uppercase">Questions</span>
+                <span className="font-bold text-white">{featuredQuiz?.questionCount || 5} Questions</span>
+              </div>
+              <div className="h-6 w-px bg-white/10" />
+              <div>
+                <span className="block text-[10px] text-slate-500 uppercase">Status</span>
+                <span className={cn("font-bold text-[11px]", featuredQuiz?.userAttempt?.passed ? "text-emerald-400" : "text-amber-400")}>
+                  {featuredQuiz?.userAttempt?.passed ? `Passed (${featuredQuiz.userAttempt.score}%)` : 'Ready to Test'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => handleLaunchQuiz(featuredQuiz?.id)}
+              disabled={!featuredQuiz}
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white font-bold text-xs shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <Zap size={13} />
+              {featuredQuiz?.userAttempt?.passed ? 'Retake Strict Quiz' : 'Launch Assessment'}
+            </button>
+          </div>
+        </div>
+
+        {/* Right Col: Learner Mastery & Radar Stats */}
+        <div className="glass-panel rounded-2xl border border-white/10 p-5 flex flex-col justify-between gap-4 bg-slate-950/60">
+          <div>
+            <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-3">
+              <h3 className="font-display font-bold text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+                <Award size={14} className="text-purple-400" />
+                Competency & XP
+              </h3>
+              <span className="text-[11px] font-bold text-purple-300 flex items-center gap-1">
+                <Flame size={12} className="text-amber-400" /> {quizStats.totalXp} XP
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <div className="p-2.5 rounded-xl bg-white/2 border border-white/5">
+                <span className="text-[9px] text-slate-500 uppercase block font-semibold">Quizzes Passed</span>
+                <span className="text-sm font-bold text-emerald-400">{quizStats.passedCount} / {quizStats.totalQuizzes}</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/2 border border-white/5">
+                <span className="text-[9px] text-slate-500 uppercase block font-semibold">Strict Pass Rate</span>
+                <span className="text-sm font-bold text-purple-300">{quizStats.passRate}%</span>
+              </div>
+            </div>
+
+            {/* Skill Bars */}
+            <div className="space-y-2">
+              <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Domain Mastery</span>
+              {Object.entries(quizStats.skillsMastery || {}).slice(0, 3).map(([skill, pct]: [string, any]) => (
+                <div key={skill} className="space-y-1">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-slate-400">{skill}</span>
+                    <span className="text-slate-200 font-bold">{pct}%</span>
+                  </div>
+                  <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-purple-500 transition-all duration-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <Link
+            href="/academy"
+            className="w-full py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white font-bold text-[11px] text-center border border-white/5 transition-all flex items-center justify-center gap-1"
+          >
+            <BookOpen size={12} /> Open Full LMS Academy
+          </Link>
+        </div>
+      </motion.div>
+
       {/* Market Intelligence Gauges */}
       <motion.div variants={ITEM} className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
           <div className="flex w-full justify-between items-center">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fear & Greed</span>
-            <Badge variant={fearGreedVariant} size="sm">{fearGreedLabel}</Badge>
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Fear & Greed Index</span>
+            <Badge variant={fearGreedVariant} size="xs">{fearGreedLabel}</Badge>
           </div>
-          <ProgressRing value={fearGreedValue} size={140} color={fearGreedValue > 55 ? '#10b981' : fearGreedValue > 45 ? '#64748b' : '#ef4444'} label={String(fearGreedValue)} sublabel="/ 100" />
-          <div className="w-full flex justify-between text-[10px] text-slate-600">
-            <span>Fear</span><span>Neutral</span><span>Greed</span><span>Extreme</span>
-          </div>
+          <ProgressRing value={fearGreedValue} color="#a78bfa" size={130} strokeWidth={10}>
+            <div className="text-center">
+              <div className="font-display font-bold text-white text-2xl">{fearGreedValue}</div>
+              <div className="text-[10px] text-slate-500">Live RSI Base</div>
+            </div>
+          </ProgressRing>
+          <span className="text-[11px] text-slate-500 text-center">Multi-asset composite sentiment</span>
         </div>
 
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
           <div className="flex w-full justify-between items-center">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Portfolio Volatility</span>
-            <Badge variant={volVariant} size="sm">{volLabel}</Badge>
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">AI Confidence Index</span>
+            <Badge variant={aiConfidenceVariant} size="xs">{aiConfidenceLabel}</Badge>
           </div>
-          <ProgressRing value={volPct} size={140} color={volValue > 30 ? '#ef4444' : volValue > 15 ? '#f59e0b' : '#10b981'} label={`${volValue.toFixed(1)}%`} sublabel="ann." />
-          <p className="text-xs text-slate-500 text-center">{volValue > 30 ? 'High volatility — consider hedging' : volValue > 15 ? 'Moderate volatility — ideal for trend strategies' : 'Low volatility — stable portfolio'}</p>
+          <ProgressRing value={aiConfidenceValue} color="#818cf8" size={130} strokeWidth={10}>
+            <div className="text-center">
+              <div className="font-display font-bold text-white text-2xl">{stats.avgConfidence}</div>
+              <div className="text-[10px] text-slate-500">Signal Model</div>
+            </div>
+          </ProgressRing>
+          <span className="text-[11px] text-slate-500 text-center">Neural convergence weight</span>
         </div>
 
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
           <div className="flex w-full justify-between items-center">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">AI Confidence</span>
-            <Badge variant={aiConfidenceVariant} size="sm">{aiConfidenceLabel}</Badge>
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Portfolio Volatility</span>
+            <Badge variant={volVariant} size="xs">{volLabel}</Badge>
           </div>
-          <ProgressRing value={aiConfidenceValue} size={140} color={aiConfidenceValue > 70 ? '#8b5cf6' : '#3b82f6'} label={`${aiConfidenceValue}%`} sublabel="avg" />
-          <p className="text-xs text-slate-500 text-center">Average confidence across {signals.length} active signals</p>
+          <ProgressRing value={volPct} color="#34d399" size={130} strokeWidth={10}>
+            <div className="text-center">
+              <div className="font-display font-bold text-white text-2xl">{stats.portfolioVolatility}</div>
+              <div className="text-[10px] text-slate-500">Historical Beta</div>
+            </div>
+          </ProgressRing>
+          <span className="text-[11px] text-slate-500 text-center">Calculated across open orders</span>
         </div>
       </motion.div>
 
-      {/* Split Snapshot & News Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Live Market Snapshot */}
-        <motion.div variants={ITEM} className="lg:col-span-2 glass-card rounded-2xl overflow-hidden flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
-              <h2 className="font-display font-bold text-white flex items-center gap-2 text-sm">
-                <Activity size={15} className="text-purple-400" />
-                Live Market Snapshot
+      {/* Market Watchlist & News Row */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        {/* Watchlist */}
+        <motion.div variants={ITEM} className="xl:col-span-2">
+          <div className="glass-card rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display font-bold text-white flex items-center gap-2 text-base">
+                <Activity size={16} className="text-purple-400" />
+                Live Market Watchlist
               </h2>
-              <button className="text-slate-500 hover:text-white transition-colors"><RefreshCw size={12} /></button>
+              <button onClick={fetchDashboardData} className="text-slate-500 hover:text-white transition-colors cursor-pointer"><RefreshCw size={12} /></button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full data-table">
@@ -300,7 +492,6 @@ export default function DashboardPage() {
             </div>
           </div>
         </motion.div>
-
       </div>
 
       {/* AI Signals */}
@@ -316,7 +507,7 @@ export default function DashboardPage() {
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={cn(
-                  'px-3 py-1.5 rounded-lg capitalize font-semibold transition-all',
+                  'px-3 py-1.5 rounded-lg capitalize font-semibold transition-all cursor-pointer',
                   activeTab === tab ? 'bg-purple-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'
                 )}
               >
@@ -362,7 +553,7 @@ export default function DashboardPage() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setExpanded(expanded === sig.id ? null : sig.id)}
-                  className="flex-1 btn-ghost py-2 rounded-xl text-xs font-semibold"
+                  className="flex-1 btn-ghost py-2 rounded-xl text-xs font-semibold cursor-pointer"
                 >
                   {expanded === sig.id ? 'Less' : 'Analysis'}
                 </button>
@@ -377,8 +568,21 @@ export default function DashboardPage() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="bg-white/3 border border-white/5 rounded-xl p-3 space-y-2 text-xs overflow-hidden"
+                    className="bg-white/3 border border-white/5 rounded-xl p-3 space-y-3 text-xs overflow-hidden"
                   >
+                    {/* TradingView Long / Short Position Tool */}
+                    {sig.direction !== 'WAIT' && (
+                      <SignalPositionTool
+                        symbol={sig.symbol}
+                        direction={sig.direction}
+                        entryPrice={sig.entry}
+                        stopLoss={sig.stopLoss}
+                        takeProfit={sig.tp1}
+                        accountSize={10000}
+                        riskPercent={1.0}
+                      />
+                    )}
+
                     {[
                       { label: '📈 Technicals', items: sig.technicals, color: 'text-emerald-400' },
                       { label: '📊 Fundamentals', items: sig.fundamentals, color: 'text-purple-400' },
@@ -404,6 +608,19 @@ export default function DashboardPage() {
         onClose={() => setIsTradeOpen(false)}
         defaultSymbol={tradeSymbol}
         defaultDirection={tradeDirection}
+      />
+
+      {/* Interactive Strict Timed Quiz Modal */}
+      <QuizModal
+        quizId={selectedQuizId}
+        isOpen={isQuizModalOpen}
+        onClose={() => {
+          setIsQuizModalOpen(false);
+          setSelectedQuizId(null);
+        }}
+        onCompleted={() => {
+          fetchDashboardData();
+        }}
       />
     </motion.div>
   );

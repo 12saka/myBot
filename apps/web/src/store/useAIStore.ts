@@ -27,6 +27,8 @@ export interface AISignal {
   fundamentals: string[];
   sentiment: string[];
   createdAt: string;
+  updatedAt?: string;
+  lastRefreshedAt?: number;
   expiresAt: string;
   status?: 'ACTIVE' | 'RUNNING' | 'WAIT' | 'HIT_TP1' | 'HIT_TP2' | 'HIT_SL' | 'CLOSED' | 'EXPIRED';
   aiReasoning?: any;

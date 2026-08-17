@@ -209,6 +209,8 @@ export function mapSignal(item: any): AISignal {
     fundamentals: [macroContext],
     sentiment: [marketStructure],
     createdAt: item.createdAt || new Date().toISOString(),
+    updatedAt: item.updatedAt || item.createdAt || new Date().toISOString(),
+    lastRefreshedAt: Date.now(),
     expiresAt: item.expiresAt || new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
     status,
     aiReasoning: {

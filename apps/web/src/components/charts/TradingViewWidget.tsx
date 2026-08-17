@@ -61,7 +61,7 @@ export function TradingViewWidget({ symbol, containerId = `tv_chart_${symbol.toU
         else if (cleanSymbol === 'US100') tvSymbol = 'TVC:NDX';
         else if (cleanSymbol === 'SPX500') tvSymbol = 'TVC:SPX';
         else if (cleanSymbol === 'DAX40') tvSymbol = 'TVC:DEU40';
-        else if (cleanSymbol === 'GOLD') tvSymbol = 'OANDA:XAUUSD';
+        else if (cleanSymbol === 'GOLD' || cleanSymbol === 'XAU' || cleanSymbol.includes('XAU')) tvSymbol = 'OANDA:XAUUSD';
         else if (cleanSymbol === 'OIL') tvSymbol = 'OANDA:WTICOUSD';
         else if (cleanSymbol.includes('EUR')) tvSymbol = 'FX_IDC:EURUSD';
         else if (cleanSymbol.includes('GBP')) tvSymbol = 'FX_IDC:GBPUSD';
@@ -112,7 +112,7 @@ export function TradingViewWidget({ symbol, containerId = `tv_chart_${symbol.toU
     else if (cs === 'US100') tvSym = 'TVC:NDX';
     else if (cs === 'SPX500') tvSym = 'TVC:SPX';
     else if (cs === 'DAX40') tvSym = 'TVC:DEU40';
-    else if (cs === 'GOLD') tvSym = 'OANDA:XAUUSD';
+    else if (cs === 'GOLD' || cs === 'XAU' || cs.includes('XAU')) tvSym = 'OANDA:XAUUSD';
     else if (cs === 'OIL') tvSym = 'OANDA:WTICOUSD';
     else if (cs.includes('EUR')) tvSym = 'FX_IDC:EURUSD';
     else if (cs.includes('GBP')) tvSym = 'FX_IDC:GBPUSD';

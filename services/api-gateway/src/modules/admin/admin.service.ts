@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsGateway: NotificationsGateway,
+  ) {}
 
   // Master privilege elevation
   async claimSuperAdmin(userId: string) {
@@ -948,5 +952,79 @@ export class AdminService {
       passRate,
       mostMissedQuestions,
     };
+  }
+
+  // 10. Admin Push Notifications Broadcast
+  async broadcastNotification(adminUserId: string, payload: { title: string; message: string; type?: string }) {
+    const users = await this.prisma.user.findMany({ select: { id: true } });
+    const typeToSet = payload.type || 'ADMIN_BROADCAST';
+    
+    const batchStartTime = new Date();
+
+    for (const user of users) {
+      await this.notificationsGateway.sendNotification(user.id, payload.title, payload.message);
+    }
+
+    await this.prisma.notification.updateMany({
+      where: {
+        title: payload.title,
+        message: payload.message,
+        createdAt: { gte: batchStartTime }
+      },
+      data: {
+        type: typeToSet
+      }
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'ADMIN_BROADCAST_SENT',
+        details: { title: payload.title, userCount: users.length, type: typeToSet },
+      },
+    });
+
+    return { success: true, count: users.length };
+  }
+
+  async sendNotificationToUser(adminUserId: string, payload: { userId: string; title: string; message: string; type?: string }) {
+    const typeToSet = payload.type || 'ADMIN_DIRECT';
+    
+    await this.notificationsGateway.sendNotification(payload.userId, payload.title, payload.message);
+
+    const latestNotifs = await this.prisma.notification.findMany({
+      where: { userId: payload.userId, title: payload.title, message: payload.message },
+      orderBy: { createdAt: 'desc' },
+      take: 1
+    });
+
+    if (latestNotifs.length > 0) {
+      await this.prisma.notification.update({
+        where: { id: latestNotifs[0].id },
+        data: { type: typeToSet }
+      });
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'ADMIN_NOTIFICATION_SENT',
+        details: { targetUserId: payload.userId, title: payload.title, type: typeToSet },
+      },
+    });
+
+    return { success: true };
+  }
+
+  async getNotificationHistory() {
+    return this.prisma.notification.findMany({
+      where: {
+        type: {
+          in: ['ADMIN_BROADCAST', 'ADMIN_DIRECT']
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
   }
 }

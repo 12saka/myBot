@@ -699,15 +699,16 @@ export class SignalsController implements OnModuleInit {
       return candles;
     }
     
-    // 3. Otherwise, fetch real-time. Try Binance first if crypto.
+    // 3. Otherwise, fetch real-time. Try Binance first if crypto or Gold (PAXGUSDT tracks London Spot Gold 1:1).
     const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(baseSymbol);
+    const isGold = baseSymbol.includes('XAU') || baseSymbol.includes('GOLD') || cleanSymbol.includes('XAU') || cleanSymbol.includes('GOLD');
     let fetched = false;
 
-    if (isCrypto) {
+    if (isCrypto || isGold) {
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
       try {
-        const binanceSym = `${baseSymbol}USDT`;
+        const binanceSym = isGold ? 'PAXGUSDT' : `${baseSymbol}USDT`;
         const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
         const headers: Record<string, string> = {};
         if (binanceApiKey) {
@@ -2407,14 +2408,14 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
-    // Calculate Exact Targets & Risk/Reward
-    const slDist = atr * 1.35;
+    // Calculate Exact Targets & Direct Market Scalp Risk/Reward
+    const slDist = Math.max(entryPrice * 0.0018, Math.min(entryPrice * 0.0035, atr * 0.95));
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.1) : entryPrice - (atr * 2.1);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.4) : entryPrice - (atr * 3.4);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.2) : entryPrice - (atr * 5.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 2.5) : entryPrice - (slDist * 2.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 5.5) : entryPrice - (slDist * 5.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
       : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
