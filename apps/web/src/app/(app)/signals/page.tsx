@@ -15,7 +15,6 @@ import { StatCard } from '@/components/ui/StatCard';
 import { cn } from '@/lib/utils';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
 import { TradingViewWidget } from '@/components/charts/TradingViewWidget';
-import { SignalPositionTool } from '@/components/charts/SignalPositionTool';
 import { playSignalChime, sendDeviceNotification, requestDeviceNotificationPermission } from '@/lib/notifications';
 import { toast } from 'react-hot-toast';
 import { apiFetch, mapSignal } from '@/lib/api';
@@ -160,8 +159,8 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         />
       </div>
 
-      {/* Price Grid */}
-      <div className={cn("grid gap-2 sm:gap-3 border-y border-white/5 py-3 overflow-hidden", signal.tp3 ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4")}>
+      {/* Price Grid (Clear, unclipped micro-cards) */}
+      <div className={cn("grid gap-2 border-y border-white/5 py-3", signal.tp3 ? "grid-cols-3 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4")}>
         {[
           { 
             label: 'Entry', 
@@ -189,18 +188,18 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             color: 'text-cyan-400'
           }] : [])
         ].map(({ label, val, color }) => {
-          const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(signal.symbol);
+          const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
           const isJpy = signal.symbol.includes('JPY');
           const maxDecimals = isForex ? (isJpy ? 3 : 4) : 2;
           const formatted = typeof val === 'number' && !isNaN(val) 
-            ? val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: maxDecimals }) 
+            ? val.toLocaleString('en-US', { minimumFractionDigits: isForex ? (isJpy ? 3 : 4) : 2, maximumFractionDigits: maxDecimals }) 
             : '0.00';
           const prefix = isForex ? '' : '$';
           
           return (
-            <div key={label} className="min-w-0">
-              <span className="block text-[9px] uppercase tracking-wider text-slate-500 mb-0.5 truncate">{label}</span>
-              <span className={cn('font-mono font-bold text-[11px] sm:text-xs truncate block', color)}>
+            <div key={label} className="p-2 rounded-xl bg-slate-900/90 border border-white/10 flex flex-col justify-center min-w-0">
+              <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-mono font-bold mb-0.5">{label}</span>
+              <span className={cn('font-mono font-extrabold text-xs sm:text-sm tracking-tight block whitespace-nowrap overflow-x-auto scrollbar-none', color)}>
                 {prefix}{formatted}
               </span>
             </div>
@@ -231,20 +230,6 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         </div>
       </div>
 
-      {/* TradingView Long / Short Position Visual Tool */}
-      {signal.direction !== 'WAIT' && (
-        <div className="pt-1">
-          <SignalPositionTool
-            symbol={signal.symbol}
-            direction={signal.direction}
-            entryPrice={signal.entry}
-            stopLoss={signal.stopLoss}
-            takeProfit={signal.tp1}
-            accountSize={10000}
-            riskPercent={1.0}
-          />
-        </div>
-      )}
       <div className="flex flex-wrap items-center gap-4 text-xs">
         {[
           { label: 'Risk:Reward', value: signal.riskReward, icon: BarChart3 },
@@ -387,137 +372,37 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               </div>
             ))}
 
-            {/* 14-Module Institutional Quantitative Index Breakdown */}
-            {(signal.marketBreadth || signal.optionsGex || signal.mag7Heatmap) && (
-              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
-                <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
-                  🏛️ Institutional Index Engine & Microstructure Breakdown
+            {/* Live Quantitative Metrics & Indicator Verdicts */}
+            {signal.evidence && typeof signal.evidence === 'object' && Object.keys(signal.evidence).length > 0 && (
+              <div className="border-t border-white/5 pt-2.5 space-y-2">
+                <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">
+                  📊 Quantitative Indicators & Confluence Weights
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
-                  {signal.marketBreadth?.trin_arms_index && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-amber-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-amber-400 block mb-1">📊 Market Breadth (TRIN & TICK)</span>
-                      <div>TRIN Index: <strong>{signal.marketBreadth.trin_arms_index}</strong></div>
-                      <div>TICK: <strong>{signal.marketBreadth.tick_index}</strong></div>
-                      <div>A/D Ratio: <strong>{signal.marketBreadth.advance_decline_ratio}</strong></div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
+                  {signal.evidence.ema20 && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">EMA-20</span>
+                      <strong className="text-emerald-400">{typeof signal.evidence.ema20 === 'number' ? signal.evidence.ema20.toFixed(2) : signal.evidence.ema20}</strong>
                     </div>
                   )}
-                  {signal.optionsGex?.dealer_gamma_exposure && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-purple-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-purple-400 block mb-1">⚡ Options GEX & Dealer Hedging</span>
-                      <div>GEX Status: <strong>{signal.optionsGex.dealer_gamma_exposure}</strong></div>
-                      <div>Max Pain: <strong>${signal.optionsGex.max_pain_price}</strong></div>
-                      <div>Put/Call Ratio: <strong>{signal.optionsGex.put_call_ratio}</strong></div>
+                  {signal.evidence.ema50 && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">EMA-50</span>
+                      <strong className="text-purple-400">{typeof signal.evidence.ema50 === 'number' ? signal.evidence.ema50.toFixed(2) : signal.evidence.ema50}</strong>
                     </div>
                   )}
-                  {signal.mag7Heatmap?.ai_weight_bias && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-cyan-500/20 text-slate-300 col-span-1 sm:col-span-2">
-                      <span className="font-bold uppercase text-cyan-400 block mb-1">🤖 Mag 7 & Tech Concentration Heatmap</span>
-                      <div className="flex flex-wrap gap-3 text-[10px]">
-                        <span>NVDA: <strong className="text-emerald-400">{signal.mag7Heatmap.nvda_momentum}</strong></span>
-                        <span>MSFT: <strong className="text-emerald-400">{signal.mag7Heatmap.msft_momentum}</strong></span>
-                        <span>AAPL: <strong className="text-emerald-400">{signal.mag7Heatmap.aapl_momentum}</strong></span>
-                        <span>META: <strong className="text-emerald-400">{signal.mag7Heatmap.meta_momentum}</strong></span>
-                      </div>
-                      <div className="mt-1 text-slate-400 italic">{signal.mag7Heatmap.ai_weight_bias}</div>
+                  {signal.evidence.rsi && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">RSI-14</span>
+                      <strong className={Number(signal.evidence.rsi) > 50 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {typeof signal.evidence.rsi === 'number' ? signal.evidence.rsi.toFixed(1) : signal.evidence.rsi}
+                      </strong>
                     </div>
                   )}
-                </div>
-              </div>
-            )}
-
-            {/* BTC On-Chain & Spot ETF Intelligence Breakdown */}
-            {(signal.onchainAnalytics || signal.etfFlows || signal.stablecoinLiquidity) && (
-              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
-                <div className="text-[10px] font-bold text-orange-400 uppercase tracking-wider">
-                  🪙 Bitcoin On-Chain, ETF & Stablecoin Liquidity Matrix
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
-                  {signal.onchainAnalytics?.exchange_net_flow && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-orange-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-orange-400 block mb-1">⛓️ On-Chain & Whale Movements</span>
-                      <div>Net Flow: <strong className="text-emerald-400">{signal.onchainAnalytics.exchange_net_flow}</strong></div>
-                      <div>MVRV Ratio: <strong>{signal.onchainAnalytics.mvrv_ratio}</strong></div>
-                      <div>NUPL Phase: <strong>{signal.onchainAnalytics.nupl_status}</strong></div>
-                    </div>
-                  )}
-                  {signal.etfFlows?.daily_net_inflow_usd && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-emerald-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-emerald-400 block mb-1">🏦 Spot Bitcoin ETF Inflows</span>
-                      <div>Daily ETF Inflow: <strong className="text-emerald-400">{signal.etfFlows.daily_net_inflow_usd}</strong></div>
-                      <div>Custody Flow: <strong>{signal.etfFlows.custody_movements}</strong></div>
-                      <div>ETF Confluence: <strong>{signal.etfFlows.etf_bullish_weight}</strong></div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Forex Yield Spread, DXY & BoJ Intervention Risk Breakdown */}
-            {(signal.dxyEngine || signal.yieldMatrix || signal.interventionRisk) && (
-              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
-                <div className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">
-                  💱 Forex Yield Matrix, DXY Dollar Inversion & BoJ Risk Guard
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
-                  {signal.dxyEngine?.dxy_trend && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-blue-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-blue-400 block mb-1">💵 DXY Dollar Index Engine</span>
-                      <div>DXY Trend: <strong className="text-emerald-400">{signal.dxyEngine.dxy_trend}</strong></div>
-                      <div>DXY RSI: <strong>{signal.dxyEngine.dxy_rsi}</strong></div>
-                      <div>DXY Weight: <strong>{signal.dxyEngine.dxy_correlation_weight}</strong></div>
-                    </div>
-                  )}
-                  {signal.yieldMatrix?.us10y_yield && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-indigo-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-indigo-400 block mb-1">🏛️ Multi-Country Bond Yield Spreads</span>
-                      <div>US10Y Yield: <strong>{signal.yieldMatrix.us10y_yield}</strong></div>
-                      <div>DE10Y Bund: <strong>{signal.yieldMatrix.de10y_bund_yield}</strong> │ JP10Y JGB: <strong>{signal.yieldMatrix.jp10y_jgb_yield}</strong></div>
-                      <div>Yield Spread: <strong className="text-emerald-400">{signal.yieldMatrix.us_de_spread || signal.yieldMatrix.us_jp_spread}</strong></div>
-                    </div>
-                  )}
-                  {signal.interventionRisk?.boj_intervention_risk && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-red-500/20 text-slate-300 col-span-1 sm:col-span-2">
-                      <span className="font-bold uppercase text-red-400 block mb-1">🇯🇵 Bank of Japan (BoJ) FX Intervention Risk Guard</span>
-                      <div className="flex flex-wrap gap-4 text-[10px]">
-                        <span>Intervention Risk: <strong className="text-amber-400">{signal.interventionRisk.boj_intervention_risk}</strong></span>
-                        <span>Probability: <strong>{signal.interventionRisk.intervention_probability}</strong></span>
-                        <span>Risk Sizer: <strong className="text-emerald-400">{signal.interventionRisk.recommended_position_sizer}</strong></span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Gold 6-Layer Real Yield & Central Bank Physical Buying Breakdown */}
-            {(signal.realYieldEngine || signal.centralBankBuying || signal.signalGrade) && (
-              <div className="border-t border-white/5 pt-2.5 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider">
-                    🌟 Gold 6-Layer Real Yield, Central Bank Reserves & Signal Grade
-                  </div>
-                  {signal.signalGrade && (
-                    <div className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
-                      {signal.signalGrade}
-                    </div>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
-                  {signal.realYieldEngine?.us10y_real_yield && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-yellow-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-yellow-400 block mb-1">📈 US 10Y Real Yield Rate of Change</span>
-                      <div>US10Y Real Yield: <strong className="text-emerald-400">{signal.realYieldEngine.us10y_real_yield}</strong></div>
-                      <div>10Y Inflation Breakeven: <strong>{signal.realYieldEngine.inflation_breakeven_10y}</strong></div>
-                      <div>Real Yield Trend: <strong>{signal.realYieldEngine.real_yield_trend}</strong></div>
-                    </div>
-                  )}
-                  {signal.centralBankBuying?.pboc_china_reserves && (
-                    <div className="bg-slate-900/70 p-2.5 rounded-lg border border-amber-500/20 text-slate-300">
-                      <span className="font-bold uppercase text-amber-400 block mb-1">🏛️ Central Bank Physical Reserve Purchases</span>
-                      <div>PBoC China Reserves: <strong className="text-emerald-400">{signal.centralBankBuying.pboc_china_reserves}</strong></div>
-                      <div>RBI India Reserves: <strong>{signal.centralBankBuying.rbi_india_reserves}</strong></div>
-                      <div>De-Dollarization Net Flow: <strong>{signal.centralBankBuying.central_bank_net_flow}</strong></div>
+                  {signal.evidence.atr && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">ATR-14 Volatility</span>
+                      <strong className="text-amber-400">{typeof signal.evidence.atr === 'number' ? signal.evidence.atr.toFixed(2) : signal.evidence.atr}</strong>
                     </div>
                   )}
                 </div>
@@ -528,7 +413,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             {signal.indicatorVerdicts && Object.keys(signal.indicatorVerdicts).length > 0 && (
               <div className="border-t border-white/5 pt-2.5">
                 <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider mb-2">
-                  📊 Institutional Indicator Verdicts
+                  ⚡ Technical Structure Verdicts
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
                   {Object.entries(signal.indicatorVerdicts).map(([key, verdict]) => (
@@ -542,10 +427,10 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             )}
 
             <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider border-t border-white/5 pt-2 mt-2">
-              🧠 AI Strategy & Model Architecture
+              🧠 Real-Time AI Signal Architecture
             </div>
             <div className="text-[10px] text-slate-400 leading-normal bg-white/2 p-2.5 rounded-lg border border-white/5">
-              <span><strong>PRO 7-Step 5-Factor Institutional Engine</strong>: Integrates 200 EMA Macro Trend (30%), Market Structure BOS/CHoCH (25%), Order Block / FVG SMC Liquidity (20%), Live News Sentiment (15%), and Volume RVOL (10%) to calculate exact retest entries and 1:2.0 / 1:3.2 R:R targets.</span>
+              <span><strong>Quantitative Confluence Pipeline</strong>: Evaluates live EMA dynamic trends, SMC liquidity sweeps, RSI momentum, and ATR risk buffers to output high-probability execution levels.</span>
             </div>
           </motion.div>
         )}

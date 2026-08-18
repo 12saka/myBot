@@ -1407,14 +1407,14 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Targets & Dynamic Risk-to-Reward Ratio
-    const slDist = atr * 1.35;
+    // Targets & Dynamic Risk-to-Reward Ratio (Realistic Intraday Reachable Ranges)
+    const slDist = Math.min(Math.max(atr * 0.95, entryPrice * 0.005), entryPrice * 0.009);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.0) : entryPrice - (atr * 2.0);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.5) : entryPrice - (atr * 3.5);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.2) : entryPrice - (atr * 5.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
       : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
@@ -1642,14 +1642,14 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward
-    const slDist = atr * 1.45;
+    // Calculate Targets & Risk/Reward (Realistic Intraday Reachable Ranges)
+    const slDist = Math.min(Math.max(atr * 0.95, 25), 55);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.2) : entryPrice - (atr * 2.2);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.8) : entryPrice - (atr * 3.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.8) : entryPrice - (atr * 5.8);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
       : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
@@ -1865,14 +1865,14 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward
-    const slDist = atr * 1.40;
+    // Calculate Targets & Risk/Reward (Calibrated Reachable Intraday Ranges for US30)
+    const slDist = Math.min(Math.max(atr * 0.95, 45), 85);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.0) : entryPrice - (atr * 2.0);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.6) : entryPrice - (atr * 3.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.5) : entryPrice - (atr * 5.5);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
       : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
@@ -2083,14 +2083,16 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward
-    const slDist = atr * 1.30;
+    // Calculate Targets & Risk/Reward (Reachable FX Intraday Targets)
+    const slDist = isJpy 
+      ? Math.min(Math.max(atr * 0.95, 0.20), 0.45)
+      : Math.min(Math.max(atr * 0.95, 0.0018), 0.0035);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 2.0) : entryPrice - (atr * 2.0);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.5) : entryPrice - (atr * 3.5);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 5.0) : entryPrice - (atr * 5.0);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
       : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
@@ -2318,14 +2320,14 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward
-    const slDist = atr * 1.25;
+    // Calculate Targets & Risk/Reward (Reachable USDJPY Intraday Targets)
+    const slDist = Math.min(Math.max(atr * 0.95, 0.20), 0.45);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (atr * 1.8) : entryPrice - (atr * 1.8);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (atr * 3.1) : entryPrice - (atr * 3.1);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (atr * 4.8) : entryPrice - (atr * 4.8);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit2 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
       : confidenceScore >= 75 ? 'A Setup (Institutional Confluence)'
@@ -2526,12 +2528,12 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Exact Targets & Direct Market Scalp Risk/Reward
-    const slDist = Math.max(entryPrice * 0.0018, Math.min(entryPrice * 0.0035, atr * 0.95));
+    // Calculate Exact Targets & Direct Market Scalp Risk/Reward (Reachable Gold Targets)
+    const slDist = Math.min(Math.max(atr * 0.95, 3.0), 6.5);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 2.5) : entryPrice - (slDist * 2.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 5.5) : entryPrice - (slDist * 5.5);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 

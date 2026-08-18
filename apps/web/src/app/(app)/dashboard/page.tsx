@@ -20,7 +20,6 @@ import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 import { AnimatePresence } from 'framer-motion';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
 import { QuizModal } from '@/components/academy/QuizModal';
-import { SignalPositionTool } from '@/components/charts/SignalPositionTool';
 import { apiFetch } from '@/lib/api';
 
 const CONTAINER = {
@@ -570,19 +569,6 @@ export default function DashboardPage() {
                     exit={{ opacity: 0, height: 0 }}
                     className="bg-white/3 border border-white/5 rounded-xl p-3 space-y-3 text-xs overflow-hidden"
                   >
-                    {/* TradingView Long / Short Position Tool */}
-                    {sig.direction !== 'WAIT' && (
-                      <SignalPositionTool
-                        symbol={sig.symbol}
-                        direction={sig.direction}
-                        entryPrice={sig.entry}
-                        stopLoss={sig.stopLoss}
-                        takeProfit={sig.tp1}
-                        accountSize={10000}
-                        riskPercent={1.0}
-                      />
-                    )}
-
                     {[
                       { label: '📈 Technicals', items: sig.technicals, color: 'text-emerald-400' },
                       { label: '📊 Fundamentals', items: sig.fundamentals, color: 'text-purple-400' },

@@ -57,6 +57,7 @@ export interface AISignal {
   centralBankBuying?: Record<string, any>;
   geopoliticalRisk?: Record<string, any>;
   signalGrade?: string;
+  evidence?: Record<string, any>;
 }
 
 interface AIState {

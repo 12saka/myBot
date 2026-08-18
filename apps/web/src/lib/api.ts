@@ -248,7 +248,8 @@ export function mapSignal(item: any): AISignal {
     inflationEngine: reasoning.inflation_engine || reasoning.inflationEngine || {},
     centralBankBuying: reasoning.central_bank_buying || reasoning.centralBankBuying || {},
     geopoliticalRisk: reasoning.geopolitical_risk || reasoning.geopoliticalRisk || {},
-    signalGrade
+    signalGrade,
+    evidence: item.evidence || reasoning.evidence || null,
   };
 }
 
