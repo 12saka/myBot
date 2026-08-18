@@ -23,7 +23,7 @@ import {
   type ProfileData,
 } from '@/lib/api';
 
-type TabType = 'overview' | 'kyc' | 'security' | 'ai' | 'billing' | 'activity' | 'notifications';
+type TabType = 'overview' | 'kyc' | 'security' | 'ai' | 'billing' | 'activity';
 
 interface ApiKey {
   id: string;
@@ -70,7 +70,7 @@ export default function SettingsPage() {
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         const tab = params.get('tab');
-        if (tab && ['overview', 'kyc', 'security', 'ai', 'billing', 'activity', 'notifications'].includes(tab)) {
+        if (tab && ['overview', 'kyc', 'security', 'ai', 'billing', 'activity'].includes(tab)) {
           setActiveTab(tab as TabType);
         }
       }
@@ -365,44 +365,7 @@ export default function SettingsPage() {
     }
   }, [notifications]);
 
-  // --- Notifications History / Notification Center ---
-  const [notificationsList, setNotificationsList] = useState<any[]>([]);
 
-  const fetchNotificationsList = async () => {
-    try {
-      const data = await apiFetch<any[]>('/api/v2/notifications');
-      if (Array.isArray(data)) {
-        setNotificationsList(data);
-      }
-    } catch (err: any) {
-      toast.error('Failed to load notifications history.');
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'notifications') {
-      fetchNotificationsList();
-    }
-  }, [activeTab]);
-
-  const handleMarkAllReadCenter = async () => {
-    try {
-      await apiFetch('/api/v2/notifications/read-all', { method: 'PATCH' });
-      setNotificationsList(prev => prev.map(n => ({ ...n, isRead: true })));
-      toast.success('All notifications marked as read');
-    } catch (err: any) {
-      toast.error('Failed to mark all as read');
-    }
-  };
-
-  const handleMarkSingleReadCenter = async (id: string) => {
-    try {
-      await apiFetch(`/api/v2/notifications/${id}/read`, { method: 'PATCH' });
-      setNotificationsList(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-    } catch (err: any) {
-      toast.error('Failed to update notification');
-    }
-  };
 
   // --- AI Preferences ---
   const getInitialAIPreferences = () => {
@@ -727,7 +690,6 @@ export default function SettingsPage() {
           { id: 'kyc', label: 'Verification (KYC)', icon: Shield },
           { id: 'security', label: 'Security & Keys', icon: Key },
           { id: 'ai', label: 'AI Preferences', icon: BrainCircuit },
-          { id: 'notifications', label: 'Notification Center', icon: Bell },
           { id: 'billing', label: 'Wallet & Billing', icon: Wallet },
           { id: 'activity', label: 'Activity Logs', icon: History },
         ].map(tab => (
@@ -1409,93 +1371,6 @@ export default function SettingsPage() {
               </motion.div>
             )}
 
-            {/* Tab: Notification Center */}
-            {activeTab === 'notifications' && (
-              <motion.div
-                key="tab-notifications"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-6"
-              >
-                {/* Header Actions */}
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-display font-bold text-white text-base">Alert & Signal Notification Center</h3>
-                    <p className="text-xs text-slate-400">View and manage your real-time system alerts, news digests, and trade executions.</p>
-                  </div>
-                  {notificationsList.filter(n => !n.isRead).length > 0 && (
-                    <button
-                      onClick={handleMarkAllReadCenter}
-                      className="px-4 py-2 rounded-xl border border-purple-500/30 bg-purple-500/10 text-purple-300 font-bold text-xs hover:bg-purple-500/20 hover:border-purple-500/50 transition-all flex items-center gap-2 cursor-pointer"
-                    >
-                      <CheckCircle2 size={14} />
-                      Mark All as Read
-                    </button>
-                  )}
-                </div>
-
-                {/* Notifications List */}
-                <div className="glass-card rounded-2xl p-6 border border-white/5 space-y-4">
-                  {notificationsList.length === 0 ? (
-                    <div className="py-12 text-center space-y-3">
-                      <div className="mx-auto w-12 h-12 rounded-full bg-slate-900/60 border border-white/5 flex items-center justify-center">
-                        <Bell size={20} className="text-slate-500" />
-                      </div>
-                      <p className="text-sm text-slate-400 font-semibold">No notifications history</p>
-                      <p className="text-xs text-slate-500 max-w-sm mx-auto">When trade executions occur, AI models run, or system alerts fire, you'll see them documented here.</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-white/5">
-                      {notificationsList.map((notif) => (
-                        <div
-                          key={notif.id}
-                          className={cn(
-                            "py-4 first:pt-0 last:pb-0 flex items-start gap-4 transition-all",
-                            notif.isRead ? "opacity-75" : ""
-                          )}
-                        >
-                          <div className={cn(
-                            "p-2.5 rounded-xl border flex items-center justify-center shrink-0",
-                            notif.isRead 
-                              ? "bg-slate-900/40 border-white/5 text-slate-500"
-                              : "bg-purple-500/10 border-purple-500/30 text-purple-400"
-                          )}>
-                            <Bell size={18} />
-                          </div>
-
-                          <div className="flex-1 min-w-0 space-y-1">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className={cn("font-bold text-sm", notif.isRead ? "text-slate-300" : "text-white")}>
-                                  {notif.title}
-                                </span>
-                                {!notif.isRead && (
-                                  <Badge className="bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] px-1 py-0 uppercase">New</Badge>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-slate-500 font-medium">
-                                {new Date(notif.createdAt).toLocaleDateString()} at {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400 leading-relaxed break-words">{notif.message}</p>
-                          </div>
-
-                          {!notif.isRead && (
-                            <button
-                              onClick={() => handleMarkSingleReadCenter(notif.id)}
-                              className="px-3 py-1.5 rounded-lg border border-white/5 bg-white/2 hover:bg-white/5 text-slate-300 hover:text-white font-bold text-[10px] transition-colors cursor-pointer shrink-0"
-                            >
-                              Mark Read
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
 
             {/* Tab: Wallet & Billing */}
             {activeTab === 'billing' && (

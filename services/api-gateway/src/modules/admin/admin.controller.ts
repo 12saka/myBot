@@ -64,6 +64,18 @@ export class AdminController {
     return this.adminService.updateUserRoleAndStatus(req.user.userId, id, body);
   }
 
+  @Patch('users/:id/suspend')
+  @ApiOperation({ summary: 'Temporarily suspend a user account' })
+  async suspendUser(@Req() req: any, @Param('id') id: string, @Body('reason') reason?: string) {
+    return this.adminService.suspendUser(req.user.userId, id, reason);
+  }
+
+  @Patch('users/:id/unsuspend')
+  @ApiOperation({ summary: 'Lift suspension from a user account' })
+  async unsuspendUser(@Req() req: any, @Param('id') id: string) {
+    return this.adminService.unsuspendUser(req.user.userId, id);
+  }
+
   @Delete('users/:id')
   @ApiOperation({ summary: 'Delete user account' })
   async deleteUser(@Req() req: any, @Param('id') id: string) {

@@ -1052,15 +1052,36 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         }
         
     if 'market_structure_analysis' not in dir() or not market_structure_analysis:
-        market_structure_analysis = f"Market analysis reveals support near {structure.get('support', 0):.2f} and resistance near {structure.get('resistance', 0):.2f}. "
+        market_structure_analysis = f"Market analysis on {timeframe} reveals dynamic support near {structure.get('support', 0):.2f} and resistance near {structure.get('resistance', 0):.2f}. "
         if structure.get('fvg_detected'):
-            market_structure_analysis += "A Fair Value Gap (FVG) was detected on the chart, which serves as a magnet for price to fill. "
+            market_structure_analysis += "A Fair Value Gap (FVG) imbalance zone was identified on current price action, serving as an institutional magnet for algorithmic rebalancing. "
         if structure.get('order_block_detected'):
             market_structure_analysis += "An institutional Order Block was identified, confirming strong support/resistance zones at key levels. "
         if structure.get('liquidity_sweep'):
             market_structure_analysis += "A liquidity sweep of key swing points was completed, indicating a potential reversal or continuation move."
         else:
             market_structure_analysis += "No recent liquidity sweeps have occurred, suggesting trend continuation."
+
+    if not ai_explanation or len(ai_explanation.strip()) < 30:
+        trend_status = indicators.get("trend") or "Neutral"
+        rsi_val = indicators.get("rsi14") or 50.0
+        ema20_val = indicators.get("ema20") or current_price
+        ema50_val = indicators.get("ema50") or current_price
+        ema200_val = indicators.get("ema200") or current_price
+        vwap_val = indicators.get("vwap") or current_price
+        atr_val_now = indicators.get("atr") or (current_price * 0.01)
+
+        ai_explanation = (
+            f"1. TREND CONTEXT: {symbol} is trading at {current_price:.2f} on the {timeframe} timeframe in an established {trend_status.lower()} structure. "
+            f"Price is positioned {'above' if current_price > ema20_val else 'below'} the 20-period EMA ({ema20_val:.2f}) and {'above' if current_price > ema50_val else 'below'} the 50-period EMA ({ema50_val:.2f}), "
+            f"with institutional VWAP equilibrium anchored at {vwap_val:.2f}. Macro 200 EMA sits at {ema200_val:.2f}, providing major directional guidance.\n\n"
+            f"2. ENTRY RATIONALE: Confluence filters indicate a high-conviction {rule_direction} opportunity. "
+            f"RSI-14 is currently clocked at {rsi_val:.1f}, confirming {'accelerating upward momentum' if rsi_val > 55 else 'accelerating downward momentum' if rsi_val < 45 else 'balanced range equilibrium'}. "
+            f"{'A pristine Fair Value Gap (FVG) and Order Block zone confirm institutional accumulation.' if structure.get('fvg_detected') or structure.get('order_block_detected') else 'Structure remains aligned with current momentum.'}\n\n"
+            f"3. RISK MANAGEMENT & EXECUTION: Average True Range (ATR) volatility is measured at {atr_val_now:.4f}. "
+            f"Entry is calibrated at {current_price:.2f} with risk boundaries calculated to maintain a strict minimum 1:2.0 risk-to-reward ratio on Target 1 and 1:3.2 on Target 2. "
+            f"Trade structure is strictly invalidated if price breaches the opposite swing boundary."
+        )
             
     # PRO Institutional Retest Entry & Dynamic Pivot-Anchored SL / TP Boundaries (1:2.0 & 1:3.2 R:R)
     entry = float(current_price)

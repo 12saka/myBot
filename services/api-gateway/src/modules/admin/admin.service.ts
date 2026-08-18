@@ -79,21 +79,47 @@ export class AdminService {
           select: {
             id: true,
             email: true,
+            phone: true,
             role: true,
             isTwoFactorEnabled: true,
             createdAt: true,
+            updatedAt: true,
             profile: {
               select: {
                 firstName: true,
                 lastName: true,
                 country: true,
+                city: true,
                 avatarUrl: true,
                 brokerType: true,
+                experience: true,
+                tradingStyle: true,
+                riskAppetite: true,
+                leverage: true,
+                nationalId: true,
               },
             },
             wallet: {
               select: {
                 balance: true,
+                frozenBalance: true,
+                currency: true,
+              },
+            },
+            subscription: {
+              select: {
+                planType: true,
+                status: true,
+                endDate: true,
+              },
+            },
+            devices: {
+              take: 1,
+              orderBy: { createdAt: 'desc' },
+              select: {
+                ipAddress: true,
+                deviceInfo: true,
+                createdAt: true,
               },
             },
             kyc: {
@@ -125,8 +151,14 @@ export class AdminService {
       const brokerByUserId = new Map(brokerProfiles.map((broker: any) => [broker.userId, broker]));
 
       return {
-        data: users.map((user) => ({
+        data: users.map((user: any) => ({
           ...user,
+          subscription: user.subscription ? {
+            plan: user.subscription.planType,
+            status: user.subscription.status,
+            expiresAt: user.subscription.endDate,
+          } : null,
+          isSuspended: user.profile?.riskAppetite === 'SUSPENDED',
           brokerProfile: brokerByUserId.get(user.id) || null,
         })),
         meta: {
@@ -293,6 +325,79 @@ export class AdminService {
     });
 
     return { success: true, message: `User ${user.email} deleted successfully.` };
+  }
+
+  async suspendUser(adminUserId: string, targetUserId: string, reason = 'Administrative Compliance Review') {
+    const user = await this.prisma.user.findUnique({ where: { id: targetUserId }, include: { profile: true } });
+    if (!user) throw new NotFoundException('User not found.');
+
+    if (user.profile) {
+      await this.prisma.profile.update({
+        where: { userId: targetUserId },
+        data: { riskAppetite: 'SUSPENDED' },
+      });
+    } else {
+      await this.prisma.profile.create({
+        data: {
+          userId: targetUserId,
+          firstName: 'Trader',
+          lastName: 'Account',
+          riskAppetite: 'SUSPENDED',
+        },
+      });
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'ADMIN_USER_SUSPENDED',
+        details: { targetUserId, email: user.email, reason },
+      },
+    });
+
+    await this.prisma.notification.create({
+      data: {
+        userId: targetUserId,
+        title: '⚠️ Account Suspended by Administration',
+        message: `Your account access has been temporarily suspended. Reason: ${reason}. Please contact TradeMind admin on WhatsApp (+254780566096) for appeal.`,
+        type: 'Security',
+        isRead: false,
+      },
+    }).catch(() => null);
+
+    return { success: true, message: `User ${user.email} has been suspended.` };
+  }
+
+  async unsuspendUser(adminUserId: string, targetUserId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: targetUserId }, include: { profile: true } });
+    if (!user) throw new NotFoundException('User not found.');
+
+    if (user.profile) {
+      await this.prisma.profile.update({
+        where: { userId: targetUserId },
+        data: { riskAppetite: 'Moderate' },
+      });
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: adminUserId,
+        action: 'ADMIN_USER_UNSUSPENDED',
+        details: { targetUserId, email: user.email },
+      },
+    });
+
+    await this.prisma.notification.create({
+      data: {
+        userId: targetUserId,
+        title: '✅ Account Suspension Lifted',
+        message: 'Your account suspension has been reviewed and lifted. Full platform access is restored. Welcome back!',
+        type: 'Update',
+        isRead: false,
+      },
+    }).catch(() => null);
+
+    return { success: true, message: `User ${user.email} suspension has been lifted.` };
   }
 
   // 3. KYC Queue Management
@@ -958,23 +1063,10 @@ export class AdminService {
   async broadcastNotification(adminUserId: string, payload: { title: string; message: string; type?: string }) {
     const users = await this.prisma.user.findMany({ select: { id: true } });
     const typeToSet = payload.type || 'ADMIN_BROADCAST';
-    
-    const batchStartTime = new Date();
 
     for (const user of users) {
-      await this.notificationsGateway.sendNotification(user.id, payload.title, payload.message);
+      await this.notificationsGateway.sendNotification(user.id, payload.title, payload.message, typeToSet);
     }
-
-    await this.prisma.notification.updateMany({
-      where: {
-        title: payload.title,
-        message: payload.message,
-        createdAt: { gte: batchStartTime }
-      },
-      data: {
-        type: typeToSet
-      }
-    });
 
     await this.prisma.auditLog.create({
       data: {
@@ -990,20 +1082,7 @@ export class AdminService {
   async sendNotificationToUser(adminUserId: string, payload: { userId: string; title: string; message: string; type?: string }) {
     const typeToSet = payload.type || 'ADMIN_DIRECT';
     
-    await this.notificationsGateway.sendNotification(payload.userId, payload.title, payload.message);
-
-    const latestNotifs = await this.prisma.notification.findMany({
-      where: { userId: payload.userId, title: payload.title, message: payload.message },
-      orderBy: { createdAt: 'desc' },
-      take: 1
-    });
-
-    if (latestNotifs.length > 0) {
-      await this.prisma.notification.update({
-        where: { id: latestNotifs[0].id },
-        data: { type: typeToSet }
-      });
-    }
+    await this.notificationsGateway.sendNotification(payload.userId, payload.title, payload.message, typeToSet);
 
     await this.prisma.auditLog.create({
       data: {
@@ -1019,12 +1098,27 @@ export class AdminService {
   async getNotificationHistory() {
     return this.prisma.notification.findMany({
       where: {
-        type: {
-          in: ['ADMIN_BROADCAST', 'ADMIN_DIRECT']
-        }
+        OR: [
+          { type: { in: ['ADMIN_BROADCAST', 'ADMIN_DIRECT', 'System Alert', 'Maintenance', 'Promotion', 'Update', 'Security'] } },
+          { type: { startsWith: 'ADMIN' } }
+        ]
       },
       orderBy: { createdAt: 'desc' },
       take: 50,
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            profile: {
+              select: {
+                firstName: true,
+                lastName: true,
+              }
+            }
+          }
+        }
+      }
     });
   }
 }

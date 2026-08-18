@@ -255,7 +255,7 @@ export default function OrdersPage() {
               Loading live order history...
             </div>
           ) : (
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-xs min-w-[800px]">
             <thead>
               <tr className="border-b border-white/5 bg-slate-900/40 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 <th className="py-4 px-5">Order ID</th>

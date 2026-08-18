@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User, ShieldAlert, GraduationCap, MessageCircle } from 'lucide-react';
+import { Menu, Bell, Search, Zap, ChevronUp, ChevronDown, X, Cpu, Target, HelpCircle, User, ShieldAlert, GraduationCap, MessageCircle, Megaphone } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { useMarketStore } from '@/store/useMarketStore';
 import { cn } from '@/lib/utils';
@@ -370,28 +370,51 @@ export function Topbar() {
                   )}
                 </div>
 
-                <div className="max-h-60 overflow-y-auto space-y-2.5 pr-1">
+                <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
                   {notifications.filter(n => !n.isRead).length === 0 ? (
-                    <div className="py-6 text-center text-[11px] text-slate-500">
-                      No new notifications
+                    <div className="py-6 text-center text-[11px] text-slate-500 font-mono">
+                      No unread notifications
                     </div>
                   ) : (
-                    notifications.filter(n => !n.isRead).slice(0, 8).map((notif) => (
-                      <div
-                        key={notif.id}
-                        onClick={() => handleMarkSingleRead(notif.id)}
-                        className="p-2.5 rounded-xl border transition-all text-left cursor-pointer bg-purple-500/5 border-purple-500/10 text-slate-200 hover:bg-purple-500/10"
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-0.5">
-                          <span className="font-bold text-[11px] block truncate text-white">{notif.title}</span>
-                          <span className="h-1.5 w-1.5 rounded-full bg-purple-400 shrink-0 animate-pulse" />
+                    notifications.filter(n => !n.isRead).slice(0, 8).map((notif) => {
+                      const isBroadcast = notif.type?.includes('ADMIN') || notif.type?.includes('Alert') || notif.type?.includes('Maintenance');
+                      const isAcademy = notif.type?.includes('ACADEMY');
+                      const isSignal = notif.type?.includes('SIGNAL');
+
+                      return (
+                        <div
+                          key={notif.id}
+                          onClick={() => handleMarkSingleRead(notif.id)}
+                          className="p-2 rounded-xl border transition-all text-left cursor-pointer bg-slate-900/60 border-white/5 hover:border-purple-500/30 hover:bg-purple-500/10 text-slate-200 group flex items-start gap-2.5"
+                        >
+                          <div className={cn(
+                            "w-6 h-6 rounded-lg flex items-center justify-center shrink-0 mt-0.5",
+                            isBroadcast ? "bg-purple-500/20 text-purple-300" :
+                            isAcademy ? "bg-teal-500/20 text-teal-300" :
+                            isSignal ? "bg-amber-500/20 text-amber-300" :
+                            "bg-blue-500/20 text-blue-300"
+                          )}>
+                            {isBroadcast ? <Megaphone size={12} /> :
+                             isAcademy ? <GraduationCap size={12} /> :
+                             isSignal ? <Zap size={12} /> :
+                             <Bell size={12} />}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1 mb-0.5">
+                              <span className="font-semibold text-[11px] block truncate text-white group-hover:text-purple-300 transition-colors">
+                                {notif.title}
+                              </span>
+                              <span className="h-1.5 w-1.5 rounded-full bg-purple-400 shrink-0 animate-pulse" />
+                            </div>
+                            <p className="text-[10px] leading-tight text-slate-400 line-clamp-2">{notif.message}</p>
+                            <span className="text-[9px] text-slate-500 mt-1 block font-mono">
+                              {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-[10px] leading-relaxed text-slate-400 break-words">{notif.message}</p>
-                        <span className="text-[9px] text-slate-500 mt-1 block">
-                          {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
@@ -401,7 +424,7 @@ export function Topbar() {
                     onClick={() => setDropdownOpen(false)}
                     className="text-[10px] text-center font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 hover:underline transition-colors"
                   >
-                    View All Notifications
+                    View All in Notification Center →
                   </Link>
                 </div>
               </div>

@@ -137,13 +137,14 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
 
   // --- Push Notifications Broadcaster ---
 
-  async sendNotification(userId: string, title: string, message: string) {
+  async sendNotification(userId: string, title: string, message: string, type: string = 'SYSTEM') {
     // Save notification record in PostgreSQL
     const notification = await this.prisma.notification.create({
       data: {
         userId,
         title,
         message,
+        type,
         isRead: false,
       },
     });
@@ -151,7 +152,8 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
     // Broadcast to the user's socket room
     if (this.server) {
       this.server.to(`user:${userId}`).emit('notification', notification);
-      console.log(`[WS] Dispatched push notification to user:${userId}: "${title}"`);
+      console.log(`[WS] Dispatched push notification to user:${userId}: "${title}" [${type}]`);
     }
+    return notification;
   }
 }

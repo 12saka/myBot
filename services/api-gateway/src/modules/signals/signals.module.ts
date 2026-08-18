@@ -688,7 +688,12 @@ export class SignalsController implements OnModuleInit {
     if (candles.length >= 50) {
       const lastCandle = candles[candles.length - 1];
       const diffMs = now.getTime() - lastCandle.timestamp.getTime();
-      let maxAgeMs = 2 * 60 * 1000; // Max 2 minutes cache age to ensure 100% real-time live price updates
+      // Scale freshness by timeframe — scalping needs near-instant data
+      let maxAgeMs = 5 * 60 * 1000; // Default 5 minutes for 1h+
+      if (interval === '1m' || interval === '3m') maxAgeMs = 15 * 1000; // 15 seconds for micro scalps
+      else if (interval === '5m') maxAgeMs = 45 * 1000; // 45 seconds for 5m scalps
+      else if (interval === '15m') maxAgeMs = 90 * 1000; // 90 seconds for 15m
+      else if (interval === '30m') maxAgeMs = 3 * 60 * 1000; // 3 minutes for 30m
       
       if (diffMs < maxAgeMs) {
         isFresh = true;
@@ -1031,7 +1036,7 @@ export class SignalsController implements OnModuleInit {
         if (currentVol > avgVol * 1.2) winProb += 5; // Above-average volume confirms move
       }
     }
-    return Math.min(92, Math.max(55, winProb));
+    return Math.min(92, Math.max(40, winProb));
   }
 
   private computeSignalGrade(winProb: number, ema20: number, ema50: number, ema200: number, direction: string): string {
@@ -1124,6 +1129,104 @@ export class SignalsController implements OnModuleInit {
       volatility: `ATR-14: ${atr.toFixed(dp)} — SL distance: ${Math.abs(entryPrice - stopLoss).toFixed(dp)}`,
       volume: `VWAP: ${vwap.toFixed(dp)} — Price ${entryPrice > vwap ? 'above' : 'below'} institutional average`
     };
+  }
+
+  /**
+   * Universal Signal Quality Gate — applied to ALL strategy engines.
+   * Returns null if signal passes quality checks, or a WAIT result if it fails.
+   * This prevents low-quality signals from reaching users.
+   */
+  private applyQualityGate(params: {
+    bullishScore: number;
+    bearishScore: number;
+    rsi: number;
+    ema20: number;
+    ema50: number;
+    entryPrice: number;
+    candles: any[];
+    direction: string;
+    symbol: string;
+    marketRegime: string;
+  }): { direction: string; invalidationReason: string; evidence: any } | null {
+    const { bullishScore, bearishScore, rsi, ema20, ema50, entryPrice, candles, direction, symbol, marketRegime } = params;
+    const rawScore = direction === 'BUY' ? bullishScore : bearishScore;
+
+    // Gate 1: Minimum confluence threshold (raised from 58 to 72)
+    if (rawScore < 72) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} confluence score (${rawScore}/100) below minimum 72 threshold in ${marketRegime} regime. Quality gate protecting capital.`,
+        evidence: { bullishScore, bearishScore, rsi, gate: 'LOW_CONFLUENCE' }
+      };
+    }
+
+    // Gate 2: Conflicting signals — both sides are strong (within 15 pts)
+    if (Math.abs(bullishScore - bearishScore) < 15) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} has conflicting signals (Bull: ${bullishScore} vs Bear: ${bearishScore}). Spread < 15 pts — market is indecisive.`,
+        evidence: { bullishScore, bearishScore, rsi, gate: 'CONFLICTING_SIGNALS' }
+      };
+    }
+
+    // Gate 3: RSI dead zone — no directional momentum
+    if (rsi >= 45 && rsi <= 55) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} RSI at ${rsi.toFixed(1)} is in neutral dead zone (45-55). No momentum confirmation available.`,
+        evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_NEUTRAL' }
+      };
+    }
+
+    // Gate 4: EMA compression — market is ranging, not trending
+    const emaSpread = Math.abs(ema20 - ema50) / entryPrice;
+    if (emaSpread < 0.001) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} EMA-20/50 spread is only ${(emaSpread * 100).toFixed(3)}% — EMAs are compressed, market is ranging.`,
+        evidence: { bullishScore, bearishScore, rsi, emaSpread, gate: 'EMA_COMPRESSION' }
+      };
+    }
+
+    // Gate 5: Last candle confirmation — last 2 candles must not contradict signal
+    if (candles.length >= 3) {
+      const last3 = candles.slice(-3);
+      const bearishCloses = last3.filter(c => Number(c.close) < Number(c.open)).length;
+      const bullishCloses = last3.filter(c => Number(c.close) > Number(c.open)).length;
+
+      if (direction === 'BUY' && bearishCloses >= 3) {
+        return {
+          direction: 'WAIT',
+          invalidationReason: `${symbol} BUY signal rejected: last 3 candles are all bearish. No confirmation candle.`,
+          evidence: { bullishScore, bearishScore, rsi, gate: 'NO_CONFIRMATION_CANDLE' }
+        };
+      }
+      if (direction === 'SELL' && bullishCloses >= 3) {
+        return {
+          direction: 'WAIT',
+          invalidationReason: `${symbol} SELL signal rejected: last 3 candles are all bullish. No confirmation candle.`,
+          evidence: { bullishScore, bearishScore, rsi, gate: 'NO_CONFIRMATION_CANDLE' }
+        };
+      }
+    }
+
+    // Gate 6: RSI contradiction — signal direction opposes RSI extremes
+    if (direction === 'BUY' && rsi > 75) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} BUY signal rejected: RSI at ${rsi.toFixed(1)} is overbought. Entering longs at exhaustion is high-risk.`,
+        evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_OVERBOUGHT_BUY' }
+      };
+    }
+    if (direction === 'SELL' && rsi < 25) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} SELL signal rejected: RSI at ${rsi.toFixed(1)} is oversold. Entering shorts at exhaustion is high-risk.`,
+        evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_OVERSOLD_SELL' }
+      };
+    }
+
+    return null; // All gates passed — signal is valid
   }
 
   private btcStrategyEngine(candles: any[], symbol: string) {
@@ -1265,16 +1368,20 @@ export class SignalsController implements OnModuleInit {
       reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms sustained buying momentum`);
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms sustained selling momentum`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms sustained selling momentum`);
     } else if (rsi >= 72) {
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of long liquidation unwind`);
     } else if (rsi <= 28) {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short squeeze hazard`);
     }
 
-    // Layer 8: Session Window Timing (5 Points)
-    if (bullishScore > bearishScore) bullishScore += sessionScore;
-    else if (bearishScore > bullishScore) bearishScore += sessionScore;
+    // Layer 8: Session Window Timing (applied neutrally based on actual session direction)
+    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    if (isDisplacement) {
+      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      if (isBullBody) bullishScore += sessionScore;
+      else bearishScore += sessionScore;
+    }
 
     // Rangebound Penalties
     if (isRanging) {
@@ -1287,19 +1394,18 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Direction & High-Conviction Threshold (58/100)
+    // Direction determination
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(55, rawScore));
-    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    const direction = isBull ? 'BUY' : 'SELL';
 
-    if (direction === 'WAIT') {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Crypto confluence score (${confidenceScore}/100) below minimum 58 threshold in ${marketRegime} regime. Systematic engine protecting capital.`,
-        evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
-      };
-    }
+    // Apply universal quality gate
+    const gateResult = this.applyQualityGate({
+      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
+      candles, direction, symbol, marketRegime
+    });
+    if (gateResult) return gateResult;
 
     // Targets & Dynamic Risk-to-Reward Ratio
     const slDist = atr * 1.35;
@@ -1496,16 +1602,20 @@ export class SignalsController implements OnModuleInit {
       reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish index expansion`);
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
     } else if (rsi >= 72) {
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of intraday pullback`);
     } else if (rsi <= 28) {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
     }
 
-    // Layer 8: Session Timing (5 Points)
-    if (bullishScore > bearishScore) bullishScore += sessionScore;
-    else if (bearishScore > bullishScore) bearishScore += sessionScore;
+    // Layer 8: Session Timing (applied neutrally based on actual session direction)
+    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    if (isDisplacement) {
+      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      if (isBullBody) bullishScore += sessionScore;
+      else bearishScore += sessionScore;
+    }
 
     // Regime-Specific Strategy Adjustments
     if (isRanging) {
@@ -1522,16 +1632,15 @@ export class SignalsController implements OnModuleInit {
     // Determine Direction & Final Confluence Score
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(55, rawScore));
-    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    const direction = isBull ? 'BUY' : 'SELL';
 
-    if (direction === 'WAIT') {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Nasdaq 100 confluence score (${confidenceScore}/100) below minimum 58 threshold. Institutional model rejecting low-confluence setups.`,
-        evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
-      };
-    }
+    // Apply universal quality gate
+    const gateResult = this.applyQualityGate({
+      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
+      candles, direction, symbol, marketRegime
+    });
+    if (gateResult) return gateResult;
 
     // Calculate Targets & Risk/Reward
     const slDist = atr * 1.45;
@@ -1728,30 +1837,33 @@ export class SignalsController implements OnModuleInit {
       reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish index expansion`);
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
     } else if (rsi >= 72) {
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of short-term pullback`);
     } else if (rsi <= 28) {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
     }
 
-    // Layer 8: Session Timing (5 Points)
-    if (bullishScore > bearishScore) bullishScore += sessionScore;
-    else if (bearishScore > bullishScore) bearishScore += sessionScore;
+    // Layer 8: Session Timing (applied neutrally based on actual session direction)
+    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    if (isDisplacement) {
+      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      if (isBullBody) bullishScore += sessionScore;
+      else bearishScore += sessionScore;
+    }
 
     // Determine Direction & High-Conviction Threshold (58/100)
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(55, rawScore));
-    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    const direction = isBull ? 'BUY' : 'SELL';
 
-    if (direction === 'WAIT') {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Dow Jones confluence score (${confidenceScore}/100) below minimum 58 threshold. Industrial engine filtering low-volume noise.`,
-        evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
-      };
-    }
+    // Apply universal quality gate
+    const gateResult = this.applyQualityGate({
+      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
+      candles, direction, symbol, marketRegime
+    });
+    if (gateResult) return gateResult;
 
     // Calculate Targets & Risk/Reward
     const slDist = atr * 1.40;
@@ -1943,30 +2055,33 @@ export class SignalsController implements OnModuleInit {
       reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish FX momentum`);
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish FX momentum`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish FX momentum`);
     } else if (rsi >= 72) {
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of short-term pullback`);
     } else if (rsi <= 28) {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
     }
 
-    // Layer 8: Prime Session Timing (5 Points)
-    if (bullishScore > bearishScore) bullishScore += sessionScore;
-    else if (bearishScore > bullishScore) bearishScore += sessionScore;
+    // Layer 8: Prime Session Timing (applied neutrally based on actual session direction)
+    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    if (isDisplacement) {
+      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      if (isBullBody) bullishScore += sessionScore;
+      else bearishScore += sessionScore;
+    }
 
     // Determine Direction & High-Conviction Threshold (58/100)
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(55, rawScore));
-    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    const direction = isBull ? 'BUY' : 'SELL';
 
-    if (direction === 'WAIT') {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Forex confluence score (${confidenceScore}/100) below minimum 58 threshold. Institutional DXY engine filtering noise.`,
-        evidence: { bullishScore, bearishScore, rsi, atr, vwap, marketRegime }
-      };
-    }
+    // Apply universal quality gate
+    const gateResult = this.applyQualityGate({
+      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
+      candles, direction, symbol, marketRegime
+    });
+    if (gateResult) return gateResult;
 
     // Calculate Targets & Risk/Reward
     const slDist = atr * 1.30;
@@ -2166,16 +2281,20 @@ export class SignalsController implements OnModuleInit {
       reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy USDJPY bullish momentum`);
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy USDJPY bearish momentum`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy USDJPY bearish momentum`);
     } else if (rsi >= 72) {
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of short-term pullback`);
     } else if (rsi <= 28) {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
     }
 
-    // Layer 8: Prime Session Timing (5 Points)
-    if (bullishScore > bearishScore) bullishScore += sessionScore;
-    else if (bearishScore > bullishScore) bearishScore += sessionScore;
+    // Layer 8: Prime Session Timing (applied neutrally based on actual session direction)
+    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    if (isDisplacement) {
+      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      if (isBullBody) bullishScore += sessionScore;
+      else bearishScore += sessionScore;
+    }
 
     // Intervention Risk Penalty
     if (interventionRiskLevel === 'EXTREME') {
@@ -2186,23 +2305,18 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push('⚠️ HIGH MoF Intervention Risk above 155.00 — verbal intervention warnings active');
     }
 
-    // Determine Direction & High-Conviction Threshold (72/100)
+    // Direction determination
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(50, rawScore));
-    const direction = (confidenceScore >= 72 && interventionRiskLevel !== 'EXTREME') ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    const direction = isBull ? 'BUY' : 'SELL';
 
-    if (direction === 'WAIT') {
-      const waitReason = interventionRiskLevel === 'EXTREME'
-        ? 'EXTREME MoF Intervention Risk level active. Professional system halted long setups to protect capital.'
-        : `USDJPY macro confluence score (${confidenceScore}/100) below minimum 65 threshold. Setup rejected.`;
-
-      return {
-        direction: 'WAIT',
-        invalidationReason: waitReason,
-        evidence: { bullishScore, bearishScore, rsi, atr, vwap, interventionRiskLevel, marketRegime }
-      };
-    }
+    // Apply universal quality gate
+    const gateResult = this.applyQualityGate({
+      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
+      candles, direction, symbol, marketRegime
+    });
+    if (gateResult) return gateResult;
 
     // Calculate Targets & Risk/Reward
     const slDist = atr * 1.25;
@@ -2383,30 +2497,34 @@ export class SignalsController implements OnModuleInit {
       reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish momentum`);
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish momentum`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish momentum`);
     } else if (rsi >= 72) {
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of pullbacks`);
     } else if (rsi <= 28) {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
     }
 
-    // Layer 8: Prime Session Alignment (5 Points)
-    if (bullishScore > bearishScore) bullishScore += sessionScore;
-    else if (bearishScore > bullishScore) bearishScore += sessionScore;
+    // Layer 8: Prime Session Alignment (applied neutrally based on actual session direction)
+    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    if (isDisplacement) {
+      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      if (isBullBody) bullishScore += sessionScore;
+      else bearishScore += sessionScore;
+    }
 
-    // Determine Direction & High-Conviction Threshold (58/100)
+    // Direction determination
     const isBull = bullishScore >= bearishScore;
     const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(55, rawScore));
-    const direction = confidenceScore >= 58 ? (isBull ? 'BUY' : 'SELL') : 'WAIT';
+    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    const direction = isBull ? 'BUY' : 'SELL';
 
-    if (direction === 'WAIT') {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `XAUUSD confluence score (${confidenceScore}/100) below minimum 58 threshold. Professional system rejected low-confluence setup.`,
-        evidence: { bullishScore, bearishScore, rsi, atr, vwap }
-      };
-    }
+    // Apply universal quality gate
+    const marketRegimeGate = direction === 'BUY' ? 'Bullish Expansion' : 'Bearish Expansion';
+    const gateResult = this.applyQualityGate({
+      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
+      candles, direction, symbol, marketRegime: marketRegimeGate
+    });
+    if (gateResult) return gateResult;
 
     // Calculate Exact Targets & Direct Market Scalp Risk/Reward
     const slDist = Math.max(entryPrice * 0.0018, Math.min(entryPrice * 0.0035, atr * 0.95));
