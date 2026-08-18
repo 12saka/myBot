@@ -199,12 +199,18 @@ export function mapSignal(item: any): AISignal {
     tp3: tp3 > 0 ? tp3 : undefined,
     riskReward: rrRatio,
     probability: direction === 'WAIT' ? 'Market Neutral' : `${confidence}%`,
-    duration: item.durationEstimate || '4h (Day Trade)',
+    duration: item.durationEstimate || (
+      reasoning.timeframe === '1m' ? '1-5 mins (Scalp)' :
+      reasoning.timeframe === '5m' ? '5-15 mins (Scalp)' :
+      reasoning.timeframe === '15m' ? '15-45 mins (Scalp)' :
+      reasoning.timeframe === '30m' ? '30-90 mins (Scalp)' :
+      '1-4 hours (Day Trade)'
+    ),
     strategy: strategyName,
     technicals: indicators.length ? indicators : [
-      `EMA 20/50/200 Trend Alignment: ${isBuy ? 'Bullish Expansion' : 'Bearish Continuation'}`,
-      `RSI(14) Momentum: ${isBuy ? 'Bullish Rebound from OTE' : 'Bearish Rejection from Supply'}`,
-      `VWAP Vector: Price trading ${isBuy ? 'above' : 'below'} session VWAP with institutional delta`
+      `EMA 20/50/200 Trend Alignment: ${isBuy ? 'Bullish Momentum' : 'Bearish Continuation'}`,
+      `RSI(14) Momentum: ${isBuy ? 'Bullish Pullback Support' : 'Bearish Supply Rejection'}`,
+      `VWAP Vector: Price trading ${isBuy ? 'above' : 'below'} session VWAP`
     ],
     fundamentals: [macroContext],
     sentiment: [marketStructure],
@@ -215,9 +221,10 @@ export function mapSignal(item: any): AISignal {
     status,
     aiReasoning: {
       ...reasoning,
+      timeframe: reasoning.timeframe || item.timeframe || '15m',
       reasons_for: reasoning.reasons_for || [
-        isBuy ? '15m Bullish Order Block & FVG Retest' : '15m Bearish Order Block & FVG Retest',
-        isBuy ? 'Liquidity Sweep of Asian Session Low' : 'Liquidity Sweep of Asian Session High',
+        isBuy ? 'Bullish Order Block & FVG Imbalance Retest' : 'Bearish Order Block & FVG Imbalance Retest',
+        isBuy ? 'Liquidity Sweep of Session Low' : 'Liquidity Sweep of Session High',
         'Multi-timeframe Trend & VWAP Confluence'
       ],
       reasons_against: reasoning.reasons_against || [

@@ -136,6 +136,9 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <Badge variant={!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? 'buy' : 'blue'} size="xs">
               {!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
             </Badge>
+            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+              ⏱️ {signal.aiReasoning?.timeframe || '15m'}
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] text-slate-500">{signal.strategy}</span>
@@ -207,28 +210,54 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         })}
       </div>
 
-      {/* Small Account ($10 - $15 USD) Micro-Risk Protection Banner */}
-      <div className="bg-gradient-to-r from-emerald-950/40 to-slate-900/60 border border-emerald-500/20 p-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span className="text-[11px] font-bold text-emerald-400">
-            {['US30', 'US100', 'SPX500', 'DAX40'].some(idx => signal.symbol.includes(idx))
-              ? '⚠️ High Margin ($25+ Lot Margin - Suitable for >$50 Accounts)'
-              : '🟢 $10 - $15 Account Approved (0.01 Micro-Lot)'}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-[10px] font-mono text-slate-300">
-          <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
-            Lot: <strong className="text-emerald-400">0.01 Micro</strong>
-          </span>
-          <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
-            Max Risk: <strong className="text-amber-400">$0.25 (1.8%)</strong>
-          </span>
-        </div>
-      </div>
+      {/* Small Account & Intraday Risk Management Banner */}
+      {(() => {
+        const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
+        const isJpy = signal.symbol.includes('JPY');
+        const isGold = signal.symbol.includes('XAU') || signal.symbol.includes('GOLD');
+        const isIndex = ['US30', 'US100', 'SPX500', 'DAX40'].some(idx => signal.symbol.includes(idx));
+        const isCrypto = signal.type === 'crypto' || ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => signal.symbol.includes(c));
+        
+        const slDiff = Math.abs(signal.entry - signal.stopLoss);
+        let riskLabel = '';
+        if (isForex) {
+          const pips = isJpy ? (slDiff * 100).toFixed(1) : (slDiff * 10000).toFixed(1);
+          riskLabel = `Risk: ${pips} pips (~$${(Number(pips) * 0.1).toFixed(2)} on 0.01 lot)`;
+        } else if (isGold) {
+          riskLabel = `Risk: $${slDiff.toFixed(2)} (~$${slDiff.toFixed(2)} on 0.01 lot)`;
+        } else if (isIndex) {
+          riskLabel = `Risk: ${slDiff.toFixed(1)} pts (~$${(slDiff * 0.05).toFixed(2)} on 0.05 lot)`;
+        } else if (isCrypto) {
+          const pct = ((slDiff / (signal.entry || 1)) * 100).toFixed(2);
+          riskLabel = `Risk: ${pct}% ($${slDiff.toFixed(1)})`;
+        } else {
+          riskLabel = `Risk: $${slDiff.toFixed(2)}`;
+        }
+
+        return (
+          <div className="bg-gradient-to-r from-emerald-950/40 to-slate-900/60 border border-emerald-500/20 p-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span className="text-[11px] font-bold text-emerald-400">
+                {isIndex
+                  ? '⚠️ Index Scalp ($25+ Margin - Suitable for >$50 Accounts)'
+                  : '🟢 Micro Account Approved (0.01 Micro-Lot)'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-300">
+              <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                Lot: <strong className="text-emerald-400">0.01 Micro</strong>
+              </span>
+              <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                <strong className="text-amber-400">{riskLabel}</strong>
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="flex flex-wrap items-center gap-4 text-xs">
         {[
@@ -284,28 +313,28 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
           <span className="font-bold uppercase text-[10px] tracking-wider text-purple-400 flex items-center gap-1">
             💡 Pro Trader Actionable Insights
           </span>
-          <span className="text-[10px] text-slate-400 font-mono">Recommended Execution</span>
+          <span className="text-[10px] text-slate-400 font-mono">15m Scalp Protocol</span>
         </div>
         <div className="text-[11px] text-slate-200 font-medium leading-relaxed">
           {(() => {
-            const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(signal.symbol);
+            const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
             const isJpy = signal.symbol.includes('JPY');
-            const dec = isForex ? (isJpy ? 2 : 4) : 2;
+            const dec = isForex ? (isJpy ? 3 : 4) : 2;
             const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) : '0.00';
             
             return isBuy 
-              ? `Place Buy Limit at ${fmt(signal.entry)}. Set Stop Loss at ${fmt(signal.stopLoss)}. Move SL to Break-Even once TP1 (${fmt(signal.tp1)}) is reached.` 
-              : `Place Sell Limit at ${fmt(signal.entry)}. Set Stop Loss at ${fmt(signal.stopLoss)}. Move SL to Break-Even once TP1 (${fmt(signal.tp1)}) is reached.`;
+              ? `Enter Buy at ${fmt(signal.entry)}. Set Invalidation SL at ${fmt(signal.stopLoss)}. Secure TP1 at ${fmt(signal.tp1)} (trail SL to breakeven), let remainder run to TP2 (${fmt(signal.tp2)}).` 
+              : `Enter Sell at ${fmt(signal.entry)}. Set Invalidation SL at ${fmt(signal.stopLoss)}. Secure TP1 at ${fmt(signal.tp1)} (trail SL to breakeven), let remainder run to TP2 (${fmt(signal.tp2)}).`;
           })()}
         </div>
         <div className="flex gap-2 mt-1">
           <button
             onClick={() => {
-              const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].includes(signal.symbol);
+              const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
               const isJpy = signal.symbol.includes('JPY');
-              const dec = isForex ? (isJpy ? 2 : 4) : 2;
-              const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? v.toFixed(dec) : '0.00';
-              navigator.clipboard.writeText(`Entry: ${fmt(signal.entry)} | SL: ${fmt(signal.stopLoss)} | TP1: ${fmt(signal.tp1)} | TP2: ${fmt(signal.tp2)}`);
+              const dec = isForex ? (isJpy ? 3 : 4) : 2;
+              const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toFixed(2)}`) : '0.00';
+              navigator.clipboard.writeText(`Symbol: ${signal.symbol} | ${signal.direction} | Entry: ${fmt(signal.entry)} | SL: ${fmt(signal.stopLoss)} | TP1: ${fmt(signal.tp1)} | TP2: ${fmt(signal.tp2)}`);
               toast.success(`Copied trade parameters for ${signal.symbol} to clipboard! Paste into MT4/MT5.`, {
                 icon: '📋',
                 duration: 5000
@@ -477,6 +506,7 @@ export default function SignalsPage() {
   
   // Generation & refresh states
   const [generatingSymbol, setGeneratingSymbol] = useState<string | null>(null);
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
@@ -801,6 +831,35 @@ export default function SignalsPage() {
     }
   };
 
+  const handleGenerateAll = async () => {
+    setIsBatchGenerating(true);
+    const toastId = toast.loading(`Scanning top watchlist markets on ${selectedTimeframe}...`);
+    const keySymbols = ['BTC/USD', 'ETH/USD', 'US30', 'US100', 'XAU/USD', 'EUR/USD', 'USD/JPY'];
+    let count = 0;
+    try {
+      for (const sym of keySymbols) {
+        try {
+          const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
+            method: 'POST',
+            body: JSON.stringify({ symbol: sym, interval: selectedTimeframe })
+          });
+          const newSignal = mapSignal(rawSignal);
+          if (newSignal.direction !== 'WAIT') {
+            const currentSignals = useAIStore.getState().signals || [];
+            setSignals([newSignal, ...currentSignals.filter(s => s.symbol !== newSignal.symbol)]);
+            count++;
+          }
+        } catch (symErr) {}
+      }
+      playSignalChime('NEW_SIGNAL');
+      toast.success(`Watchlist scan complete! Generated ${count} live ${selectedTimeframe} setups.`, { id: toastId });
+    } catch (err: any) {
+      toast.error('Batch scan encountered an issue.', { id: toastId });
+    } finally {
+      setIsBatchGenerating(false);
+    }
+  };
+
   const handleDeleteSignal = async (id: string) => {
     const toastId = toast.loading('Dismissing active signal...');
     try {
@@ -1045,22 +1104,32 @@ export default function SignalsPage() {
             <p className="text-[11px] text-slate-400">Select any index, commodity, stock, or coin below to execute predictive models.</p>
           </div>
           
-          <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-xl border border-white/5 self-start sm:self-auto">
-            {(['1m', '3m', '5m', '15m', '30m', '1h'] as const).map(tf => (
-              <button
-                key={tf}
-                type="button"
-                onClick={() => setSelectedTimeframe(tf)}
-                className={cn(
-                  "px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer",
-                  selectedTimeframe === tf 
-                    ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" 
-                    : "text-slate-400 hover:text-slate-200"
-                )}
-              >
-                {tf}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <button
+              onClick={() => handleGenerateAll()}
+              disabled={generatingSymbol !== null || isBatchGenerating}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white flex items-center gap-1.5 shadow-md shadow-purple-500/20 cursor-pointer disabled:opacity-50 transition-all"
+            >
+              {isBatchGenerating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+              Analyze Watchlist ({selectedTimeframe})
+            </button>
+            <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-xl border border-white/5">
+              {(['1m', '3m', '5m', '15m', '30m', '1h'] as const).map(tf => (
+                <button
+                  key={tf}
+                  type="button"
+                  onClick={() => setSelectedTimeframe(tf)}
+                  className={cn(
+                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer",
+                    selectedTimeframe === tf 
+                      ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" 
+                      : "text-slate-400 hover:text-slate-200"
+                  )}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1">

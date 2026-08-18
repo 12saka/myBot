@@ -1083,38 +1083,46 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
             f"Trade structure is strictly invalidated if price breaches the opposite swing boundary."
         )
             
-    # PRO Institutional Retest Entry & Dynamic Pivot-Anchored SL / TP Boundaries (1:2.0 & 1:3.2 R:R)
+    # PRO Institutional Retest Entry & Dynamic Timeframe-Calibrated SL / TP Boundaries (1:1.5 & 1:2.6 R:R)
     entry = float(current_price)
-    atr_val = indicators.get("atr") or (entry * 0.01)
-    swing_low = indicators.get("swing_low") or (entry * 0.985)
-    swing_high = indicators.get("swing_high") or (entry * 1.015)
+    atr_val = indicators.get("atr") or (entry * 0.008)
 
     is_scalping = timeframe in ['1m', '3m', '5m', '15m', '30m']
-    min_sl_pct = 0.0015 if is_scalping else 0.005
-    max_sl_pct = 0.012 if is_scalping else 0.030
+    sym_upper = symbol.upper()
+    is_gold = 'XAU' in sym_upper or 'GOLD' in sym_upper
+    is_us30 = 'US30' in sym_upper or 'DOW' in sym_upper
+    is_nas100 = 'US100' in sym_upper or 'NAS' in sym_upper
+    is_jpy = 'JPY' in sym_upper
+    is_forex = ('EUR' in sym_upper or 'GBP' in sym_upper or 'AUD' in sym_upper or 'CAD' in sym_upper) and not is_crypto
+
+    # Asset & timeframe calibrated stop distance
+    if is_gold:
+        sl_dist = min(max(atr_val * 1.1, 1.80 if is_scalping else 3.50), 4.50 if is_scalping else 8.00)
+    elif is_us30:
+        sl_dist = min(max(atr_val * 1.1, 28.0 if is_scalping else 55.0), 65.0 if is_scalping else 120.0)
+    elif is_nas100:
+        sl_dist = min(max(atr_val * 1.1, 16.0 if is_scalping else 35.0), 40.0 if is_scalping else 75.0)
+    elif is_jpy:
+        sl_dist = min(max(atr_val * 1.1, 0.12 if is_scalping else 0.25), 0.30 if is_scalping else 0.60)
+    elif is_forex:
+        sl_dist = min(max(atr_val * 1.1, 0.0010 if is_scalping else 0.0022), 0.0022 if is_scalping else 0.0045)
+    elif is_crypto:
+        min_pct = 0.0035 if is_scalping else 0.008
+        max_pct = 0.0070 if is_scalping else 0.018
+        sl_dist = min(max(atr_val * 1.1, entry * min_pct), entry * max_pct)
+    else:
+        min_pct = 0.003 if is_scalping else 0.008
+        max_pct = 0.008 if is_scalping else 0.020
+        sl_dist = min(max(atr_val * 1.1, entry * min_pct), entry * max_pct)
 
     if rule_direction == "BUY":
-        struct_sl = swing_low - (0.3 * atr_val if is_scalping else 0.5 * atr_val)
-        sl_dist = max(entry - struct_sl, min_sl_pct * entry)
-        sl_dist = min(sl_dist, max_sl_pct * entry)
-        
         stop_loss = entry - sl_dist
-        tp1_dist = sl_dist * 2.0  # Guaranteed 1:2.0 R:R on Target 1
-        tp2_dist = sl_dist * 3.2  # Guaranteed 1:3.2 R:R on Target 2
-        
-        tp1 = entry + tp1_dist
-        tp2 = entry + tp2_dist
+        tp1 = entry + (sl_dist * 1.5)  # 1:1.5 R:R on Target 1 (highly reachable on 15m)
+        tp2 = entry + (sl_dist * 2.6)  # 1:2.6 R:R on Target 2
     elif rule_direction == "SELL":
-        struct_sl = swing_high + (0.3 * atr_val if is_scalping else 0.5 * atr_val)
-        sl_dist = max(struct_sl - entry, min_sl_pct * entry)
-        sl_dist = min(sl_dist, max_sl_pct * entry)
-        
         stop_loss = entry + sl_dist
-        tp1_dist = sl_dist * 2.0  # Guaranteed 1:2.0 R:R on Target 1
-        tp2_dist = sl_dist * 3.2  # Guaranteed 1:3.2 R:R on Target 2
-        
-        tp1 = entry - tp1_dist
-        tp2 = entry - tp2_dist
+        tp1 = entry - (sl_dist * 1.5)
+        tp2 = entry - (sl_dist * 2.6)
     else:
         stop_loss = 0.0
         tp1 = 0.0

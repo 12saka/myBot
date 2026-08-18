@@ -396,17 +396,17 @@ export class SignalsController implements OnModuleInit {
       let result: any = null;
 
       if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => symUpper.includes(c))) {
-        result = this.btcStrategyEngine(cachedCandles, symbol);
+        result = this.btcStrategyEngine(cachedCandles, symbol, interval);
       } else if (symUpper.includes('US100') || symUpper.includes('NAS')) {
-        result = this.nasdaqStrategyEngine(cachedCandles, symbol);
+        result = this.nasdaqStrategyEngine(cachedCandles, symbol, interval);
       } else if (symUpper.includes('US30') || symUpper.includes('DOW')) {
-        result = this.dowStrategyEngine(cachedCandles, symbol);
+        result = this.dowStrategyEngine(cachedCandles, symbol, interval);
       } else if (symUpper.includes('XAU') || symUpper.includes('GOLD')) {
-        result = this.goldStrategyEngine(cachedCandles, symbol);
+        result = this.goldStrategyEngine(cachedCandles, symbol, interval);
       } else if (symUpper.includes('JPY')) {
-        result = this.usdjpyStrategyEngine(cachedCandles, symbol);
+        result = this.usdjpyStrategyEngine(cachedCandles, symbol, interval);
       } else {
-        result = this.forexStrategyEngine(cachedCandles, symbol);
+        result = this.forexStrategyEngine(cachedCandles, symbol, interval);
       }
 
       const atr = this.calcATR(cachedCandles, 14);
@@ -1151,77 +1151,77 @@ export class SignalsController implements OnModuleInit {
     const { bullishScore, bearishScore, rsi, ema20, ema50, entryPrice, candles, direction, symbol, marketRegime } = params;
     const rawScore = direction === 'BUY' ? bullishScore : bearishScore;
 
-    // Gate 1: Minimum confluence threshold (raised from 58 to 72)
-    if (rawScore < 72) {
+    // Gate 1: Minimum confluence threshold (60+ for confirmed institutional edge)
+    if (rawScore < 60) {
       return {
         direction: 'WAIT',
-        invalidationReason: `${symbol} confluence score (${rawScore}/100) below minimum 72 threshold in ${marketRegime} regime. Quality gate protecting capital.`,
+        invalidationReason: `${symbol} confluence score (${rawScore}/100) below minimum 60 threshold in ${marketRegime} regime. Quality gate protecting capital.`,
         evidence: { bullishScore, bearishScore, rsi, gate: 'LOW_CONFLUENCE' }
       };
     }
 
-    // Gate 2: Conflicting signals — both sides are strong (within 15 pts)
-    if (Math.abs(bullishScore - bearishScore) < 15) {
+    // Gate 2: Conflicting signals — both sides are equally strong (within 10 pts)
+    if (Math.abs(bullishScore - bearishScore) < 10) {
       return {
         direction: 'WAIT',
-        invalidationReason: `${symbol} has conflicting signals (Bull: ${bullishScore} vs Bear: ${bearishScore}). Spread < 15 pts — market is indecisive.`,
+        invalidationReason: `${symbol} has conflicting momentum (Bull: ${bullishScore} vs Bear: ${bearishScore}). Market is in transition.`,
         evidence: { bullishScore, bearishScore, rsi, gate: 'CONFLICTING_SIGNALS' }
       };
     }
 
-    // Gate 3: RSI dead zone — no directional momentum
-    if (rsi >= 45 && rsi <= 55) {
+    // Gate 3: RSI dead center — no momentum divergence
+    if (rsi >= 48 && rsi <= 52 && Math.abs(bullishScore - bearishScore) < 15) {
       return {
         direction: 'WAIT',
-        invalidationReason: `${symbol} RSI at ${rsi.toFixed(1)} is in neutral dead zone (45-55). No momentum confirmation available.`,
+        invalidationReason: `${symbol} RSI-14 at ${rsi.toFixed(1)} is dead-center (48-52). Awaiting directional momentum push.`,
         evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_NEUTRAL' }
       };
     }
 
-    // Gate 4: EMA compression — market is ranging, not trending
-    const emaSpread = Math.abs(ema20 - ema50) / entryPrice;
-    if (emaSpread < 0.001) {
+    // Gate 4: EMA compression — market is completely flat
+    const emaSpread = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpread < 0.0001) {
       return {
         direction: 'WAIT',
-        invalidationReason: `${symbol} EMA-20/50 spread is only ${(emaSpread * 100).toFixed(3)}% — EMAs are compressed, market is ranging.`,
+        invalidationReason: `${symbol} EMA-20/50 spread is ultra-flat (${(emaSpread * 100).toFixed(4)}%) — market in tight consolidation.`,
         evidence: { bullishScore, bearishScore, rsi, emaSpread, gate: 'EMA_COMPRESSION' }
       };
     }
 
-    // Gate 5: Last candle confirmation — last 2 candles must not contradict signal
+    // Gate 5: Last candle confirmation — last 3 candles must not contradict signal with high volume
     if (candles.length >= 3) {
       const last3 = candles.slice(-3);
       const bearishCloses = last3.filter(c => Number(c.close) < Number(c.open)).length;
       const bullishCloses = last3.filter(c => Number(c.close) > Number(c.open)).length;
 
-      if (direction === 'BUY' && bearishCloses >= 3) {
+      if (direction === 'BUY' && bearishCloses >= 3 && rsi < 42) {
         return {
           direction: 'WAIT',
-          invalidationReason: `${symbol} BUY signal rejected: last 3 candles are all bearish. No confirmation candle.`,
+          invalidationReason: `${symbol} BUY signal rejected: 3 consecutive aggressive bearish candles into low RSI. Awaiting base formation.`,
           evidence: { bullishScore, bearishScore, rsi, gate: 'NO_CONFIRMATION_CANDLE' }
         };
       }
-      if (direction === 'SELL' && bullishCloses >= 3) {
+      if (direction === 'SELL' && bullishCloses >= 3 && rsi > 58) {
         return {
           direction: 'WAIT',
-          invalidationReason: `${symbol} SELL signal rejected: last 3 candles are all bullish. No confirmation candle.`,
+          invalidationReason: `${symbol} SELL signal rejected: 3 consecutive aggressive bullish candles into high RSI. Awaiting rejection wick.`,
           evidence: { bullishScore, bearishScore, rsi, gate: 'NO_CONFIRMATION_CANDLE' }
         };
       }
     }
 
-    // Gate 6: RSI contradiction — signal direction opposes RSI extremes
-    if (direction === 'BUY' && rsi > 75) {
+    // Gate 6: RSI exhaustion contradiction — signal direction opposes extreme RSI
+    if (direction === 'BUY' && rsi > 78) {
       return {
         direction: 'WAIT',
-        invalidationReason: `${symbol} BUY signal rejected: RSI at ${rsi.toFixed(1)} is overbought. Entering longs at exhaustion is high-risk.`,
+        invalidationReason: `${symbol} BUY signal rejected: RSI at ${rsi.toFixed(1)} is severely overbought (>78). Entering longs at exhaustion is high-risk.`,
         evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_OVERBOUGHT_BUY' }
       };
     }
-    if (direction === 'SELL' && rsi < 25) {
+    if (direction === 'SELL' && rsi < 22) {
       return {
         direction: 'WAIT',
-        invalidationReason: `${symbol} SELL signal rejected: RSI at ${rsi.toFixed(1)} is oversold. Entering shorts at exhaustion is high-risk.`,
+        invalidationReason: `${symbol} SELL signal rejected: RSI at ${rsi.toFixed(1)} is severely oversold (<22). Entering shorts at exhaustion is high-risk.`,
         evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_OVERSOLD_SELL' }
       };
     }
@@ -1229,7 +1229,7 @@ export class SignalsController implements OnModuleInit {
     return null; // All gates passed — signal is valid
   }
 
-  private btcStrategyEngine(candles: any[], symbol: string) {
+  private btcStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -1407,12 +1407,15 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Targets & Dynamic Risk-to-Reward Ratio (Realistic Intraday Reachable Ranges)
-    const slDist = Math.min(Math.max(atr * 0.95, entryPrice * 0.005), entryPrice * 0.009);
+    // Targets & Dynamic Risk-to-Reward Ratio (Timeframe Scaled)
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const minPct = isScalp ? 0.0035 : 0.0055;
+    const maxPct = isScalp ? 0.0070 : 0.0120;
+    const slDist = Math.min(Math.max(atr * 0.95, entryPrice * minPct), entryPrice * maxPct);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -1456,7 +1459,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private nasdaqStrategyEngine(candles: any[], symbol: string) {
+  private nasdaqStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -1642,12 +1645,13 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Realistic Intraday Reachable Ranges)
-    const slDist = Math.min(Math.max(atr * 0.95, 25), 55);
+    // Calculate Targets & Risk/Reward (Timeframe Scaled)
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 14 : 28), isScalp ? 38 : 65);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -1691,7 +1695,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private dowStrategyEngine(candles: any[], symbol: string) {
+  private dowStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -1865,12 +1869,13 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Calibrated Reachable Intraday Ranges for US30)
-    const slDist = Math.min(Math.max(atr * 0.95, 45), 85);
+    // Calculate Targets & Risk/Reward (Timeframe Scaled for US30)
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 25 : 48), isScalp ? 58 : 95);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -1914,7 +1919,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private forexStrategyEngine(candles: any[], symbol: string) {
+  private forexStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -2083,14 +2088,15 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Reachable FX Intraday Targets)
+    // Calculate Targets & Risk/Reward (Timeframe Scaled FX Targets)
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = isJpy 
-      ? Math.min(Math.max(atr * 0.95, 0.20), 0.45)
-      : Math.min(Math.max(atr * 0.95, 0.0018), 0.0035);
+      ? Math.min(Math.max(atr * 0.95, isScalp ? 0.12 : 0.22), isScalp ? 0.28 : 0.48)
+      : Math.min(Math.max(atr * 0.95, isScalp ? 0.0009 : 0.0018), isScalp ? 0.0022 : 0.0038);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -2134,7 +2140,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private usdjpyStrategyEngine(candles: any[], symbol: string) {
+  private usdjpyStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -2249,10 +2255,10 @@ export class SignalsController implements OnModuleInit {
       const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
       if (isBullBody) {
         bullishScore += 12;
-        reasonsFor.push(`Strong bullish USDJPY displacement body (${lastBody.toFixed(2)} pips > 1.15x ATR)`);
+        reasonsFor.push(`Strong bullish USDJPY displacement candle (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
       } else {
         bearishScore += 12;
-        reasonsAgainst.push(`Strong bearish USDJPY displacement body (${lastBody.toFixed(2)} pips > 1.15x ATR)`);
+        reasonsAgainst.push(`Strong bearish USDJPY displacement candle (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
       }
     }
 
@@ -2280,17 +2286,17 @@ export class SignalsController implements OnModuleInit {
     // Layer 7: RSI Momentum Alignment (15 Points)
     if (rsi > 52 && rsi < 72) {
       bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy USDJPY bullish momentum`);
+      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish USDJPY momentum`);
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy USDJPY bearish momentum`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish USDJPY momentum`);
     } else if (rsi >= 72) {
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of short-term pullback`);
+      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of MoF jawboning pullbacks`);
     } else if (rsi <= 28) {
-      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
+      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
     }
 
-    // Layer 8: Prime Session Timing (applied neutrally based on actual session direction)
+    // Layer 8: Session Timing (applied neutrally based on actual session direction)
     // During high-volume sessions, amplify the TREND direction only if displacement confirms it
     if (isDisplacement) {
       const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
@@ -2320,12 +2326,13 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Reachable USDJPY Intraday Targets)
-    const slDist = Math.min(Math.max(atr * 0.95, 0.20), 0.45);
+    // Calculate Targets & Risk/Reward (Timeframe Scaled USDJPY Targets)
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 0.12 : 0.22), isScalp ? 0.28 : 0.48);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -2367,7 +2374,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private goldStrategyEngine(candles: any[], symbol: string) {
+  private goldStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -2528,12 +2535,13 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Exact Targets & Direct Market Scalp Risk/Reward (Reachable Gold Targets)
-    const slDist = Math.min(Math.max(atr * 0.95, 3.0), 6.5);
+    // Calculate Exact Targets (Timeframe Scaled Gold Targets)
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 1.80 : 3.20), isScalp ? 4.20 : 7.50);
     const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.6) : entryPrice - (slDist * 1.6);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.8) : entryPrice - (slDist * 2.8);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 4.2) : entryPrice - (slDist * 4.2);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
