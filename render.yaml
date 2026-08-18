@@ -1,0 +1,36 @@
+services:
+  # 1. API Gateway (NestJS Monorepo Service)
+  - type: web
+    name: trademind-api-gateway
+    env: node
+    plan: free
+    buildCommand: npm install && npx prisma generate --schema=packages/db/prisma/schema.prisma && npm run build --workspace=@trademind/api-gateway
+    startCommand: node services/api-gateway/dist/main.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: AI_SERVICE_URL
+        fromService:
+          type: web
+          name: trademind-ai-service
+          property: host
+
+  # 2. AI Microservice (FastAPI & Gemini Engine)
+  - type: web
+    name: trademind-ai-service
+    env: python
+    rootDir: services/ai-service
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: GEMINI_API_KEY
+        sync: false
