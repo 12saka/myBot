@@ -773,11 +773,11 @@ export default function SignalsPage() {
 
   const handleGenerateSignal = async (symbol: string) => {
     setGeneratingSymbol(symbol);
-    const toastId = toast.loading(`Ensemble AI analyzing price & technical models for ${symbol} (${selectedTimeframe})...`);
+    const toastId = toast.loading(`Institutional AI running 4H Macro + 1H Flow + 15m Entry Top-Down Analysis for ${symbol}...`);
     try {
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
-        body: JSON.stringify({ symbol, interval: selectedTimeframe })
+        body: JSON.stringify({ symbol, interval: '15m' })
       });
       const newSignal = mapSignal(rawSignal);
       if (newSignal.direction === 'WAIT') {
@@ -785,7 +785,7 @@ export default function SignalsPage() {
         if (!hasActiveForSymbol) {
           setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
         }
-        toast(`No clean setup for ${symbol}: ${newSignal.reasoning || 'market consolidating.'}`, { id: toastId });
+        toast(`No clean setup for ${symbol}: ${newSignal.reasoning || 'market in consolidation / counter-trend filtered.'}`, { id: toastId });
         return;
       }
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
@@ -796,7 +796,7 @@ export default function SignalsPage() {
         body: `Entry: ${newSignal.entry} | Target: ${newSignal.tp1} | R:R: ${newSignal.riskReward}`,
       });
       
-      toast.success(`Generated AI Signal for ${symbol} successfully!`, { id: toastId });
+      toast.success(`Generated High-Conviction AI Signal for ${symbol} successfully!`, { id: toastId });
 
       // Autonomous execution if bot is running
       if (autonomousActive) {
@@ -833,7 +833,7 @@ export default function SignalsPage() {
 
   const handleGenerateAll = async () => {
     setIsBatchGenerating(true);
-    const toastId = toast.loading(`Scanning top watchlist markets on ${selectedTimeframe}...`);
+    const toastId = toast.loading('Running Top-Down MTF Scan across major markets (4H -> 1H -> 15m)...');
     const keySymbols = ['BTC/USD', 'ETH/USD', 'US30', 'US100', 'XAU/USD', 'EUR/USD', 'USD/JPY'];
     let count = 0;
     try {
@@ -841,7 +841,7 @@ export default function SignalsPage() {
         try {
           const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
             method: 'POST',
-            body: JSON.stringify({ symbol: sym, interval: selectedTimeframe })
+            body: JSON.stringify({ symbol: sym, interval: '15m' })
           });
           const newSignal = mapSignal(rawSignal);
           if (newSignal.direction !== 'WAIT') {
@@ -852,7 +852,7 @@ export default function SignalsPage() {
         } catch (symErr) {}
       }
       playSignalChime('NEW_SIGNAL');
-      toast.success(`Watchlist scan complete! Generated ${count} live ${selectedTimeframe} setups.`, { id: toastId });
+      toast.success(`Institutional scan complete! Generated ${count} high-conviction setups.`, { id: toastId });
     } catch (err: any) {
       toast.error('Batch scan encountered an issue.', { id: toastId });
     } finally {
@@ -1108,27 +1108,16 @@ export default function SignalsPage() {
             <button
               onClick={() => handleGenerateAll()}
               disabled={generatingSymbol !== null || isBatchGenerating}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white flex items-center gap-1.5 shadow-md shadow-purple-500/20 cursor-pointer disabled:opacity-50 transition-all"
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white flex items-center gap-1.5 shadow-md shadow-purple-500/20 cursor-pointer disabled:opacity-50 transition-all"
             >
-              {isBatchGenerating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-              Analyze Watchlist ({selectedTimeframe})
+              {isBatchGenerating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              Analyze All Markets (Top-Down MTF)
             </button>
-            <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-xl border border-white/5">
-              {(['1m', '3m', '5m', '15m', '30m', '1h'] as const).map(tf => (
-                <button
-                  key={tf}
-                  type="button"
-                  onClick={() => setSelectedTimeframe(tf)}
-                  className={cn(
-                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer",
-                    selectedTimeframe === tf 
-                      ? "bg-purple-500 text-white shadow-md shadow-purple-500/10" 
-                      : "text-slate-400 hover:text-slate-200"
-                  )}
-                >
-                  {tf}
-                </button>
-              ))}
+            <div className="flex items-center gap-1.5 bg-purple-500/10 border border-purple-500/20 px-3 py-1.5 rounded-xl">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[11px] font-bold text-purple-200">
+                Top-Down Institutional Model: 4H Macro ➔ 1H Flow ➔ 15m Precision
+              </span>
             </div>
           </div>
         </div>

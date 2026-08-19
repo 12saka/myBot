@@ -199,13 +199,7 @@ export function mapSignal(item: any): AISignal {
     tp3: tp3 > 0 ? tp3 : undefined,
     riskReward: rrRatio,
     probability: direction === 'WAIT' ? 'Market Neutral' : `${confidence}%`,
-    duration: item.durationEstimate || (
-      reasoning.timeframe === '1m' ? '1-5 mins (Scalp)' :
-      reasoning.timeframe === '5m' ? '5-15 mins (Scalp)' :
-      reasoning.timeframe === '15m' ? '15-45 mins (Scalp)' :
-      reasoning.timeframe === '30m' ? '30-90 mins (Scalp)' :
-      '1-4 hours (Day Trade)'
-    ),
+    duration: item.durationEstimate || '2-8 hours (All-Round Day Trade)',
     strategy: strategyName,
     technicals: indicators.length ? indicators : [
       `EMA 20/50/200 Trend Alignment: ${isBuy ? 'Bullish Momentum' : 'Bearish Continuation'}`,

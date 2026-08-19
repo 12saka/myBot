@@ -73,13 +73,13 @@ export class MarketsService implements OnModuleInit {
       await this.prisma.marketData.deleteMany({
         where: {
           OR: [
-            { symbol: 'US100', bidPrice: { gt: 24000 } },
-            { symbol: 'US100', bidPrice: { lt: 10000 } },
-            { symbol: 'US30', bidPrice: { lt: 25000 } },
-            { symbol: 'XAU/USD', bidPrice: { lt: 1800 } },
-            { symbol: 'XAU/USD', bidPrice: { gt: 3200 } },
-            { symbol: 'GOLD', bidPrice: { lt: 1800 } },
-            { symbol: 'GOLD', bidPrice: { gt: 3200 } },
+            { symbol: 'US100', bidPrice: { gt: 35000 } },
+            { symbol: 'US100', bidPrice: { lt: 8000 } },
+            { symbol: 'US30', bidPrice: { lt: 20000 } },
+            { symbol: 'XAU/USD', bidPrice: { lt: 1000 } },
+            { symbol: 'XAU/USD', bidPrice: { gt: 15000 } },
+            { symbol: 'GOLD', bidPrice: { lt: 1000 } },
+            { symbol: 'GOLD', bidPrice: { gt: 15000 } },
             { bidPrice: 100 }
           ]
         }
@@ -88,13 +88,13 @@ export class MarketsService implements OnModuleInit {
       await this.prisma.historicalCandle.deleteMany({
         where: {
           OR: [
-            { symbol: 'US100', close: { gt: 24000 } },
-            { symbol: 'US100', close: { lt: 10000 } },
-            { symbol: 'US30', close: { lt: 25000 } },
-            { symbol: 'XAU/USD', close: { lt: 1800 } },
-            { symbol: 'XAU/USD', close: { gt: 3200 } },
-            { symbol: 'GOLD', close: { lt: 1800 } },
-            { symbol: 'GOLD', close: { gt: 3200 } },
+            { symbol: 'US100', close: { gt: 35000 } },
+            { symbol: 'US100', close: { lt: 8000 } },
+            { symbol: 'US30', close: { lt: 20000 } },
+            { symbol: 'XAU/USD', close: { lt: 1000 } },
+            { symbol: 'XAU/USD', close: { gt: 15000 } },
+            { symbol: 'GOLD', close: { lt: 1000 } },
+            { symbol: 'GOLD', close: { gt: 15000 } },
             { close: 100 }
           ]
         }
@@ -431,34 +431,32 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // Gold spot bounds check: Real Gold spot / PAXG trades between $1800 and $6000 per troy oz in 2026 market.
+        // Gold spot pricing: Always take live Binance PAXGUSDT ($4,350+) or Yahoo COMEX GC=F ($4,400+)
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
-          if (currentPrice > 6000 || currentPrice < 1800) {
-            if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price >= 1800 && cryptoPriceMap['PAXGUSDT'].price <= 6000) {
-              currentPrice = cryptoPriceMap['PAXGUSDT'].price;
-              changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
-              volume24h = cryptoPriceMap['PAXGUSDT'].volume;
-            } else if (yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price >= 1800 && yahooPriceMap['XAUUSD=X'].price <= 6000) {
-              currentPrice = yahooPriceMap['XAUUSD=X'].price;
-              changePct24h = yahooPriceMap['XAUUSD=X'].changePct;
-              volume24h = yahooPriceMap['XAUUSD=X'].volume;
-            } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price >= 1800 && yahooPriceMap['GC=F'].price <= 6000) {
-              currentPrice = yahooPriceMap['GC=F'].price;
-              changePct24h = yahooPriceMap['GC=F'].changePct;
-              volume24h = yahooPriceMap['GC=F'].volume;
-            } else {
-              try {
-                const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT', {}, 2500);
-                if (paxgRes.ok) {
-                  const pData = await paxgRes.json();
-                  if (pData && Number(pData.lastPrice) >= 1800 && Number(pData.lastPrice) <= 6000) {
-                    currentPrice = Number(pData.lastPrice);
-                    changePct24h = Number(pData.priceChangePercent || 0);
-                    volume24h = Number(pData.volume || 1000);
-                  }
+          if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price > 1000) {
+            currentPrice = cryptoPriceMap['PAXGUSDT'].price;
+            changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
+            volume24h = cryptoPriceMap['PAXGUSDT'].volume;
+          } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price > 1000) {
+            currentPrice = yahooPriceMap['GC=F'].price;
+            changePct24h = yahooPriceMap['GC=F'].changePct;
+            volume24h = yahooPriceMap['GC=F'].volume;
+          } else if (yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price > 1000) {
+            currentPrice = yahooPriceMap['XAUUSD=X'].price;
+            changePct24h = yahooPriceMap['XAUUSD=X'].changePct;
+            volume24h = yahooPriceMap['XAUUSD=X'].volume;
+          } else {
+            try {
+              const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT', {}, 2500);
+              if (paxgRes.ok) {
+                const pData = await paxgRes.json();
+                if (pData && Number(pData.lastPrice) > 1000) {
+                  currentPrice = Number(pData.lastPrice);
+                  changePct24h = Number(pData.priceChangePercent || 0);
+                  volume24h = Number(pData.volume || 1000);
                 }
-              } catch (goldApiErr) {}
-            }
+              }
+            } catch (goldApiErr) {}
           }
         }
 
@@ -638,8 +636,8 @@ export class MarketsService implements OnModuleInit {
     for (const asset of this.symbols) {
       let seeded = false;
 
-      // 1. Try Binance (Crypto only)
-      if (asset.type === 'crypto' && asset.binanceSymbol) {
+      // 1. Try Binance (Crypto + Gold PAXG)
+      if ((asset.type === 'crypto' || asset.name === 'XAU/USD' || asset.name === 'GOLD') && asset.binanceSymbol) {
         try {
           const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=1h&limit=100`);
           if (res.ok) {

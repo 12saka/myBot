@@ -126,7 +126,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <div className="text-xl shrink-0">⚡</div>
                 <div>
                   <div className="font-bold text-xs text-white flex items-center gap-2">
-                    <span>{targetTimeframe.toUpperCase()} SIGNAL: {newSignal.direction} {newSignal.symbol}</span>
+                    <span>TOP-DOWN SIGNAL: {newSignal.direction} {newSignal.symbol}</span>
                     <span className="text-[10px] bg-purple-500/20 text-purple-300 font-mono px-1.5 py-0.5 rounded border border-purple-500/30">
                       {grade}
                     </span>

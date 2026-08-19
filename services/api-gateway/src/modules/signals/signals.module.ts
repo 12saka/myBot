@@ -393,20 +393,23 @@ export class SignalsController implements OnModuleInit {
         );
       }
 
+      // 1. Fetch Multi-Timeframe Top-Down Institutional Bias (4H -> 1H -> Entry TF)
+      const htfBias = await this.analyzeHTFBias(symbol);
+
       let result: any = null;
 
       if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => symUpper.includes(c))) {
-        result = this.btcStrategyEngine(cachedCandles, symbol, interval);
+        result = this.btcStrategyEngine(cachedCandles, symbol, interval, htfBias);
       } else if (symUpper.includes('US100') || symUpper.includes('NAS')) {
-        result = this.nasdaqStrategyEngine(cachedCandles, symbol, interval);
+        result = this.nasdaqStrategyEngine(cachedCandles, symbol, interval, htfBias);
       } else if (symUpper.includes('US30') || symUpper.includes('DOW')) {
-        result = this.dowStrategyEngine(cachedCandles, symbol, interval);
+        result = this.dowStrategyEngine(cachedCandles, symbol, interval, htfBias);
       } else if (symUpper.includes('XAU') || symUpper.includes('GOLD')) {
-        result = this.goldStrategyEngine(cachedCandles, symbol, interval);
+        result = this.goldStrategyEngine(cachedCandles, symbol, interval, htfBias);
       } else if (symUpper.includes('JPY')) {
-        result = this.usdjpyStrategyEngine(cachedCandles, symbol, interval);
+        result = this.usdjpyStrategyEngine(cachedCandles, symbol, interval, htfBias);
       } else {
-        result = this.forexStrategyEngine(cachedCandles, symbol, interval);
+        result = this.forexStrategyEngine(cachedCandles, symbol, interval, htfBias);
       }
 
       const atr = this.calcATR(cachedCandles, 14);
@@ -433,7 +436,7 @@ export class SignalsController implements OnModuleInit {
         reasonsAgainst,
         aiValidation,
         marketRegime,
-        htfBias,
+        htfBias: customHtfBias,
         liquidityStatus,
         structureStatus,
         displacementStatus,
@@ -692,18 +695,19 @@ export class SignalsController implements OnModuleInit {
       take: 200,
     });
     
-    // 2. If we have at least 50 candles and they are fresh, return them
+    // 2. If we have at least 50 candles and they are fresh (under 25 seconds for scalping), return them
     const now = new Date();
     let isFresh = false;
     if (candles.length >= 50) {
       const lastCandle = candles[candles.length - 1];
       const diffMs = now.getTime() - lastCandle.timestamp.getTime();
-      // Scale freshness by timeframe — scalping needs near-instant data
-      let maxAgeMs = 5 * 60 * 1000; // Default 5 minutes for 1h+
-      if (interval === '1m' || interval === '3m') maxAgeMs = 15 * 1000; // 15 seconds for micro scalps
-      else if (interval === '5m') maxAgeMs = 45 * 1000; // 45 seconds for 5m scalps
-      else if (interval === '15m') maxAgeMs = 90 * 1000; // 90 seconds for 15m
-      else if (interval === '30m') maxAgeMs = 3 * 60 * 1000; // 3 minutes for 30m
+      // Strict freshness: guaranteed under 25 seconds for 15m and scalping
+      let maxAgeMs = 90 * 1000; // 90 seconds for 1h+
+      if (interval === '1m' || interval === '3m' || interval === '5m' || interval === '15m') {
+        maxAgeMs = 25 * 1000; // Under 25 seconds for 15m scalping
+      } else if (interval === '30m') {
+        maxAgeMs = 45 * 1000; // 45 seconds for 30m
+      }
       
       if (diffMs < maxAgeMs) {
         isFresh = true;
@@ -711,6 +715,19 @@ export class SignalsController implements OnModuleInit {
     }
     
     if (isFresh) {
+      // Sync the latest candle with sub-3-second live spot price
+      try {
+        const liveMarket = await this.prisma.marketData.findUnique({
+          where: { symbol: normSym }
+        });
+        if (liveMarket && liveMarket.bidPrice > 0 && candles.length > 0) {
+          const lastIdx = candles.length - 1;
+          const livePrice = Number(liveMarket.bidPrice);
+          candles[lastIdx].close = livePrice;
+          if (livePrice > Number(candles[lastIdx].high)) candles[lastIdx].high = livePrice;
+          if (livePrice < Number(candles[lastIdx].low)) candles[lastIdx].low = livePrice;
+        }
+      } catch (e) {}
       return candles;
     }
     
@@ -1164,6 +1181,138 @@ export class SignalsController implements OnModuleInit {
   }
 
   /**
+   * Top-Down Multi-Timeframe (MTF) Institutional Bias Analyzer.
+   * Performs 4H Macro Analysis -> 1H Intermediate Confirmation -> Produces authoritative HTF Direction.
+   */
+  private async analyzeHTFBias(symbol: string): Promise<{
+    bias4h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    bias1h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    htfDirection: 'BUY' | 'SELL' | 'NEUTRAL';
+    htfConfidence: number;
+    htfContext: string;
+    ema200_4h: number;
+    ema50_4h: number;
+    ema20_4h: number;
+    ema200_1h: number;
+    ema50_1h: number;
+    ema20_1h: number;
+    rsi_4h: number;
+    rsi_1h: number;
+  }> {
+    let candles1h: any[] = [];
+    try {
+      candles1h = await this.getOrFetchCandles(symbol, '1h');
+    } catch (e) {
+      candles1h = [];
+    }
+
+    if (candles1h.length < 15) {
+      return {
+        bias4h: 'NEUTRAL',
+        bias1h: 'NEUTRAL',
+        htfDirection: 'NEUTRAL',
+        htfConfidence: 50,
+        htfContext: 'Consolidating market: standard multi-layer rules active',
+        ema200_4h: 0,
+        ema50_4h: 0,
+        ema20_4h: 0,
+        ema200_1h: 0,
+        ema50_1h: 0,
+        ema20_1h: 0,
+        rsi_4h: 50,
+        rsi_1h: 50,
+      };
+    }
+
+    // 1. Analyze 1H Candles
+    const closes1h = candles1h.map(c => Number(c.close));
+    const ema20_1h = this.calcEMA(closes1h, 20);
+    const ema50_1h = this.calcEMA(closes1h, 50);
+    const ema200_1h = this.calcEMA(closes1h, Math.min(200, closes1h.length));
+    const rsi_1h = this.calcRSI(closes1h, 14);
+    const lastPrice1h = closes1h[closes1h.length - 1];
+
+    let bias1h: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    if (ema20_1h > ema50_1h && lastPrice1h >= ema200_1h && rsi_1h >= 48) {
+      bias1h = 'BULLISH';
+    } else if (ema20_1h < ema50_1h && lastPrice1h <= ema200_1h && rsi_1h <= 52) {
+      bias1h = 'BEARISH';
+    }
+
+    // 2. Synthesize 4H Candles from 1H Candles (every 4 consecutive 1h candles = 1 4h candle)
+    const candles4h: any[] = [];
+    for (let i = 0; i < candles1h.length; i += 4) {
+      const chunk = candles1h.slice(i, i + 4);
+      if (chunk.length > 0) {
+        candles4h.push({
+          open: Number(chunk[0].open),
+          high: Math.max(...chunk.map(c => Number(c.high))),
+          low: Math.min(...chunk.map(c => Number(c.low))),
+          close: Number(chunk[chunk.length - 1].close),
+          volume: chunk.reduce((sum, c) => sum + Number(c.volume || 0), 0),
+          timestamp: chunk[0].timestamp
+        });
+      }
+    }
+
+    const closes4h = candles4h.map(c => Number(c.close));
+    const ema20_4h = this.calcEMA(closes4h, 20);
+    const ema50_4h = this.calcEMA(closes4h, Math.min(50, closes4h.length));
+    const ema200_4h = this.calcEMA(closes4h, Math.min(200, closes4h.length));
+    const rsi_4h = closes4h.length >= 14 ? this.calcRSI(closes4h, 14) : rsi_1h;
+    const lastPrice4h = closes4h[closes4h.length - 1] || lastPrice1h;
+
+    let bias4h: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    if (ema20_4h > ema50_4h && lastPrice4h >= ema200_4h && rsi_4h >= 48) {
+      bias4h = 'BULLISH';
+    } else if (ema20_4h < ema50_4h && lastPrice4h <= ema200_4h && rsi_4h <= 52) {
+      bias4h = 'BEARISH';
+    }
+
+    // 3. Confluence Direction
+    let htfDirection: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
+    let htfConfidence = 50;
+
+    if (bias4h === 'BULLISH' && bias1h === 'BULLISH') {
+      htfDirection = 'BUY';
+      htfConfidence = 92;
+    } else if (bias4h === 'BEARISH' && bias1h === 'BEARISH') {
+      htfDirection = 'SELL';
+      htfConfidence = 92;
+    } else if (bias4h === 'BULLISH' && bias1h !== 'BEARISH') {
+      htfDirection = 'BUY';
+      htfConfidence = 78;
+    } else if (bias4h === 'BEARISH' && bias1h !== 'BULLISH') {
+      htfDirection = 'SELL';
+      htfConfidence = 78;
+    } else if (bias1h === 'BULLISH' && bias4h === 'NEUTRAL') {
+      htfDirection = 'BUY';
+      htfConfidence = 72;
+    } else if (bias1h === 'BEARISH' && bias4h === 'NEUTRAL') {
+      htfDirection = 'SELL';
+      htfConfidence = 72;
+    }
+
+    const htfContext = `4H Institutional Macro Bias: ${bias4h} (EMA-20: ${ema20_4h.toFixed(2)}, RSI: ${rsi_4h.toFixed(1)}) | 1H Structure: ${bias1h} (EMA-20: ${ema20_1h.toFixed(2)}, RSI: ${rsi_1h.toFixed(1)}). Top-Down Confluence: ${htfDirection} (${htfConfidence}% Conviction).`;
+
+    return {
+      bias4h,
+      bias1h,
+      htfDirection,
+      htfConfidence,
+      htfContext,
+      ema200_4h,
+      ema50_4h,
+      ema20_4h,
+      ema200_1h,
+      ema50_1h,
+      ema20_1h,
+      rsi_4h,
+      rsi_1h,
+    };
+  }
+
+  /**
    * Universal Signal Quality Gate — applied to ALL strategy engines.
    * Returns null if signal passes quality checks, or a WAIT result if it fails.
    * This prevents low-quality signals from reaching users.
@@ -1179,8 +1328,9 @@ export class SignalsController implements OnModuleInit {
     direction: string;
     symbol: string;
     marketRegime: string;
+    htfBias?: any;
   }): { direction: string; invalidationReason: string; evidence: any } | null {
-    const { bullishScore, bearishScore, rsi, ema20, ema50, entryPrice, candles, direction, symbol, marketRegime } = params;
+    const { bullishScore, bearishScore, rsi, ema20, ema50, entryPrice, candles, direction, symbol, marketRegime, htfBias } = params;
     const rawScore = direction === 'BUY' ? bullishScore : bearishScore;
 
     // Gate 1: Minimum confluence threshold (60+ for confirmed institutional edge)
@@ -1258,10 +1408,21 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
+    // Gate 7: Higher-Timeframe (HTF) Counter-Trend Lock (4H + 1H Protection)
+    if (htfBias && htfBias.htfDirection && htfBias.htfDirection !== 'NEUTRAL') {
+      if (direction !== htfBias.htfDirection && direction !== 'WAIT') {
+        return {
+          direction: 'WAIT',
+          invalidationReason: `${symbol} ${direction} signal blocked: 4H+1H institutional flow is strictly ${htfBias.htfDirection} (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H). Counter-trend entries prohibited to protect capital.`,
+          evidence: { bullishScore, bearishScore, rsi, htfBias, gate: 'HTF_COUNTER_TREND_FILTER' }
+        };
+      }
+    }
+
     return null; // All gates passed — signal is valid
   }
 
-  private btcStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
+  private btcStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -1337,6 +1498,15 @@ export class SignalsController implements OnModuleInit {
     let bearishScore = 0;
     const reasonsFor: string[] = [];
     const reasonsAgainst: string[] = [];
+
+    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
+    if (htfBias && htfBias.htfDirection === 'BUY') {
+      bullishScore += 20;
+      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    } else if (htfBias && htfBias.htfDirection === 'SELL') {
+      bearishScore += 20;
+      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) (16 Points)
     if (ema20 > ema50) {
@@ -1455,7 +1625,7 @@ export class SignalsController implements OnModuleInit {
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles, direction, symbol, marketRegime
+      candles, direction, symbol, marketRegime, htfBias
     });
     if (gateResult) return gateResult;
 
@@ -1510,7 +1680,7 @@ export class SignalsController implements OnModuleInit {
       calculatedWinProb: confidenceScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
+      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
       liquidityStatus: sweptPDL_Rejection ? 'Sell-side Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Buy-side Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active Expansion Displacement' : 'Normal Volatility',
@@ -1522,7 +1692,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private nasdaqStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
+  private nasdaqStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -1605,6 +1775,15 @@ export class SignalsController implements OnModuleInit {
     let bearishScore = 0;
     const reasonsFor: string[] = [];
     const reasonsAgainst: string[] = [];
+
+    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
+    if (htfBias && htfBias.htfDirection === 'BUY') {
+      bullishScore += 20;
+      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    } else if (htfBias && htfBias.htfDirection === 'SELL') {
+      bearishScore += 20;
+      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) (16 Points)
     if (ema20 > ema50) {
@@ -1723,7 +1902,7 @@ export class SignalsController implements OnModuleInit {
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles, direction, symbol, marketRegime
+      candles, direction, symbol, marketRegime, htfBias
     });
     if (gateResult) return gateResult;
 
@@ -1776,7 +1955,7 @@ export class SignalsController implements OnModuleInit {
       calculatedWinProb: confidenceScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
+      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
       liquidityStatus: sweptPDL_Rejection ? 'PDL Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'PDH Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active Tech Displacement' : 'Normal Volatility',
@@ -1788,7 +1967,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private dowStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
+  private dowStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -1871,6 +2050,15 @@ export class SignalsController implements OnModuleInit {
     let bearishScore = 0;
     const reasonsFor: string[] = [];
     const reasonsAgainst: string[] = [];
+
+    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
+    if (htfBias && htfBias.htfDirection === 'BUY') {
+      bullishScore += 20;
+      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    } else if (htfBias && htfBias.htfDirection === 'SELL') {
+      bearishScore += 20;
+      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) (16 Points)
     if (ema20 > ema50) {
@@ -1978,7 +2166,7 @@ export class SignalsController implements OnModuleInit {
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles, direction, symbol, marketRegime
+      candles, direction, symbol, marketRegime, htfBias
     });
     if (gateResult) return gateResult;
 
@@ -2072,8 +2260,8 @@ export class SignalsController implements OnModuleInit {
       calculatedWinProb: confidenceScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
-      liquidityStatus: sweptPDL ? 'PDL Swept' : sweptPDH ? 'PDH Swept' : 'Neutral Range',
+      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
+      liquidityStatus: sweptPDL_Rejection ? 'PDL Swept' : sweptPDH_Rejection ? 'PDH Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active YM Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
@@ -2084,7 +2272,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private forexStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
+  private forexStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -2163,6 +2351,15 @@ export class SignalsController implements OnModuleInit {
     const reasonsFor: string[] = [];
     const reasonsAgainst: string[] = [];
 
+    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
+    if (htfBias && htfBias.htfDirection === 'BUY') {
+      bullishScore += 20;
+      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    } else if (htfBias && htfBias.htfDirection === 'SELL') {
+      bearishScore += 20;
+      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    }
+
     // Layer 1: EMA Trend Structure (16 Points)
     if (ema20 > ema50) {
       bullishScore += 16;
@@ -2212,10 +2409,10 @@ export class SignalsController implements OnModuleInit {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
-        reasonsFor.push(`Strong bullish FX displacement candle body (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
+        reasonsFor.push(`Bullish FX displacement candle ($${lastBody.toFixed(precision)} > 1.15x ATR)`);
       } else {
         bearishScore += 12;
-        reasonsAgainst.push(`Strong bearish FX displacement candle body (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
+        reasonsAgainst.push(`Bearish FX displacement candle ($${lastBody.toFixed(precision)} > 1.15x ATR)`);
       }
     }
 
@@ -2223,32 +2420,32 @@ export class SignalsController implements OnModuleInit {
     if (fvg.fvg_detected) {
       if (fvg.type === 'BULLISH') {
         bullishScore += 8;
-        reasonsFor.push(`Bullish FVG gap imbalance zone identified (${fvg.gap_size} pips)`);
+        reasonsFor.push(`Bullish FVG gap imbalance active (${fvg.gap_size} pips)`);
       } else {
         bearishScore += 8;
-        reasonsAgainst.push(`Bearish FVG gap imbalance zone identified (${fvg.gap_size} pips)`);
+        reasonsAgainst.push(`Bearish FVG gap imbalance active (${fvg.gap_size} pips)`);
       }
     }
 
     if (ob.order_block_detected) {
       if (ob.type === 'BULLISH') {
         bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone identified at ${ob.price_level}`);
+        reasonsFor.push(`Bullish Order Block liquidity zone active at ${ob.price_level}`);
       } else {
         bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone identified at ${ob.price_level}`);
+        reasonsAgainst.push(`Bearish Order Block liquidity zone active at ${ob.price_level}`);
       }
     }
 
     // Layer 7: RSI Momentum Alignment (15 Points)
-    if (rsi > 52 && rsi < 72) {
+    if (rsi > 52 && rsi < 70) {
       bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish FX momentum`);
-    } else if (rsi < 48 && rsi > 28) {
+      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms institutional buying momentum`);
+    } else if (rsi < 48 && rsi > 30) {
       bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish FX momentum`);
-    } else if (rsi >= 72) {
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of short-term pullback`);
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms institutional selling momentum`);
+    } else if (rsi >= 70) {
+      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — pullback risk`);
     } else if (rsi <= 28) {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
     }
@@ -2269,7 +2466,7 @@ export class SignalsController implements OnModuleInit {
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles, direction, symbol, marketRegime
+      candles, direction, symbol, marketRegime, htfBias
     });
     if (gateResult) return gateResult;
 
@@ -2324,7 +2521,7 @@ export class SignalsController implements OnModuleInit {
       calculatedWinProb: confidenceScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
+      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
       liquidityStatus: sweptAsianLow_Rejection ? 'Asian Low Swept' : breakoutAsianHigh ? 'Bullish BOS Breakout' : sweptAsianHigh_Rejection ? 'Asian High Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active FX Displacement' : 'Normal Volatility',
@@ -2336,7 +2533,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private usdjpyStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
+  private usdjpyStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -2422,6 +2619,15 @@ export class SignalsController implements OnModuleInit {
     let bearishScore = 0;
     const reasonsFor: string[] = [];
     const reasonsAgainst: string[] = [];
+
+    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
+    if (htfBias && htfBias.htfDirection === 'BUY') {
+      bullishScore += 20;
+      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    } else if (htfBias && htfBias.htfDirection === 'SELL') {
+      bearishScore += 20;
+      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    }
 
     // Layer 1: Yield Spread & EMA Trend Structure (16 Points)
     if (ema20 > ema50) {
@@ -2538,7 +2744,7 @@ export class SignalsController implements OnModuleInit {
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles, direction, symbol, marketRegime
+      candles, direction, symbol, marketRegime, htfBias
     });
     if (gateResult) return gateResult;
 
@@ -2589,7 +2795,7 @@ export class SignalsController implements OnModuleInit {
       calculatedWinProb: confidenceScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
+      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
       liquidityStatus: sweptTokyoLow_Rejection ? 'Tokyo Low Swept' : breakoutTokyoHigh ? 'Bullish BOS Breakout' : sweptTokyoHigh_Rejection ? 'Tokyo High Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active USDJPY Displacement' : 'Normal Volatility',
@@ -2601,7 +2807,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private goldStrategyEngine(candles: any[], symbol: string, interval: string = '1h') {
+  private goldStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -2669,6 +2875,15 @@ export class SignalsController implements OnModuleInit {
     let bearishScore = 0;
     const reasonsFor: string[] = [];
     const reasonsAgainst: string[] = [];
+
+    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
+    if (htfBias && htfBias.htfDirection === 'BUY') {
+      bullishScore += 20;
+      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    } else if (htfBias && htfBias.htfDirection === 'SELL') {
+      bearishScore += 20;
+      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+    }
 
     // Layer 1: EMA Trend Structure (16 Points)
     if (ema20 > ema50) {
@@ -2740,10 +2955,10 @@ export class SignalsController implements OnModuleInit {
     if (ob.order_block_detected) {
       if (ob.type === 'BULLISH') {
         bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone identified at $${ob.price_level}`);
+        reasonsFor.push(`Bullish Order Block liquidity zone identified at ${ob.price_level}`);
       } else {
         bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone identified at $${ob.price_level}`);
+        reasonsAgainst.push(`Bearish Order Block liquidity zone identified at ${ob.price_level}`);
       }
     }
 
@@ -2777,7 +2992,7 @@ export class SignalsController implements OnModuleInit {
     const marketRegimeGate = direction === 'BUY' ? 'Bullish Expansion' : 'Bearish Expansion';
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles, direction, symbol, marketRegime: marketRegimeGate
+      candles, direction, symbol, marketRegime: marketRegimeGate, htfBias
     });
     if (gateResult) return gateResult;
 
@@ -2830,7 +3045,7 @@ export class SignalsController implements OnModuleInit {
       calculatedWinProb: confidenceScore,
       signalGrade,
       marketRegime: `${marketRegimeGate} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
+      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
       liquidityStatus: sweptLow_Rejection ? 'Sell-Side Swept' : breakoutHigh ? 'Bullish BOS Breakout' : sweptHigh_Rejection ? 'Buy-Side Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active Gold Displacement' : 'Normal Volatility',
