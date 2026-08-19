@@ -109,12 +109,16 @@ export class MarketsService implements OnModuleInit {
 
   public getYahooTicker(symbol: string): string {
     const map: Record<string, string> = {
-      'US30': '^DJI',
-      'US100': '^NDX',
-      'SPX500': '^GSPC',
+      'US30': 'YM=F',
+      'DOW': 'YM=F',
+      'US100': 'NQ=F',
+      'NAS': 'NQ=F',
+      'SPX500': 'ES=F',
+      'SP500': 'ES=F',
       'DAX40': '^GDAXI',
-      'GOLD': 'XAUUSD=X',
-      'XAU/USD': 'XAUUSD=X',
+      'GOLD': 'GC=F',
+      'XAU/USD': 'GC=F',
+      'XAUUSD': 'GC=F',
       'OIL': 'CL=F',
       'EUR/USD': 'EURUSD=X',
       'GBP/USD': 'GBPUSD=X',
