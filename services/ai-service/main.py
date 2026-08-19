@@ -356,16 +356,31 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
 
     sweep_bullish = False
     sweep_bearish = False
+    breakout_bullish = False
+    breakout_bearish = False
     recent_candles = df.tail(5)
     for idx, row in recent_candles.iterrows():
         prev_low = df['low'].iloc[:idx].tail(15).min()
         prev_high = df['high'].iloc[:idx].tail(15).max()
-        if row['low'] < prev_low and row['close'] > prev_low:
-            sweep_bullish = True
-            break
-        if row['high'] > prev_high and row['close'] < prev_high:
+        candle_range = max(row['high'] - row['low'], 0.00001)
+        upper_wick = row['high'] - max(row['open'], row['close'])
+        lower_wick = min(row['open'], row['close']) - row['low']
+        
+        # True Bearish Sweep Rejection (Must make high, but reject with long upper wick >= 38% of candle and close bearish)
+        if row['high'] >= prev_high and upper_wick >= (candle_range * 0.38) and row['close'] < row['open']:
             sweep_bearish = True
             break
+        # Bullish Break of Structure (BOS)
+        elif row['close'] >= prev_high and row['close'] > row['open']:
+            breakout_bullish = True
+
+        # True Bullish Sweep Rejection (Must make low, but reject with long lower wick >= 38% of candle and close bullish)
+        if row['low'] <= prev_low and lower_wick >= (candle_range * 0.38) and row['close'] > row['open']:
+            sweep_bullish = True
+            break
+        # Bearish Break of Structure (BOS)
+        elif row['close'] <= prev_low and row['close'] < row['open']:
+            breakout_bearish = True
             
     return {
         "support": support,

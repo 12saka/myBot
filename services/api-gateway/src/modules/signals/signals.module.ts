@@ -1258,17 +1258,31 @@ export class SignalsController implements OnModuleInit {
     const fvg = this.detectFairValueGap(candles);
     const ob = this.detectOrderBlock(candles, atr);
     const lastCandle = candles[candles.length - 1];
-    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
+    const lastOpen = Number(lastCandle.open);
+    const lastClose = Number(lastCandle.close);
+    const lastHigh = Number(lastCandle.high);
+    const lastLow = Number(lastCandle.low);
+    const lastBody = Math.abs(lastClose - lastOpen);
+    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
+    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
+    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
-    // 3. Liquidity Sweep Detection (Buy-side & Sell-side Sweeps)
+    // 3. Liquidity Sweep vs Breakout (BOS) Detection
     const recentHighs = candles.slice(-25).map(c => Number(c.high));
     const recentLows = candles.slice(-25).map(c => Number(c.low));
     const pdh = Math.max(...recentHighs.slice(0, -1));
     const pdl = Math.min(...recentLows.slice(0, -1));
 
-    const sweptPDH = Number(lastCandle.high) >= pdh && Number(lastCandle.close) < pdh;
-    const sweptPDL = Number(lastCandle.low) <= pdl && Number(lastCandle.close) > pdl;
+    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
+    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
+    // Bullish Breakout (BOS - Break of Structure above PDH with strong bull close)
+    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
+
+    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
+    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
+    // Bearish Breakdown (BOS - Break of Structure below PDL with strong bear close)
+    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
 
     // 4. Crypto Session & Volume Profile Timing (UTC)
     const currentHour = new Date().getUTCHours();
@@ -1319,19 +1333,26 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — institutional overhead supply resistance`);
     }
 
-    // Layer 4: Liquidity Sweeps (15 Points)
-    if (sweptPDL) {
-      bullishScore += 15;
-      reasonsFor.push(`Sell-side liquidity swept below $${pdl.toFixed(2)} with strong bullish rejection`);
+    // Layer 4: Liquidity Structure & BOS (16 Points)
+    if (sweptPDL_Rejection) {
+      bullishScore += 16;
+      reasonsFor.push(`Sell-side liquidity swept below $${pdl.toFixed(2)} with hammer rejection wick`);
+    } else if (breakoutPDH) {
+      bullishScore += 16;
+      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${pdh.toFixed(2)}`);
     }
-    if (sweptPDH) {
-      bearishScore += 15;
-      reasonsAgainst.push(`Buy-side liquidity swept above $${pdh.toFixed(2)} with strong bearish rejection`);
+
+    if (sweptPDH_Rejection) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Buy-side liquidity swept above $${pdh.toFixed(2)} with shooting star rejection wick`);
+    } else if (breakdownPDL) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${pdl.toFixed(2)}`);
     }
 
     // Layer 5: Institutional Displacement (12 Points)
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
         reasonsFor.push(`Bullish expansion displacement candle ($${lastBody.toFixed(2)} > 1.15x ATR)`);
@@ -1375,10 +1396,9 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short squeeze hazard`);
     }
 
-    // Layer 8: Session Window Timing (applied neutrally based on actual session direction)
-    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    // Layer 8: Session Window Timing
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
@@ -1407,15 +1427,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Targets & Dynamic Risk-to-Reward Ratio (Timeframe Scaled)
+    // Targets & Dynamic Risk-to-Reward Ratio (Timeframe Scaled & Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const minPct = isScalp ? 0.0035 : 0.0055;
     const maxPct = isScalp ? 0.0070 : 0.0120;
     const slDist = Math.min(Math.max(atr * 0.95, entryPrice * minPct), entryPrice * maxPct);
-    const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
+
+    // Structure Invalidation SL
+    const swingLows = candles.slice(-6).map(c => Number(c.low));
+    const swingHighs = candles.slice(-6).map(c => Number(c.high));
+    const lowestLow = Math.min(...swingLows);
+    const highestHigh = Math.max(...swingHighs);
+
+    const stopLoss = direction === 'BUY' 
+      ? Math.max(entryPrice - (slDist * 1.25), Math.min(entryPrice - (slDist * 0.75), lowestLow - (atr * 0.2)))
+      : Math.min(entryPrice + (slDist * 1.25), Math.max(entryPrice + (slDist * 0.75), highestHigh + (atr * 0.2)));
+
+    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -1448,7 +1479,7 @@ export class SignalsController implements OnModuleInit {
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
-      liquidityStatus: sweptPDL ? 'Sell-side Swept' : sweptPDH ? 'Buy-side Swept' : 'Neutral Range',
+      liquidityStatus: sweptPDL_Rejection ? 'Sell-side Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Buy-side Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active Expansion Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
@@ -1488,17 +1519,31 @@ export class SignalsController implements OnModuleInit {
     const fvg = this.detectFairValueGap(candles);
     const ob = this.detectOrderBlock(candles, atr);
     const lastCandle = candles[candles.length - 1];
-    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
+    const lastOpen = Number(lastCandle.open);
+    const lastClose = Number(lastCandle.close);
+    const lastHigh = Number(lastCandle.high);
+    const lastLow = Number(lastCandle.low);
+    const lastBody = Math.abs(lastClose - lastOpen);
+    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
+    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
+    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
-    // 3. Liquidity Sweep Detection (Previous Day / Session High/Low)
+    // 3. Liquidity Sweep vs Breakout (BOS) Detection
     const recentHighs = candles.slice(-25).map(c => Number(c.high));
     const recentLows = candles.slice(-25).map(c => Number(c.low));
     const pdh = Math.max(...recentHighs.slice(0, -1));
     const pdl = Math.min(...recentLows.slice(0, -1));
 
-    const sweptPDH = Number(lastCandle.high) >= pdh && Number(lastCandle.close) < pdh;
-    const sweptPDL = Number(lastCandle.low) <= pdl && Number(lastCandle.close) > pdl;
+    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
+    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
+    // Bullish Breakout (BOS - Break of Structure above PDH with strong bull close)
+    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
+
+    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
+    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
+    // Bearish Breakdown (BOS - Break of Structure below PDL with strong bear close)
+    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
 
     // 4. Session Timing & Power Hour Classification (UTC)
     const currentHour = new Date().getUTCHours();
@@ -1556,19 +1601,26 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`Index below VWAP ($${vwap.toFixed(2)}) — mega-cap tech overhead supply resistance`);
     }
 
-    // Layer 4: Liquidity Sweeps (PDH/PDL) (15 Points)
-    if (sweptPDL) {
-      bullishScore += 15;
-      reasonsFor.push(`Previous Day Low ($${pdl.toFixed(2)}) swept with quick bullish rejection`);
+    // Layer 4: Liquidity Sweeps & BOS (16 Points)
+    if (sweptPDL_Rejection) {
+      bullishScore += 16;
+      reasonsFor.push(`Previous Day Low ($${pdl.toFixed(2)}) swept with hammer rejection wick`);
+    } else if (breakoutPDH) {
+      bullishScore += 16;
+      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${pdh.toFixed(2)}`);
     }
-    if (sweptPDH) {
-      bearishScore += 15;
-      reasonsAgainst.push(`Previous Day High ($${pdh.toFixed(2)}) swept with quick bearish rejection`);
+
+    if (sweptPDH_Rejection) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Previous Day High ($${pdh.toFixed(2)}) swept with shooting star rejection wick`);
+    } else if (breakdownPDL) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${pdl.toFixed(2)}`);
     }
 
     // Layer 5: Institutional Displacement (12 Points)
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
         reasonsFor.push(`Strong bullish NQ futures displacement ($${lastBody.toFixed(2)} pts > 1.15x ATR)`);
@@ -1612,17 +1664,15 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
     }
 
-    // Layer 8: Session Timing (applied neutrally based on actual session direction)
-    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    // Layer 8: Session Timing
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
 
     // Regime-Specific Strategy Adjustments
     if (isRanging) {
-      // In rangebound regimes, penalize trend breakouts and require VWAP mean-reversion
       if (entryPrice > vwap * 1.008) {
         bullishScore -= 10;
         reasonsAgainst.push('Ranging Regime: Price extended above VWAP — mean reversion risk');
@@ -1645,13 +1695,24 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Timeframe Scaled)
+    // Calculate Targets & Risk/Reward (Timeframe Scaled & Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 14 : 28), isScalp ? 38 : 65);
-    const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
+
+    // Structure Invalidation SL
+    const swingLows = candles.slice(-6).map(c => Number(c.low));
+    const swingHighs = candles.slice(-6).map(c => Number(c.high));
+    const lowestLow = Math.min(...swingLows);
+    const highestHigh = Math.max(...swingHighs);
+
+    const stopLoss = direction === 'BUY' 
+      ? Math.max(entryPrice - (slDist * 1.25), Math.min(entryPrice - (slDist * 0.75), lowestLow - (atr * 0.2)))
+      : Math.min(entryPrice + (slDist * 1.25), Math.max(entryPrice + (slDist * 0.75), highestHigh + (atr * 0.2)));
+
+    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -1664,9 +1725,9 @@ export class SignalsController implements OnModuleInit {
     const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
     const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
 
-    const aiValidation = `Dedicated US100/NQ 12-Regime Confluence Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
+    const aiValidation = `Dedicated US100 Institutional Tech Engine evaluated setup during ${sessionName}. ` +
       `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
-      `with invalidation stop loss at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -1684,9 +1745,9 @@ export class SignalsController implements OnModuleInit {
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
-      liquidityStatus: sweptPDL ? 'PDL Swept' : sweptPDH ? 'PDH Swept' : 'Neutral Range',
+      liquidityStatus: sweptPDL_Rejection ? 'PDL Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'PDH Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active NQ Displacement' : 'Normal Volatility',
+      displacementStatus: isDisplacement ? 'Active Tech Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
       reasonsFor,
       reasonsAgainst,
@@ -1724,17 +1785,31 @@ export class SignalsController implements OnModuleInit {
     const fvg = this.detectFairValueGap(candles);
     const ob = this.detectOrderBlock(candles, atr);
     const lastCandle = candles[candles.length - 1];
-    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
+    const lastOpen = Number(lastCandle.open);
+    const lastClose = Number(lastCandle.close);
+    const lastHigh = Number(lastCandle.high);
+    const lastLow = Number(lastCandle.low);
+    const lastBody = Math.abs(lastClose - lastOpen);
+    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
+    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
+    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
-    // 3. Liquidity Sweep Detection (Previous Day / Session High/Low)
+    // 3. Liquidity Sweep vs Breakout (BOS) Detection
     const recentHighs = candles.slice(-25).map(c => Number(c.high));
     const recentLows = candles.slice(-25).map(c => Number(c.low));
     const pdh = Math.max(...recentHighs.slice(0, -1));
     const pdl = Math.min(...recentLows.slice(0, -1));
 
-    const sweptPDH = Number(lastCandle.high) >= pdh && Number(lastCandle.close) < pdh;
-    const sweptPDL = Number(lastCandle.low) <= pdl && Number(lastCandle.close) > pdl;
+    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
+    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
+    // Bullish Breakout (BOS - Break of Structure above PDH with strong bull close)
+    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
+
+    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
+    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
+    // Bearish Breakdown (BOS - Break of Structure below PDL with strong bear close)
+    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
 
     // 4. Session Timing & Power Hour Classification (UTC)
     const currentHour = new Date().getUTCHours();
@@ -1792,19 +1867,26 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — industrial & financial overhead resistance`);
     }
 
-    // Layer 4: Liquidity Sweeps (PDH/PDL) (15 Points)
-    if (sweptPDL) {
-      bullishScore += 15;
-      reasonsFor.push(`Previous Day Low ($${pdl.toFixed(2)}) swept with quick rejection`);
+    // Layer 4: Liquidity Sweeps & BOS (16 Points)
+    if (sweptPDL_Rejection) {
+      bullishScore += 16;
+      reasonsFor.push(`Previous Day Low ($${pdl.toFixed(2)}) swept with hammer rejection wick`);
+    } else if (breakoutPDH) {
+      bullishScore += 16;
+      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${pdh.toFixed(2)}`);
     }
-    if (sweptPDH) {
-      bearishScore += 15;
-      reasonsAgainst.push(`Previous Day High ($${pdh.toFixed(2)}) swept with quick rejection`);
+
+    if (sweptPDH_Rejection) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Previous Day High ($${pdh.toFixed(2)}) swept with shooting star rejection wick`);
+    } else if (breakdownPDL) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${pdl.toFixed(2)}`);
     }
 
     // Layer 5: Institutional Displacement (12 Points)
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
         reasonsFor.push(`Strong bullish YM futures displacement ($${lastBody.toFixed(2)} pts > 1.15x ATR)`);
@@ -1848,10 +1930,9 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
     }
 
-    // Layer 8: Session Timing (applied neutrally based on actual session direction)
-    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    // Layer 8: Session Timing
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
@@ -1869,13 +1950,65 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Timeframe Scaled for US30)
+    // Calculate Targets & Risk/Reward (Timeframe Scaled & Structure Based for US30)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 25 : 48), isScalp ? 58 : 95);
-    const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
+
+    // Structure Invalidation SL
+    const swingLows = candles.slice(-6).map(c => Number(c.low));
+    const swingHighs = candles.slice(-6).map(c => Number(c.high));
+    const lowestLow = Math.min(...swingLows);
+    const highestHigh = Math.max(...swingHighs);
+
+    const stopLoss = direction === 'BUY' 
+      ? Math.max(entryPrice - (slDist * 1.25), Math.min(entryPrice - (slDist * 0.75), lowestLow - (atr * 0.2)))
+      : Math.min(entryPrice + (slDist * 1.25), Math.max(entryPrice + (slDist * 0.75), highestHigh + (atr * 0.2)));
+
+    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+
+    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
+      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
+      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
+      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
+      : 'C Setup (Speculative)';
+
+    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
+    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
+
+    const aiValidation = `Dedicated US30 12-Layer Industrial & Cyclical Value Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
+      `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
+
+    return {
+      direction,
+      entryType: 'MARKET_NOW',
+      entryPrice,
+      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      stopLoss: parseFloat(stopLoss.toFixed(2)),
+      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
+      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
+      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
+      riskRewardRatio: rrRatio,
+      confidenceScore,
+      calculatedWinProb: confidenceScore,
+      signalGrade,
+      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
+      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
+      liquidityStatus: sweptPDL_Rejection ? 'PDL Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'PDH Swept' : 'Neutral Range',
+      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
+      displacementStatus: isDisplacement ? 'Active YM Displacement' : 'Normal Volatility',
+      sessionStatus: sessionName,
+      reasonsFor,
+      reasonsAgainst,
+      aiValidation,
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
+    };
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -1937,7 +2070,7 @@ export class SignalsController implements OnModuleInit {
     const ema200 = this.calcEMA(closes, 200);
     const vwap = this.calcVWAP(candles);
     const isJpy = symbol.includes('JPY');
-    const precision = isJpy ? 2 : 4;
+    const precision = isJpy ? 3 : 4;
 
     // 1. Market Regime Classification
     const prevAtr = this.calcATR(candles.slice(0, -10), 14);
@@ -1950,7 +2083,14 @@ export class SignalsController implements OnModuleInit {
     const fvg = this.detectFairValueGap(candles);
     const ob = this.detectOrderBlock(candles, atr);
     const lastCandle = candles[candles.length - 1];
-    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
+    const lastOpen = Number(lastCandle.open);
+    const lastClose = Number(lastCandle.close);
+    const lastHigh = Number(lastCandle.high);
+    const lastLow = Number(lastCandle.low);
+    const lastBody = Math.abs(lastClose - lastOpen);
+    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
+    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
+    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
     // 3. Asian Session Range & Liquidity Sweeps (00:00 - 07:00 UTC)
@@ -1959,8 +2099,15 @@ export class SignalsController implements OnModuleInit {
     const asianHigh = Math.max(...recentHighs.slice(0, -1));
     const asianLow = Math.min(...recentLows.slice(0, -1));
 
-    const sweptAsianLow = Number(lastCandle.low) <= asianLow && Number(lastCandle.close) > asianLow;
-    const sweptAsianHigh = Number(lastCandle.high) >= asianHigh && Number(lastCandle.close) < asianHigh;
+    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
+    const sweptAsianHigh_Rejection = lastHigh >= asianHigh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
+    // Bullish Breakout (BOS - Break of Structure above Asian High with strong bull close)
+    const breakoutAsianHigh = lastClose >= asianHigh && lastClose > lastOpen;
+
+    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
+    const sweptAsianLow_Rejection = lastLow <= asianLow && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
+    // Bearish Breakdown (BOS - Break of Structure below Asian Low with strong bear close)
+    const breakdownAsianLow = lastClose <= asianLow && lastClose < lastOpen;
 
     // 4. Session Timing Classification (UTC)
     const currentHour = new Date().getUTCHours();
@@ -2011,19 +2158,26 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(precision)}) — HTF macro bear regime`);
     }
 
-    // Layer 4: Asian Range Liquidity Sweeps (15 Points)
-    if (sweptAsianLow) {
-      bullishScore += 15;
-      reasonsFor.push(`Asian Session Low (${asianLow.toFixed(precision)}) swept during London open with sharp rejection`);
+    // Layer 4: Asian Range Liquidity Sweeps & BOS (16 Points)
+    if (sweptAsianLow_Rejection) {
+      bullishScore += 16;
+      reasonsFor.push(`Asian Session Low (${asianLow.toFixed(precision)}) swept with hammer rejection wick`);
+    } else if (breakoutAsianHigh) {
+      bullishScore += 16;
+      reasonsFor.push(`Bullish Break of Structure (BOS) above Asian high (${asianHigh.toFixed(precision)})`);
     }
-    if (sweptAsianHigh) {
-      bearishScore += 15;
-      reasonsAgainst.push(`Asian Session High (${asianHigh.toFixed(precision)}) swept during London open with sharp rejection`);
+
+    if (sweptAsianHigh_Rejection) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Asian Session High (${asianHigh.toFixed(precision)}) swept with shooting star rejection wick`);
+    } else if (breakdownAsianLow) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Bearish Break of Structure (BOS) below Asian low (${asianLow.toFixed(precision)})`);
     }
 
     // Layer 5: Institutional FX Displacement (12 Points)
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
         reasonsFor.push(`Strong bullish FX displacement candle body (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
@@ -2067,10 +2221,9 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
     }
 
-    // Layer 8: Prime Session Timing (applied neutrally based on actual session direction)
-    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    // Layer 8: Prime Session Timing
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
@@ -2088,15 +2241,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Timeframe Scaled FX Targets)
+    // Calculate Targets & Risk/Reward (Timeframe Scaled & Structure Based FX Targets)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = isJpy 
       ? Math.min(Math.max(atr * 0.95, isScalp ? 0.12 : 0.22), isScalp ? 0.28 : 0.48)
       : Math.min(Math.max(atr * 0.95, isScalp ? 0.0009 : 0.0018), isScalp ? 0.0022 : 0.0038);
-    const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
+
+    // Structure Invalidation SL
+    const swingLows = candles.slice(-6).map(c => Number(c.low));
+    const swingHighs = candles.slice(-6).map(c => Number(c.high));
+    const lowestLow = Math.min(...swingLows);
+    const highestHigh = Math.max(...swingHighs);
+
+    const stopLoss = direction === 'BUY' 
+      ? Math.max(entryPrice - (slDist * 1.25), Math.min(entryPrice - (slDist * 0.75), lowestLow - (atr * 0.2)))
+      : Math.min(entryPrice + (slDist * 1.25), Math.max(entryPrice + (slDist * 0.75), highestHigh + (atr * 0.2)));
+
+    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -2129,7 +2293,7 @@ export class SignalsController implements OnModuleInit {
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
-      liquidityStatus: sweptAsianLow ? 'Asian Low Swept' : sweptAsianHigh ? 'Asian High Swept' : 'Neutral Range',
+      liquidityStatus: sweptAsianLow_Rejection ? 'Asian Low Swept' : breakoutAsianHigh ? 'Bullish BOS Breakout' : sweptAsianHigh_Rejection ? 'Asian High Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active FX Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
@@ -2157,7 +2321,7 @@ export class SignalsController implements OnModuleInit {
     const ema50 = this.calcEMA(closes, 50);
     const ema200 = this.calcEMA(closes, 200);
     const vwap = this.calcVWAP(candles);
-    const precision = 2; // JPY pairs use 2 decimal places
+    const precision = 3; // JPY pairs use 3 decimal places for precision
 
     // 1. Market Regime & Ministry of Finance (MoF) Intervention Risk Engine
     const prevAtr = this.calcATR(candles.slice(0, -10), 14);
@@ -2179,7 +2343,14 @@ export class SignalsController implements OnModuleInit {
     const fvg = this.detectFairValueGap(candles);
     const ob = this.detectOrderBlock(candles, atr);
     const lastCandle = candles[candles.length - 1];
-    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
+    const lastOpen = Number(lastCandle.open);
+    const lastClose = Number(lastCandle.close);
+    const lastHigh = Number(lastCandle.high);
+    const lastLow = Number(lastCandle.low);
+    const lastBody = Math.abs(lastClose - lastOpen);
+    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
+    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
+    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
     // 3. Tokyo Session Range & Liquidity Sweeps (00:00 - 07:00 UTC)
@@ -2188,8 +2359,15 @@ export class SignalsController implements OnModuleInit {
     const tokyoHigh = Math.max(...recentHighs.slice(0, -1));
     const tokyoLow = Math.min(...recentLows.slice(0, -1));
 
-    const sweptTokyoLow = Number(lastCandle.low) <= tokyoLow && Number(lastCandle.close) > tokyoLow;
-    const sweptTokyoHigh = Number(lastCandle.high) >= tokyoHigh && Number(lastCandle.close) < tokyoHigh;
+    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
+    const sweptTokyoHigh_Rejection = lastHigh >= tokyoHigh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
+    // Bullish Breakout (BOS - Break of Structure above Tokyo High with strong bull close)
+    const breakoutTokyoHigh = lastClose >= tokyoHigh && lastClose > lastOpen;
+
+    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
+    const sweptTokyoLow_Rejection = lastLow <= tokyoLow && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
+    // Bearish Breakdown (BOS - Break of Structure below Tokyo Low with strong bear close)
+    const breakdownTokyoLow = lastClose <= tokyoLow && lastClose < lastOpen;
 
     // 4. Session Timing Classification (UTC)
     const currentHour = new Date().getUTCHours();
@@ -2240,19 +2418,26 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(2)}) — HTF macro bear regime`);
     }
 
-    // Layer 4: Tokyo Session Liquidity Sweeps (15 Points)
-    if (sweptTokyoLow) {
-      bullishScore += 15;
-      reasonsFor.push(`Tokyo Session Low (${tokyoLow.toFixed(2)}) swept during London open with sharp rejection`);
+    // Layer 4: Tokyo Session Liquidity Sweeps & BOS (16 Points)
+    if (sweptTokyoLow_Rejection) {
+      bullishScore += 16;
+      reasonsFor.push(`Tokyo Session Low (${tokyoLow.toFixed(2)}) swept with hammer rejection wick`);
+    } else if (breakoutTokyoHigh) {
+      bullishScore += 16;
+      reasonsFor.push(`Bullish Break of Structure (BOS) above Tokyo high (${tokyoHigh.toFixed(2)})`);
     }
-    if (sweptTokyoHigh) {
-      bearishScore += 15;
-      reasonsAgainst.push(`Tokyo Session High (${tokyoHigh.toFixed(2)}) swept during London open with sharp rejection`);
+
+    if (sweptTokyoHigh_Rejection) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Tokyo Session High (${tokyoHigh.toFixed(2)}) swept with shooting star rejection wick`);
+    } else if (breakdownTokyoLow) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Bearish Break of Structure (BOS) below Tokyo low (${tokyoLow.toFixed(2)})`);
     }
 
     // Layer 5: Institutional FX Displacement (12 Points)
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
         reasonsFor.push(`Strong bullish USDJPY displacement candle (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
@@ -2296,10 +2481,9 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
     }
 
-    // Layer 8: Session Timing (applied neutrally based on actual session direction)
-    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    // Layer 8: Session Timing
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
@@ -2326,13 +2510,24 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Targets & Risk/Reward (Timeframe Scaled USDJPY Targets)
+    // Calculate Targets & Risk/Reward (Timeframe Scaled & Structure Based USDJPY Targets)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 0.12 : 0.22), isScalp ? 0.28 : 0.48);
-    const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
+
+    // Structure Invalidation SL
+    const swingLows = candles.slice(-6).map(c => Number(c.low));
+    const swingHighs = candles.slice(-6).map(c => Number(c.high));
+    const lowestLow = Math.min(...swingLows);
+    const highestHigh = Math.max(...swingHighs);
+
+    const stopLoss = direction === 'BUY' 
+      ? Math.max(entryPrice - (slDist * 1.25), Math.min(entryPrice - (slDist * 0.75), lowestLow - (atr * 0.2)))
+      : Math.min(entryPrice + (slDist * 1.25), Math.max(entryPrice + (slDist * 0.75), highestHigh + (atr * 0.2)));
+
+    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -2363,7 +2558,7 @@ export class SignalsController implements OnModuleInit {
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
-      liquidityStatus: sweptTokyoLow ? 'Tokyo Low Swept' : sweptTokyoHigh ? 'Tokyo High Swept' : 'Neutral Range',
+      liquidityStatus: sweptTokyoLow_Rejection ? 'Tokyo Low Swept' : breakoutTokyoHigh ? 'Bullish BOS Breakout' : sweptTokyoHigh_Rejection ? 'Tokyo High Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active USDJPY Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
@@ -2396,18 +2591,31 @@ export class SignalsController implements OnModuleInit {
     const fvg = this.detectFairValueGap(candles);
     const ob = this.detectOrderBlock(candles, atr);
     const lastCandle = candles[candles.length - 1];
-    const prevCandle = candles[candles.length - 2];
-    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
+    const lastOpen = Number(lastCandle.open);
+    const lastClose = Number(lastCandle.close);
+    const lastHigh = Number(lastCandle.high);
+    const lastLow = Number(lastCandle.low);
+    const lastBody = Math.abs(lastClose - lastOpen);
+    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
+    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
+    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
-    // 2. Liquidity Sweep Detection
+    // 2. Liquidity Sweep vs Breakout (BOS) Detection
     const recentHighs = candles.slice(-20).map(c => Number(c.high));
     const recentLows = candles.slice(-20).map(c => Number(c.low));
     const maxHigh = Math.max(...recentHighs.slice(0, -1));
     const minLow = Math.min(...recentLows.slice(0, -1));
 
-    const sweptHigh = Number(lastCandle.high) >= maxHigh && Number(lastCandle.close) < maxHigh;
-    const sweptLow = Number(lastCandle.low) <= minLow && Number(lastCandle.close) > minLow;
+    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
+    const sweptHigh_Rejection = lastHigh >= maxHigh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
+    // Bullish Breakout (BOS - Break of Structure above Max High with strong bull close)
+    const breakoutHigh = lastClose >= maxHigh && lastClose > lastOpen;
+
+    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
+    const sweptLow_Rejection = lastLow <= minLow && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
+    // Bearish Breakdown (BOS - Break of Structure below Min Low with strong bear close)
+    const breakdownLow = lastClose <= minLow && lastClose < lastOpen;
 
     // 3. Session Classification (UTC based)
     const currentHour = new Date().getUTCHours();
@@ -2457,19 +2665,26 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`Price below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
     }
 
-    // Layer 4: Liquidity Sweeps (16 Points)
-    if (sweptLow) {
+    // Layer 4: Liquidity Sweeps & BOS (16 Points)
+    if (sweptLow_Rejection) {
       bullishScore += 16;
-      reasonsFor.push(`Sell-Side Liquidity Swept below $${minLow.toFixed(2)} with quick rejection`);
+      reasonsFor.push(`Sell-Side Liquidity Swept below $${minLow.toFixed(2)} with hammer rejection wick`);
+    } else if (breakoutHigh) {
+      bullishScore += 16;
+      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${maxHigh.toFixed(2)}`);
     }
-    if (sweptHigh) {
+
+    if (sweptHigh_Rejection) {
       bearishScore += 16;
-      reasonsAgainst.push(`Buy-Side Liquidity Swept above $${maxHigh.toFixed(2)} with quick rejection`);
+      reasonsAgainst.push(`Buy-Side Liquidity Swept above $${maxHigh.toFixed(2)} with shooting star rejection wick`);
+    } else if (breakdownLow) {
+      bearishScore += 16;
+      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${minLow.toFixed(2)}`);
     }
 
     // Layer 5: Volume & Displacement Candles (12 Points)
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
         reasonsFor.push(`Strong bullish displacement candle body ($${lastBody.toFixed(2)} > 1.15x ATR)`);
@@ -2513,10 +2728,9 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
     }
 
-    // Layer 8: Prime Session Alignment (applied neutrally based on actual session direction)
-    // During high-volume sessions, amplify the TREND direction only if displacement confirms it
+    // Layer 8: Session Timing
     if (isDisplacement) {
-      const isBullBody = Number(lastCandle.close) > Number(lastCandle.open);
+      const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
@@ -2535,13 +2749,24 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    // Calculate Exact Targets (Timeframe Scaled Gold Targets)
+    // Calculate Exact Targets (Timeframe Scaled & Structure Based Gold Targets)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(Math.max(atr * 0.95, isScalp ? 1.80 : 3.20), isScalp ? 4.20 : 7.50);
-    const stopLoss = direction === 'BUY' ? entryPrice - slDist : entryPrice + slDist;
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (slDist * 1.5) : entryPrice - (slDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (slDist * 2.6) : entryPrice - (slDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (slDist * 3.8) : entryPrice - (slDist * 3.8);
+
+    // Structure Invalidation SL
+    const swingLows = candles.slice(-6).map(c => Number(c.low));
+    const swingHighs = candles.slice(-6).map(c => Number(c.high));
+    const lowestLow = Math.min(...swingLows);
+    const highestHigh = Math.max(...swingHighs);
+
+    const stopLoss = direction === 'BUY' 
+      ? Math.max(entryPrice - (slDist * 1.25), Math.min(entryPrice - (slDist * 0.75), lowestLow - (atr * 0.2)))
+      : Math.min(entryPrice + (slDist * 1.25), Math.max(entryPrice + (slDist * 0.75), highestHigh + (atr * 0.2)));
+
+    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
@@ -2572,11 +2797,11 @@ export class SignalsController implements OnModuleInit {
       confidenceScore,
       calculatedWinProb: confidenceScore,
       signalGrade,
-      marketRegime: direction === 'BUY' ? 'Bullish Expansion' : 'Bearish Expansion',
+      marketRegime: `${marketRegimeGate} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
-      liquidityStatus: sweptLow ? 'Sell-Side Swept' : sweptHigh ? 'Buy-Side Swept' : 'Neutral Range',
+      liquidityStatus: sweptLow_Rejection ? 'Sell-Side Swept' : breakoutHigh ? 'Bullish BOS Breakout' : sweptHigh_Rejection ? 'Buy-Side Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active Displacement' : 'Normal Volatility',
+      displacementStatus: isDisplacement ? 'Active Gold Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
       reasonsFor,
       reasonsAgainst,
