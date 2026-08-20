@@ -49,4 +49,4 @@ ENV PORT=4000
 ENV NODE_ENV=production
 
 # Run migrations gracefully and start API Gateway
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma || true && npm run start --workspace=@trademind/api-gateway"]
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma || true && node services/api-gateway/dist/main.js"]

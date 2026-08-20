@@ -4,7 +4,7 @@ services:
     name: trademind-api-gateway
     env: node
     plan: free
-    buildCommand: npm install && npx prisma generate --schema=packages/db/prisma/schema.prisma && npm run build --workspace=@trademind/api-gateway
+    buildCommand: npm install --include=dev && npx prisma generate --schema=packages/db/prisma/schema.prisma && npm run build --workspace=@trademind/api-gateway
     startCommand: node services/api-gateway/dist/main.js
     envVars:
       - key: NODE_ENV

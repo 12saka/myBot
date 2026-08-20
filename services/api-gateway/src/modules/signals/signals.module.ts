@@ -2188,48 +2188,6 @@ export class SignalsController implements OnModuleInit {
     const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
     const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
     const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
-
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
-
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
-      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
-      : 'C Setup (Speculative)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
-    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
-
-    const aiValidation = `Dedicated US30 12-Layer Industrial & Cyclical Value Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
-      `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
-      stopLoss: parseFloat(stopLoss.toFixed(2)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb: confidenceScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF',
-      liquidityStatus: sweptPDL_Rejection ? 'PDL Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'PDH Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active YM Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
-    };
-
     const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
 
     const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
