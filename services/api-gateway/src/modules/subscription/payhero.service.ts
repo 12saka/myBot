@@ -31,31 +31,61 @@ export class PayHeroService {
     });
 
     try {
-      // In production, invoke PayHero STK Push API
-      // Endpoint: POST /api/v2/payments
-      this.logger.log(`[PayHero Adapter] Initiating STK Push for ${phoneNumber}, Ref: ${externalReference}, KES ${payment.amount}`);
+      // 1. Format Phone Number (PayHero accepts 07XXXXXXXX, 01XXXXXXXX, or 254XXXXXXXXX)
+      let formattedPhone = phoneNumber.replace(/[\s\-\+]/g, '');
+      if (formattedPhone.startsWith('254') && formattedPhone.length === 12) {
+        // Keep 254XXXXXXXXX or convert to 07/01 if preferred
+      } else if (formattedPhone.startsWith('0') && formattedPhone.length === 10) {
+        formattedPhone = '254' + formattedPhone.substring(1);
+      } else if (!formattedPhone.startsWith('254') && formattedPhone.length === 9) {
+        formattedPhone = '254' + formattedPhone;
+      }
 
-      // Simulate API call structure
-      /*
-      const response = await this.http.post(`${this.payheroApiUrl}/payments`, {
-        amount: payment.amount,
-        phone_number: phoneNumber,
-        channel_id: process.env.PAYHERO_CHANNEL_ID || 1,
-        provider: 'm-pesa',
-        external_reference: externalReference,
-        callback_url: `${process.env.API_BASE_URL}/api/v2/subscriptions/payhero/webhook`,
-      }, {
-        headers: { Authorization: this.payheroAuthHeader },
+      const callbackUrl = process.env.API_BASE_URL 
+        ? `${process.env.API_BASE_URL}/api/v2/subscriptions/payhero/webhook`
+        : 'https://trademind-api-gateway.onrender.com/api/v2/subscriptions/payhero/webhook';
+
+      const channelId = process.env.PAYHERO_CHANNEL_ID 
+        ? parseInt(process.env.PAYHERO_CHANNEL_ID, 10) 
+        : 1;
+
+      this.logger.log(`[PayHero Adapter] Initiating Live STK Push for ${formattedPhone}, Ref: ${externalReference}, KES ${payment.amount}`);
+
+      const authHeader = process.env.PAYHERO_AUTH_HEADER || this.payheroAuthHeader;
+
+      // 2. Dispatch Live STK Push Request to PayHero API v2
+      const payheroResponse = await fetch(`${this.payheroApiUrl}/payments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': authHeader.startsWith('Basic ') ? authHeader : `Basic ${authHeader}`,
+        },
+        body: JSON.stringify({
+          amount: payment.amount,
+          phone_number: formattedPhone,
+          channel_id: channelId,
+          provider: 'm-pesa',
+          external_reference: externalReference,
+          callback_url: callbackUrl,
+        }),
       });
-      */
+
+      const responseData = await payheroResponse.json().catch(() => ({}));
+      this.logger.log(`[PayHero Adapter] PayHero API response (${payheroResponse.status}): ${JSON.stringify(responseData)}`);
+
+      if (!payheroResponse.ok) {
+        const errorMsg = responseData?.message || responseData?.error || `PayHero API responded with status ${payheroResponse.status}`;
+        throw new Error(errorMsg);
+      }
 
       return {
         paymentId: payment.id,
         externalReference,
-        phoneNumber,
+        phoneNumber: formattedPhone,
         amount: payment.amount,
         status: 'STK_PUSH_SENT',
-        message: `M-Pesa STK Push prompt sent to ${phoneNumber}. Enter your M-Pesa PIN on your phone to complete payment.`,
+        payheroResponse: responseData,
+        message: `M-Pesa STK Push prompt sent to ${formattedPhone}. Enter your M-Pesa PIN on your phone to complete payment.`,
       };
     } catch (err: any) {
       this.logger.error(`[PayHero Adapter] STK Push failed: ${err.message}`);
@@ -69,9 +99,11 @@ export class PayHeroService {
 
   async handlePayHeroWebhook(payload: any) {
     this.logger.log(`[PayHero Webhook] Received callback: ${JSON.stringify(payload)}`);
-    const externalRef = payload?.external_reference || payload?.externalReference;
-    const providerTxId = payload?.provider_transaction_id || payload?.transaction_id || payload?.MpesaReceiptNumber;
-    const isSuccess = payload?.status === 'SUCCESS' || payload?.status === 'COMPLETED' || payload?.success === true;
+    const resp = payload?.response || {};
+    const externalRef = payload?.external_reference || payload?.externalReference || resp?.external_reference || resp?.ExternalReference || payload?.Reference;
+    const providerTxId = payload?.provider_transaction_id || payload?.transaction_id || payload?.MpesaReceiptNumber || resp?.provider_transaction_id || resp?.MpesaReceiptNumber || resp?.mpesa_receipt_number;
+    const statusStr = String(payload?.status || resp?.status || resp?.Status || '').toUpperCase();
+    const isSuccess = statusStr === 'SUCCESS' || statusStr === 'COMPLETED' || payload?.success === true || resp?.success === true;
 
     if (!externalRef) return { success: false, reason: 'Missing external_reference' };
 
