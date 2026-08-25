@@ -114,7 +114,7 @@ export default function InstructorQuizzesPage() {
 
   const handleGenerateAiQuestion = async () => {
     try {
-      const res = await apiFetch<any>('/api/v2/admin/academy/generate-question', {
+      const res = await apiFetch<any>('/api/v2/instructor/generate-question', {
         method: 'POST',
         body: JSON.stringify({ skillTag: 'Market Structure' }),
       });
@@ -268,7 +268,26 @@ export default function InstructorQuizzesPage() {
                     <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                       {qz.status || 'PUBLISHED'}
                     </span>
-                    <span className="text-xs font-mono text-purple-300 font-bold">+{qz.xpReward || 100} XP REWARD</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-purple-300 font-bold">+{qz.xpReward || 100} XP REWARD</span>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!confirm(`Are you sure you want to delete quiz "${qz.title}"?`)) return;
+                          try {
+                            await apiFetch(`/api/v2/instructor/quizzes/${qz.id}`, { method: 'DELETE' });
+                            toast.success('Quiz deleted.');
+                            fetchData();
+                          } catch (err: any) {
+                            toast.error(err.message || 'Failed to delete quiz');
+                          }
+                        }}
+                        className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition"
+                        title="Delete Quiz"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <h3 className="text-base font-bold text-white font-outfit">{qz.title}</h3>

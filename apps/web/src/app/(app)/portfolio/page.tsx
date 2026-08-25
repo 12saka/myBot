@@ -77,13 +77,18 @@ export default function PortfolioPage() {
         symbolToSend = symbolToSend.replace('/USD', '');
       }
 
+      // Determine offsetting direction (Long positions -> SELL to close; Short positions -> BUY to close)
+      const isShort = (pos.quantity < 0) || (pos.type === 'SHORT');
+      const closeDirection = isShort ? 'BUY' : 'SELL';
+      const absQuantity = Math.abs(pos.quantity);
+
       await apiFetch('/api/v2/portfolio/order', {
         method: 'POST',
         body: JSON.stringify({
           symbol: symbolToSend,
-          direction: 'SELL',
+          direction: closeDirection,
           type: 'MARKET',
-          quantity: pos.quantity
+          quantity: absQuantity
         })
       });
 

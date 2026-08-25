@@ -25,7 +25,7 @@ export function PageHeader({ title, subtitle, icon: Icon, iconColor = '#a78bfa',
           {subtitle && <p className="text-slate-400 text-sm mt-0.5">{subtitle}</p>}
         </div>
       </div>
-      {children && <div className="flex items-center gap-3">{children}</div>}
+      {children && <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">{children}</div>}
     </div>
   );
 }

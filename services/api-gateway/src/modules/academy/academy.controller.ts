@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, Request, Query, Req } from '@nestjs/common';
+import { ApiOperation } from '@nestjs/swagger';
 import { AcademyService } from './academy.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -70,5 +71,42 @@ export class AcademyController {
   @Get('assignments/:id/submission')
   async getAssignmentSubmission(@Request() req: any, @Param('id') assignmentId: string) {
     return this.academyService.getAssignmentSubmission(req.user.userId || req.user.id, assignmentId);
+  }
+
+  @Get('community/discussions')
+  @ApiOperation({ summary: 'Get community discussions for students' })
+  async getCommunityDiscussions(@Query('isSolved') isSolved?: string) {
+    const isSolvedBool = isSolved === 'true' ? true : isSolved === 'false' ? false : undefined;
+    return this.academyService.getCommunityDiscussions(isSolvedBool);
+  }
+
+  @Post('community/discussions')
+  @ApiOperation({ summary: 'Create discussion thread as student' })
+  async createCommunityDiscussion(@Req() req: any, @Body() body: any) {
+    return this.academyService.createCommunityDiscussion(req.user.userId || req.user.id, body);
+  }
+
+  @Post('community/discussions/:id/reply')
+  @ApiOperation({ summary: 'Reply to discussion thread' })
+  async replyToCommunityDiscussion(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.academyService.replyToCommunityDiscussion(req.user.userId || req.user.id, req.user.role, id, body);
+  }
+
+  @Get('qotd/today')
+  @ApiOperation({ summary: 'Get today question of the day for students' })
+  async getStudentQotd() {
+    return this.academyService.getStudentQotd();
+  }
+
+  @Post('qotd/:id/answer')
+  @ApiOperation({ summary: 'Submit QOTD answer as student' })
+  async answerStudentQotd(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.academyService.answerStudentQotd(req.user.userId || req.user.id, id, Number(body.selectedOptionIndex));
+  }
+
+  @Get('leaderboard')
+  @ApiOperation({ summary: 'Get XP leaderboard for students' })
+  async getStudentLeaderboard() {
+    return this.academyService.getStudentLeaderboard();
   }
 }

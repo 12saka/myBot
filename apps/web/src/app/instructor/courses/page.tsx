@@ -129,7 +129,7 @@ export default function InstructorCoursesPage() {
       return;
     }
     try {
-      await apiFetch(`/api/v2/admin/academy/courses/${selectedCourse.id}/lessons`, {
+      await apiFetch(`/api/v2/instructor/courses/${selectedCourse.id}/lessons`, {
         method: 'POST',
         body: JSON.stringify({
           title: lessonTitle.trim(),
@@ -295,6 +295,23 @@ export default function InstructorCoursesPage() {
                         <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                           Video Ready
                         </span>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!confirm(`Are you sure you want to delete "${les.title}"?`)) return;
+                            try {
+                              await apiFetch(`/api/v2/instructor/lessons/${les.id}`, { method: 'DELETE' });
+                              toast.success('Lesson deleted.');
+                              fetchCourses();
+                            } catch (err: any) {
+                              toast.error(err.message || 'Failed to delete lesson');
+                            }
+                          }}
+                          className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition"
+                          title="Delete Lesson"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   ))

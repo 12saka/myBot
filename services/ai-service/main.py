@@ -1104,31 +1104,32 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
 
     is_scalping = timeframe in ['1m', '3m', '5m', '15m', '30m']
     sym_upper = symbol.upper()
+    is_crypto = any(c in sym_upper for c in ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'])
     is_gold = 'XAU' in sym_upper or 'GOLD' in sym_upper
     is_us30 = 'US30' in sym_upper or 'DOW' in sym_upper
     is_nas100 = 'US100' in sym_upper or 'NAS' in sym_upper
     is_jpy = 'JPY' in sym_upper
-    is_forex = ('EUR' in sym_upper or 'GBP' in sym_upper or 'AUD' in sym_upper or 'CAD' in sym_upper) and not is_crypto
+    is_forex = any(fx in sym_upper for fx in ['EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'NZD', 'SEK', 'NOK']) and not is_crypto
 
     # Asset & timeframe calibrated stop distance
     if is_gold:
-        sl_dist = min(max(atr_val * 1.1, 1.80 if is_scalping else 3.50), 4.50 if is_scalping else 8.00)
+        sl_dist = min(max(atr_val * 1.25, 3.50 if is_scalping else 8.00), 8.50 if is_scalping else 25.00)
     elif is_us30:
-        sl_dist = min(max(atr_val * 1.1, 28.0 if is_scalping else 55.0), 65.0 if is_scalping else 120.0)
+        sl_dist = min(max(atr_val * 1.25, 35.0 if is_scalping else 75.0), 85.0 if is_scalping else 190.0)
     elif is_nas100:
-        sl_dist = min(max(atr_val * 1.1, 16.0 if is_scalping else 35.0), 40.0 if is_scalping else 75.0)
+        sl_dist = min(max(atr_val * 1.25, 22.0 if is_scalping else 45.0), 55.0 if is_scalping else 120.0)
     elif is_jpy:
-        sl_dist = min(max(atr_val * 1.1, 0.12 if is_scalping else 0.25), 0.30 if is_scalping else 0.60)
+        sl_dist = min(max(atr_val * 1.25, 0.25 if is_scalping else 0.45), 0.45 if is_scalping else 0.85)
     elif is_forex:
-        sl_dist = min(max(atr_val * 1.1, 0.0010 if is_scalping else 0.0022), 0.0022 if is_scalping else 0.0045)
+        sl_dist = min(max(atr_val * 1.25, 0.0022 if is_scalping else 0.0038), 0.0045 if is_scalping else 0.0075)
     elif is_crypto:
-        min_pct = 0.0035 if is_scalping else 0.008
-        max_pct = 0.0070 if is_scalping else 0.018
-        sl_dist = min(max(atr_val * 1.1, entry * min_pct), entry * max_pct)
+        min_pct = 0.0045 if is_scalping else 0.0080
+        max_pct = 0.0120 if is_scalping else 0.0250
+        sl_dist = min(max(atr_val * 1.25, entry * min_pct), entry * max_pct)
     else:
-        min_pct = 0.003 if is_scalping else 0.008
-        max_pct = 0.008 if is_scalping else 0.020
-        sl_dist = min(max(atr_val * 1.1, entry * min_pct), entry * max_pct)
+        min_pct = 0.004 if is_scalping else 0.008
+        max_pct = 0.012 if is_scalping else 0.025
+        sl_dist = min(max(atr_val * 1.25, entry * min_pct), entry * max_pct)
 
     if rule_direction == "BUY":
         stop_loss = entry - sl_dist
@@ -1144,7 +1145,7 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         tp2 = 0.0
 
     if 'tradingview_idea' not in dir() or not tradingview_idea:
-        tradingview_idea = f"PRO 7-Step Institutional {rule_direction} trade setup for {symbol}. Retest Entry: {entry:.2f}, TP1: {tp1:.2f} (1:2.0 R:R), TP2: {tp2:.2f} (1:3.2 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
+        tradingview_idea = f"PRO 7-Step Institutional {rule_direction} trade setup for {symbol}. Retest Entry: {entry:.2f}, TP1: {tp1:.2f} (1:1.5 R:R), TP2: {tp2:.2f} (1:2.6 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
 
     regime_detection = {
         "regime": regime_name,

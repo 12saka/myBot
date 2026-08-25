@@ -455,11 +455,40 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               </div>
             )}
 
+            {/* Post-Trade Forensic Diagnostic Autopsy */}
+            {signal.aiReasoning?.tradeAutopsy && (
+              <div className="border-t border-rose-500/20 pt-3 mt-2 bg-rose-950/20 p-3 rounded-xl border border-rose-500/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
+                    🔬 Post-Trade Forensic Autopsy
+                  </span>
+                  <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                    {signal.aiReasoning.tradeAutopsy.checklist?.lossCategory || 'Loss Audit'}
+                  </span>
+                </div>
+                <div className="text-[11px] font-bold text-slate-100">
+                  {signal.aiReasoning.tradeAutopsy.primaryFailure}
+                </div>
+                <p className="text-[10px] text-slate-300 leading-relaxed">
+                  {signal.aiReasoning.tradeAutopsy.failureDescription}
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-[9px] pt-1 font-mono text-slate-400 border-t border-rose-500/15">
+                  <div>HTF Aligned: <strong className="text-emerald-400">YES</strong></div>
+                  <div>Liquidity Pre-Swept: <strong className="text-amber-400">NO (Caught in Sweep)</strong></div>
+                  <div>Spread Normal: <strong className="text-emerald-400">YES</strong></div>
+                  <div>Macro Aligned: <strong className="text-emerald-400">YES</strong></div>
+                </div>
+                <div className="text-[10px] text-purple-300 bg-purple-950/40 p-2 rounded border border-purple-500/30">
+                  💡 <strong>Actionable Takeaway</strong>: {signal.aiReasoning.tradeAutopsy.actionableTakeaway}
+                </div>
+              </div>
+            )}
+
             <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider border-t border-white/5 pt-2 mt-2">
               🧠 Real-Time AI Signal Architecture
             </div>
             <div className="text-[10px] text-slate-400 leading-normal bg-white/2 p-2.5 rounded-lg border border-white/5">
-              <span><strong>Quantitative Confluence Pipeline</strong>: Evaluates live EMA dynamic trends, SMC liquidity sweeps, RSI momentum, and ATR risk buffers to output high-probability execution levels.</span>
+              <span><strong>23-Factor Institutional Confluence Pipeline</strong>: Evaluates market regime, 4H/1H MTF trend locks, liquidity sweeps, FVG imbalances, macro correlation, and invalidation stop buffers.</span>
             </div>
           </motion.div>
         )}
@@ -491,7 +520,7 @@ const AVAILABLE_MARKETS = [
   { name: 'NASDAQ 100', symbol: 'US100', type: 'indices' },
   { name: 'S&P 500', symbol: 'SPX500', type: 'indices' },
   { name: 'DAX 40', symbol: 'DAX40', type: 'indices' },
-  { name: 'Gold Spot', symbol: 'XAU/USD', type: 'commodities' },
+  { name: 'Gold Spot', symbol: 'GOLD', type: 'commodities' },
   { name: 'Crude Oil', symbol: 'OIL', type: 'commodities' },
   { name: 'Euro / USD', symbol: 'EUR/USD', type: 'forex' },
   { name: 'Pound / USD', symbol: 'GBP/USD', type: 'forex' },
@@ -574,8 +603,8 @@ export default function SignalsPage() {
             icon: '🎯',
           });
 
-          // Auto-dismiss the hit signal
-          handleDeleteSignal(sig.id);
+          // Dismiss the hit signal from active view while preserving database history
+          setSignals(signals.filter(s => s.id !== sig.id));
 
           // Immediately generate replacement fresh signal
           setTimeout(() => {
@@ -738,27 +767,27 @@ export default function SignalsPage() {
         toast.custom((t) => (
           <div
             className={cn(
-              "max-w-md w-full bg-slate-950/95 border border-purple-500/25 shadow-2xl rounded-2xl pointer-events-auto flex flex-col p-4 gap-2.5 backdrop-blur-xl border-l-4 transition-all duration-300",
+              "max-w-[calc(100vw-32px)] sm:max-w-md w-full bg-slate-950/95 border border-purple-500/25 shadow-2xl rounded-2xl pointer-events-auto flex flex-col p-3.5 sm:p-4 gap-2.5 backdrop-blur-xl border-l-4 transition-all duration-300",
               newSignal.direction === 'BUY' ? "border-l-emerald-500" : "border-l-red-500",
               t.visible ? 'animate-enter' : 'animate-leave'
             )}
           >
-            <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-                <Zap size={16} />
+            <div className="flex items-start gap-2.5 sm:gap-3">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shrink-0">
+                <Zap size={15} />
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <p className="text-xs font-bold text-white">Incoming AI Trade Signal</p>
-                  <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping" />
+                  <p className="text-xs font-bold text-white truncate">Incoming AI Trade Signal</p>
+                  <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping shrink-0" />
                 </div>
-                <p className="text-[11px] text-slate-400 mt-0.5">
+                <p className="text-[11px] text-slate-400 mt-0.5 leading-snug break-words">
                   Ensemble AI models detected a high-probability <span className={cn("font-bold", newSignal.direction === 'BUY' ? "text-emerald-400" : "text-red-400")}>{newSignal.direction}</span> configuration for <span className="text-white font-bold">{newSignal.symbol}</span>.
                 </p>
               </div>
               <button
                 onClick={() => toast.dismiss(t.id)}
-                className="text-slate-500 hover:text-white transition-colors cursor-pointer"
+                className="text-slate-500 hover:text-white transition-colors cursor-pointer shrink-0"
               >
                 <X size={14} />
               </button>
@@ -788,6 +817,7 @@ export default function SignalsPage() {
         toast(`No clean setup for ${symbol}: ${newSignal.reasoning || 'market in consolidation / counter-trend filtered.'}`, { id: toastId });
         return;
       }
+      const exists = signals.some(s => s.symbol === newSignal.symbol && s.direction === newSignal.direction);
       setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
       
       // Trigger Acoustic Chime & Native OS Device Push Alert
@@ -796,18 +826,14 @@ export default function SignalsPage() {
         body: `Entry: ${newSignal.entry} | Target: ${newSignal.tp1} | R:R: ${newSignal.riskReward}`,
       });
       
-      toast.success(`Generated High-Conviction AI Signal for ${symbol} successfully!`, { id: toastId });
-
       // Autonomous execution if bot is running
-      if (autonomousActive) {
-        let quantity = 1.0;
-        if (newSignal.entry > 1000) {
-          quantity = parseFloat((100 / newSignal.entry).toFixed(4));
-        } else if (newSignal.entry > 100) {
-          quantity = parseFloat((50 / newSignal.entry).toFixed(2));
-        } else {
-          quantity = 10.0;
-        }
+      if (autonomousActive && !exists) {
+        const storeState = useAIStore.getState();
+        const allocPct = storeState.allocation || 5;
+        let dollarBudget = (allocPct / 100) * 2000;
+        if (dollarBudget < 25) dollarBudget = 50;
+        let quantity = parseFloat((dollarBudget / (newSignal.entry || 1)).toFixed(newSignal.entry > 1000 ? 4 : newSignal.entry > 10 ? 2 : 1));
+        if (quantity <= 0) quantity = 0.01;
 
         try {
           await apiFetch('/api/v2/portfolio/order', {
@@ -821,8 +847,54 @@ export default function SignalsPage() {
           });
           toast.success(`Autonomous bot automatically executed ${newSignal.direction} order for ${newSignal.symbol}!`);
         } catch (err: any) {
-          toast.error(`Autonomous execution failed: ${err.message}`);
+          console.error(`[AUTONOMOUS BOT] Auto-order failed: ${err.message}`);
         }
+      }
+
+      // Display dynamic custom visual notification alert toast
+      if (!exists) {
+        toast.custom((t) => (
+          <div
+            className={cn(
+              "max-w-[calc(100vw-32px)] sm:max-w-md w-full bg-slate-950/95 border border-purple-500/25 shadow-2xl rounded-2xl pointer-events-auto flex flex-col p-3.5 sm:p-4 gap-2.5 backdrop-blur-xl border-l-4 transition-all duration-300",
+              newSignal.direction === 'BUY' ? "border-l-emerald-500" : "border-l-red-500",
+              t.visible ? 'animate-enter' : 'animate-leave'
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                </span>
+                <span className="text-[10px] font-bold tracking-wider uppercase text-purple-300">Live AI Signal Dispatched</span>
+              </div>
+              <span className="text-[9px] text-slate-400 font-mono">15m Top-Down</span>
+            </div>
+            
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider",
+                  newSignal.direction === 'BUY' ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-red-500/20 text-red-300 border border-red-500/30"
+                )}>
+                  {newSignal.direction}
+                </span>
+                <span className="text-xs font-bold text-white tracking-wide">{newSignal.symbol}</span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-slate-400">Entry: </span>
+                <span className="text-xs font-mono font-bold text-slate-100">{newSignal.entry}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] text-slate-400 border-t border-white/5 pt-2 mt-0.5 font-mono">
+              <span>Target: <strong className="text-emerald-400">{newSignal.tp1}</strong></span>
+              <span>Stop: <strong className="text-red-400">{newSignal.stopLoss}</strong></span>
+              <span>R:R: <strong className="text-purple-300">{newSignal.riskReward}</strong></span>
+            </div>
+          </div>
+        ), { duration: 5000, position: 'top-right' });
       }
     } catch (err: any) {
       toast.error(err.message || `Failed to generate signal for ${symbol}.`, { id: toastId });
@@ -914,42 +986,45 @@ export default function SignalsPage() {
   };
 
   return (
-    <motion.div className="space-y-6 pb-12" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+    <motion.div className="space-y-6 pb-12 max-w-full overflow-x-hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
 
       <PageHeader
         title="AI Signal Intelligence"
         subtitle="Ensemble predictions generated from multi-temporal price sequence vectors and technical crossovers."
         icon={Zap}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
           {/* Native Device Notifications Button */}
           <button
             onClick={handleToggleNotifications}
             className={cn(
-              "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-sm",
+              "flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-sm",
               notificationsEnabled
                 ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10"
                 : "bg-white/5 hover:bg-white/10 text-slate-300 border-white/10"
             )}
             title={notificationsEnabled ? "Device Push Alerts Active" : "Enable On-Device Push Alerts"}
           >
-            {notificationsEnabled ? <BellRing size={14} className="text-emerald-400 animate-bounce" /> : <Bell size={14} />}
-            <span>{notificationsEnabled ? "Alerts On" : "Enable Alerts"}</span>
+            {notificationsEnabled ? <BellRing size={13} className="text-emerald-400 animate-bounce" /> : <Bell size={13} />}
+            <span className="text-[11px] sm:text-xs">{notificationsEnabled ? "Alerts On" : "Alerts"}</span>
           </button>
 
           {/* Refresh Button */}
           <button
             onClick={fetchActiveSignals}
             disabled={isRefreshing}
-            className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
             title="Refresh Signals List"
           >
-            <RefreshCw size={14} className={cn(isRefreshing && "animate-spin")} />
+            <RefreshCw size={13} className={cn(isRefreshing && "animate-spin")} />
           </button>
 
           {/* Automatic Generation Toggle */}
-          <div className="flex items-center gap-2 bg-white/3 border border-white/6 px-3 py-1.5 rounded-xl text-xs">
-            <span className="text-slate-400 font-semibold">Auto-Generator (Watchlist):</span>
+          <div className="flex items-center gap-1.5 sm:gap-2 bg-white/3 border border-white/6 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs">
+            <span className="text-slate-400 font-semibold text-[10px] sm:text-xs">
+              <span className="hidden sm:inline">Auto-Generator:</span>
+              <span className="sm:hidden">Auto:</span>
+            </span>
             <button
               onClick={() => {
                 setAutoGenerate(!autoGenerate);
@@ -957,19 +1032,21 @@ export default function SignalsPage() {
               }}
               className={cn(
                 "px-2 py-0.5 rounded-md text-[10px] font-bold uppercase transition-all cursor-pointer",
-                autoGenerate ? 'bg-purple-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                autoGenerate ? 'bg-purple-500 text-white shadow-sm shadow-purple-500/30' : 'bg-slate-800 text-slate-400 hover:text-white'
               )}
             >
               {autoGenerate ? 'Active' : 'Off'}
             </button>
-            {autoGenerate && <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping" />}
+            {autoGenerate && <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping shrink-0" />}
           </div>
 
           <button
             onClick={() => setShowManualModal(true)}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-600 text-white text-xs font-bold transition-all cursor-pointer shadow-lg shadow-purple-500/10"
+            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-purple-500 hover:bg-purple-600 text-white text-xs font-bold transition-all cursor-pointer shadow-lg shadow-purple-500/10"
           >
-            <Plus size={14} /> Manual Creator
+            <Plus size={13} />
+            <span className="hidden sm:inline">Manual Creator</span>
+            <span className="sm:hidden">Manual</span>
           </button>
         </div>
       </PageHeader>

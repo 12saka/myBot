@@ -10,6 +10,12 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 export class BrokersController {
   constructor(private readonly brokersService: BrokersService) {}
 
+  @Get('directory')
+  @ApiOperation({ summary: 'Get list of top supported brokers with authentic servers, icons, and leverage' })
+  getDirectory() {
+    return this.brokersService.getBrokerDirectory();
+  }
+
   @Get('accounts')
   @ApiOperation({ summary: 'Get all connected broker accounts, summary balance, and live/demo split' })
   async getAccounts(@Request() req: any) {
@@ -17,9 +23,43 @@ export class BrokersController {
   }
 
   @Post('connect')
-  @ApiOperation({ summary: 'Connect new trading account (JustMarkets, FBS, Exness, XM, IC Markets, etc.)' })
+  @ApiOperation({ summary: 'Connect new trading account (FBS, Exness, JustMarkets, XM, IC Markets, etc.)' })
   async connectBroker(@Request() req: any, @Body() body: any) {
     return this.brokersService.connectBroker(req.user.userId || req.user.id, body);
+  }
+
+  @Post(':id/sync')
+  @ApiOperation({ summary: 'Synchronize live account metrics and open positions' })
+  async syncBrokerAccount(@Request() req: any, @Param('id') id: string) {
+    return this.brokersService.syncBroker(req.user.userId || req.user.id, id);
+  }
+
+  @Post(':id/trade')
+  @ApiOperation({ summary: 'Execute 1-Click Market, Limit, or Stop order directly on connected broker account' })
+  async executeTrade(@Request() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.brokersService.executeTrade(req.user.userId || req.user.id, id, body);
+  }
+
+  @Post(':id/positions/:ticket/close')
+  @ApiOperation({ summary: 'Close an open position (full or partial lot size)' })
+  async closePosition(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('ticket') ticket: string,
+    @Body() body: any,
+  ) {
+    return this.brokersService.closePosition(req.user.userId || req.user.id, id, ticket, body);
+  }
+
+  @Patch(':id/positions/:ticket/modify')
+  @ApiOperation({ summary: 'Modify Stop Loss and Take Profit protection levels for an active position' })
+  async modifyPosition(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('ticket') ticket: string,
+    @Body() body: any,
+  ) {
+    return this.brokersService.modifyPosition(req.user.userId || req.user.id, id, ticket, body);
   }
 
   @Patch(':id/permissions')

@@ -47,6 +47,24 @@ export class InstructorController {
     return this.instructorService.deleteCourse(req.user.userId, req.user.role, id);
   }
 
+  @Post('courses/:id/lessons')
+  @ApiOperation({ summary: 'Add video lesson to instructor course' })
+  async addLessonToCourse(@Req() req: any, @Param('id') courseId: string, @Body() body: any) {
+    return this.instructorService.addLessonToCourse(req.user.userId, req.user.role, courseId, body);
+  }
+
+  @Patch('lessons/:id')
+  @ApiOperation({ summary: 'Update lesson content & video' })
+  async updateLesson(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.instructorService.updateLesson(req.user.userId, req.user.role, id, body);
+  }
+
+  @Delete('lessons/:id')
+  @ApiOperation({ summary: 'Delete lesson from course' })
+  async deleteLesson(@Req() req: any, @Param('id') id: string) {
+    return this.instructorService.deleteLesson(req.user.userId, req.user.role, id);
+  }
+
   @Get('assignments')
   @ApiOperation({ summary: 'Get instructor homework assignments & submission counts' })
   async getAssignments(@Req() req: any) {

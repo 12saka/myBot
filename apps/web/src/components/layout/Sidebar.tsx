@@ -8,7 +8,7 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle
+  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle, Monitor
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
@@ -20,6 +20,7 @@ const NAV_GROUPS = [
     label: 'Core',
     items: [
       { href: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
+      { href: '/terminal',   label: 'MT5 Terminal', icon: Monitor          },
       { href: '/markets',    label: 'Markets',      icon: TrendingUp       },
       { href: '/signals',    label: 'AI Signals',   icon: Zap              },
       { href: '/portfolio',  label: 'Portfolio',    icon: Briefcase        },

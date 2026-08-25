@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { InstructorCommunityService } from '../instructor/instructor-community.service';
 
 @Injectable()
 export class AcademyService implements OnModuleInit {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly communityService: InstructorCommunityService,
+  ) {}
 
   private getQuestionChoices(options: any): string[] {
     if (Array.isArray(options)) return options.map((choice) => String(choice));
@@ -945,5 +949,29 @@ export class AcademyService implements OnModuleInit {
         gradedBy: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } },
       },
     });
+  }
+
+  getCommunityDiscussions(isSolved?: boolean) {
+    return this.communityService.getDiscussions(isSolved);
+  }
+
+  createCommunityDiscussion(userId: string, body: any) {
+    return this.communityService.createDiscussion(userId, body);
+  }
+
+  replyToCommunityDiscussion(userId: string, userRole: string, id: string, body: any) {
+    return this.communityService.replyToDiscussion(userId, userRole, id, body);
+  }
+
+  getStudentQotd() {
+    return this.communityService.getTodayQotd();
+  }
+
+  answerStudentQotd(userId: string, id: string, selectedOptionIndex: number) {
+    return this.communityService.answerQotd(userId, id, selectedOptionIndex);
+  }
+
+  getStudentLeaderboard() {
+    return this.communityService.getWeeklyLeaderboard();
   }
 }

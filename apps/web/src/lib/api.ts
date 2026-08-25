@@ -54,7 +54,7 @@ export const normalizeMarketSymbol = (symbol: string) => {
   const upper = (symbol || '').toUpperCase().trim();
   const base = upper.replace('/USD', '');
   if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(base)) return `${base}/USD`;
-  if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(upper)) return 'XAU/USD';
+  if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(upper)) return 'GOLD';
   if (['EURUSD', 'EUR/USD'].includes(upper)) return 'EUR/USD';
   if (['GBPUSD', 'GBP/USD'].includes(upper)) return 'GBP/USD';
   if (['USDJPY', 'USD/JPY'].includes(upper)) return 'USD/JPY';
@@ -105,7 +105,7 @@ export function getAssetStrategyName(symbol: string, strategyKey?: string): stri
     return 'BoE Cable Liquidity Sweep & Retest';
   }
   if (strategyKey === 'commodity-gold-yields' || upper.includes('GOLD') || upper.includes('XAU')) {
-    return 'XAU/USD Real Yields & Safe-Haven Reversal';
+    return 'Gold Spot Institutional Flow & Safe-Haven Reversal';
   }
   if (strategyKey === 'commodity-oil-opec' || upper.includes('OIL') || upper.includes('WTI') || upper.includes('CRUDE')) {
     return 'WTI Crude Inventory & OPEC+ Supply Vector';

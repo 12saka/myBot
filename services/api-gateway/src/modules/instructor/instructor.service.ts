@@ -514,4 +514,75 @@ export class InstructorService {
   async deleteQuiz(userId: string, id: string) {
     return this.prisma.quiz.delete({ where: { id } });
   }
+
+  // Lesson Management for Instructor Courses
+  async addLessonToCourse(userId: string, userRole: string, courseId: string, body: any) {
+    const course = await this.prisma.course.findUnique({ where: { id: courseId } });
+    if (!course) throw new NotFoundException('Course not found');
+
+    const isMasterAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
+    if (!isMasterAdmin && course.instructorId && course.instructorId !== userId) {
+      throw new ForbiddenException('Not authorized to add lessons to this course');
+    }
+
+    const lessonCount = await this.prisma.lesson.count({ where: { courseId } });
+    let content = body.content || '';
+    if (body.videoUrl) {
+      content = `[VIDEO_URL:${body.videoUrl}]\n\n${content}`;
+    }
+
+    return this.prisma.lesson.create({
+      data: {
+        courseId,
+        title: body.title,
+        content,
+        orderIndex: body.orderIndex ?? lessonCount + 1,
+      },
+    });
+  }
+
+  async updateLesson(userId: string, userRole: string, lessonId: string, body: any) {
+    const lesson = await this.prisma.lesson.findUnique({
+      where: { id: lessonId },
+      include: { course: true },
+    });
+    if (!lesson) throw new NotFoundException('Lesson not found');
+
+    const isMasterAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
+    if (!isMasterAdmin && lesson.course.instructorId && lesson.course.instructorId !== userId) {
+      throw new ForbiddenException('Not authorized to modify this lesson');
+    }
+
+    let content = body.content !== undefined ? body.content : undefined;
+    if (body.videoUrl !== undefined && content !== undefined) {
+      content = content.replace(/\[VIDEO_URL:[^\]]+\]/gi, '').trim();
+      if (body.videoUrl) {
+        content = `[VIDEO_URL:${body.videoUrl}]\n\n${content}`;
+      }
+    }
+
+    return this.prisma.lesson.update({
+      where: { id: lessonId },
+      data: {
+        ...(body.title && { title: body.title }),
+        ...(content !== undefined && { content }),
+        ...(body.orderIndex !== undefined && { orderIndex: body.orderIndex }),
+      },
+    });
+  }
+
+  async deleteLesson(userId: string, userRole: string, lessonId: string) {
+    const lesson = await this.prisma.lesson.findUnique({
+      where: { id: lessonId },
+      include: { course: true },
+    });
+    if (!lesson) throw new NotFoundException('Lesson not found');
+
+    const isMasterAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
+    if (!isMasterAdmin && lesson.course.instructorId && lesson.course.instructorId !== userId) {
+      throw new ForbiddenException('Not authorized to delete this lesson');
+    }
+
+    return this.prisma.lesson.delete({ where: { id: lessonId } });
+  }
 }

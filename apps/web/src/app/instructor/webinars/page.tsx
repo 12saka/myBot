@@ -36,6 +36,7 @@ export default function InstructorWebinarsPage() {
   const [passcode, setPasscode] = useState('');
   const [joinUrl, setJoinUrl] = useState('');
   const [startUrl, setStartUrl] = useState('');
+  const [recordingUrl, setRecordingUrl] = useState('');
 
   const fetchWebinars = async () => {
     setLoading(true);
@@ -68,6 +69,7 @@ export default function InstructorWebinarsPage() {
     setPasscode(randPass);
     setJoinUrl(`https://zoom.us/j/${randMeetingId}?pwd=${randPass}`);
     setStartUrl(`https://zoom.us/s/${randMeetingId}?pwd=${randPass}`);
+    setRecordingUrl('');
     setModalOpen(true);
   };
 
@@ -83,6 +85,7 @@ export default function InstructorWebinarsPage() {
     setPasscode(w.passcode || '');
     setJoinUrl(w.joinUrl || w.meetingUrl || '');
     setStartUrl(w.startUrl || '');
+    setRecordingUrl(w.recordingUrl || '');
     setModalOpen(true);
   };
 
@@ -103,6 +106,7 @@ export default function InstructorWebinarsPage() {
         passcode: passcode.trim() || undefined,
         joinUrl: joinUrl.trim() || undefined,
         startUrl: startUrl.trim() || undefined,
+        recordingUrl: recordingUrl.trim() || undefined,
         status: 'SCHEDULED',
       };
 
@@ -367,6 +371,17 @@ export default function InstructorWebinarsPage() {
                   value={joinUrl}
                   onChange={(e) => setJoinUrl(e.target.value)}
                   placeholder="https://zoom.us/j/..."
+                  className="w-full p-2.5 bg-slate-950 border border-teal-500/20 rounded-xl text-white font-mono text-[11px]"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-semibold block mb-1">Recording URL (Optional)</label>
+                <input
+                  type="text"
+                  value={recordingUrl}
+                  onChange={(e) => setRecordingUrl(e.target.value)}
+                  placeholder="https://zoom.us/rec/..."
                   className="w-full p-2.5 bg-slate-950 border border-teal-500/20 rounded-xl text-white font-mono text-[11px]"
                 />
               </div>

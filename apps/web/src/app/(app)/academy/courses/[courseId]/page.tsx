@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 import {
   BookOpen, Play, CheckCircle2, ArrowLeft,
   Award, Clock, ChevronRight, Loader2, Sparkles, Video,
-  HelpCircle, AlertTriangle, ShieldCheck, XCircle, BrainCircuit
+  HelpCircle, AlertTriangle, ShieldCheck, XCircle, BrainCircuit,
+  FileCheck2, ExternalLink, Send
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
@@ -416,6 +417,80 @@ export default function CourseDetailPage() {
                   <span>This lesson is awaiting published quiz questions.</span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Course Assignments & Homework */}
+          {assignments.length > 0 && (
+            <div className="glass-card rounded-2xl p-6 border border-white/5 space-y-6 mt-6">
+              <div className="flex items-center gap-2 border-b border-white/5 pb-4">
+                <FileCheck2 className="w-5 h-5 text-indigo-400" />
+                <h2 className="text-lg font-bold text-white">Course Assignments & Homework</h2>
+              </div>
+              <div className="space-y-4">
+                {assignments.map(assignment => (
+                  <div key={assignment.id} className="p-5 rounded-xl bg-slate-900/60 border border-indigo-500/20 space-y-4">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h3 className="text-sm font-bold text-white">{assignment.title}</h3>
+                        <p className="text-xs text-slate-400 mt-1">{assignment.instructions}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <Badge variant="blue" size="xs">Max Score: {assignment.maxScore}</Badge>
+                        <Badge variant="purple" size="xs">+{assignment.xpReward} XP</Badge>
+                      </div>
+                    </div>
+                    <div className="pt-4 border-t border-white/5 space-y-3">
+                      <h4 className="text-xs font-semibold text-slate-300">Submit Your Work</h4>
+                      <textarea
+                        value={submittingAssignmentId === assignment.id ? homeworkText : ''}
+                        onChange={(e) => {
+                          if (submittingAssignmentId !== assignment.id) {
+                            setHomeworkText(e.target.value);
+                            setSubmittingAssignmentId(assignment.id);
+                          } else {
+                            setHomeworkText(e.target.value);
+                          }
+                        }}
+                        placeholder="Type your notes or homework text here..."
+                        rows={3}
+                        className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-indigo-500/50"
+                      />
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 flex items-center bg-slate-950 border border-white/10 rounded-xl px-3 py-2 focus-within:border-indigo-500/50">
+                          <ExternalLink className="w-4 h-4 text-slate-500 mr-2" />
+                          <input
+                            type="url"
+                            value={submittingAssignmentId === assignment.id ? homeworkLink : ''}
+                            onChange={(e) => {
+                              if (submittingAssignmentId !== assignment.id) {
+                                setHomeworkLink(e.target.value);
+                                setSubmittingAssignmentId(assignment.id);
+                              } else {
+                                setHomeworkLink(e.target.value);
+                              }
+                            }}
+                            placeholder="Link to your work (e.g. Google Doc, TradingView)"
+                            className="w-full bg-transparent border-none text-xs text-white focus:outline-none"
+                          />
+                        </div>
+                        <button
+                          onClick={() => handleSubmitHomework(assignment.id)}
+                          disabled={submittingAssignmentId === assignment.id}
+                          className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-2 transition disabled:opacity-50"
+                        >
+                          {submittingAssignmentId === assignment.id ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Send size={14} />
+                          )}
+                          Submit
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
