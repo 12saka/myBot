@@ -137,6 +137,32 @@ const DEFAULT_BROKERS: BrokerDirectoryItem[] = [
     regulation: 'CySEC, MISA',
     spreadFrom: '0.6 pips',
   },
+  {
+    id: 'hfm',
+    name: 'HFM (HotForex)',
+    brandColor: '#b91c1c',
+    badge: 'Premium Multi-Asset',
+    platforms: ['MT5', 'MT4'],
+    accountTypes: ['Premium', 'Pro', 'Zero', 'Cent'],
+    defaultLeverage: '1:500',
+    maxLeverage: '1:2000',
+    servers: ['HFMarketsSC-Live', 'HFMarketsSC-Live2', 'HFMarketsSC-Demo'],
+    regulation: 'FCA, CySEC, FSCA, DFSA',
+    spreadFrom: '0.1 pips',
+  },
+  {
+    id: 'fxtm',
+    name: 'FXTM',
+    brandColor: '#f97316',
+    badge: 'Micro & ECN Execution',
+    platforms: ['MT5', 'MT4'],
+    accountTypes: ['Advantage', 'Advantage Plus', 'Micro'],
+    defaultLeverage: '1:500',
+    maxLeverage: '1:2000',
+    servers: ['ForexTimeFXTM-Live', 'ForexTimeFXTM-Live02', 'ForexTimeFXTM-Demo'],
+    regulation: 'FCA, CySEC, FSCA',
+    spreadFrom: '0.0 pips',
+  },
 ];
 
 export function BrokerConnectModal({ isOpen, onClose, onSuccess }: BrokerConnectModalProps) {

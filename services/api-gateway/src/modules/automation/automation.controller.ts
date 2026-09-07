@@ -36,4 +36,14 @@ export class AutomationController {
   async getBacktestResults(@Query('strategy') strategyName: string) {
     return this.automationService.getBacktestResults(strategyName || '');
   }
+
+  @Post('emergency-kill-switch')
+  async emergencyKillSwitch(@Request() req: any) {
+    return this.automationService.emergencyKillSwitch(req.user.userId || req.user.id);
+  }
+
+  @Post('break-even/check')
+  async checkBreakEven(@Request() req: any) {
+    return this.automationService.checkAndApplyBreakEven(req.user.userId || req.user.id);
+  }
 }

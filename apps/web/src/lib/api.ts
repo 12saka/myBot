@@ -184,7 +184,12 @@ export function mapSignal(item: any): AISignal {
     ? 'N/A' 
     : `1:${Number(item.riskRewardRatio ?? (Math.abs(tp1 - entry) / (Math.abs(entry - stopLoss) || 1))).toFixed(1)}`;
 
-  const signalGrade = reasoning.signal_grade || item.signalGrade || (confidence >= 85 ? 'A+ Institutional' : confidence >= 75 ? 'A Premium' : 'B+ Standard');
+  const signalGrade = reasoning.signal_grade || item.signalGrade || (
+    confidence >= 85 ? 'A+ Setup (High Conviction Confluence)' :
+    confidence >= 75 ? 'A Setup (Institutional Confluence)' :
+    confidence >= 68 ? 'B+ Setup (Standard Confluence)' :
+    confidence >= 60 ? 'B Setup (Scalp Confluence)' : 'C Setup (Speculative)'
+  );
 
   return {
     id: item.id || `sig-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,

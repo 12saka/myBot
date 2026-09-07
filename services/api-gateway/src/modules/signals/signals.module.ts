@@ -6,6 +6,8 @@ import { generateHmacSignature } from '../../utils/hmac-signer';
 import { Interval } from '@nestjs/schedule';
 import { EntitlementService } from '../subscription/entitlement.service';
 import { SubscriptionModule } from '../subscription/subscription.module';
+import { AutomationModule } from '../automation/automation.module';
+import { AutomationService } from '../automation/automation.service';
 import axios from 'axios';
 
 @ApiTags('signals')
@@ -14,6 +16,7 @@ export class SignalsController implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly entitlementService: EntitlementService,
+    private readonly automationService: AutomationService,
   ) {}
 
   async onModuleInit() {
@@ -122,13 +125,13 @@ export class SignalsController implements OnModuleInit {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Request generation of a fresh AI trading signal for a specific market' })
-  async generateSignal(@Req() req: any, @Body() dto: { symbol: string; interval?: string }) {
+  async generateSignal(@Req() req: any, @Body() dto: { symbol: string; interval?: string; forceFresh?: boolean }) {
     const userId = req.user?.userId;
     if (userId) {
       await this.entitlementService.checkAndConsumeSignal(userId);
     }
     const symbol = this.normalizeSymbol(dto.symbol);
-    return this.generateSignalRequest(symbol, dto.interval || '1h', true, userId);
+    return this.generateSignalRequest(symbol, dto.interval || '15m', dto.forceFresh ?? false, userId);
   }
 
   private normalizeSymbol(symbol: string): string {
@@ -204,26 +207,28 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
-    // Check if we already have a FRESH ACTIVE or RUNNING signal for this symbol in database
-    if (!forceFresh) {
-      const existingSignal = await this.prisma.signal.findFirst({
-        where: {
-          symbol,
-          expiresAt: {
-            gt: new Date(),
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+    // 2. Strict Signal Immutability & Locking Check:
+    // If an active, unexpired signal exists in database, LOCK IT.
+    // Signals must NEVER mutate their grade or entry price within their active lifetime,
+    // protecting user execution and eliminating grade flipping!
+    const existingActiveSignal = await this.prisma.signal.findFirst({
+      where: {
+        symbol,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-      if (existingSignal) {
-        const reasoning = (existingSignal.aiReasoning as any) || {};
-        const status = reasoning.status || 'ACTIVE';
-        const ageMs = Date.now() - new Date(existingSignal.createdAt).getTime();
-        // Only return cached signal if under 15 minutes old and active
-        if (['ACTIVE', 'RUNNING'].includes(status) && reasoning.timeframe === interval && ageMs < 15 * 60 * 1000) {
-          return existingSignal;
-        }
+    if (existingActiveSignal) {
+      const reasoning = (existingActiveSignal.aiReasoning as any) || {};
+      const status = reasoning.status || 'ACTIVE';
+      const ageMs = Date.now() - new Date(existingActiveSignal.createdAt).getTime();
+      const isStillFresh = ageMs < 45 * 60 * 1000; // 45-minute strict lock window
+
+      // Return locked signal if unexpired, active, and not explicitly force-bypassed
+      if (!forceFresh && ['ACTIVE', 'RUNNING'].includes(status) && isStillFresh) {
+        console.log(`[SIGNALS GATEWAY] Returning locked immutable signal for ${symbol} (Grade: ${reasoning.signal_grade || 'A'}, Age: ${(ageMs / 1000).toFixed(0)}s)`);
+        return existingActiveSignal;
       }
     }
 
@@ -341,6 +346,15 @@ export class SignalsController implements OnModuleInit {
         orderBy: { createdAt: 'desc' },
       });
 
+      const calculatedWinProb = Math.min(95, Math.max(35, Math.round(Number(res.data.confidence ?? 0.50) * 100)));
+      const signalGrade = res.data.signal_grade || res.data.grade || this.computeSignalGrade(calculatedWinProb);
+
+      const entryType = res.data.entry_type || 'MARKET_NOW';
+      const entryZone = res.data.entry_zone || `${(res.data.entry * 0.999).toFixed(2)} - ${(res.data.entry * 1.001).toFixed(2)}`;
+      const entryCondition = res.data.entry_condition || (entryType === 'MARKET_NOW'
+        ? `Execute ${finalDirection} directly at Market ($${res.data.entry}). Confirmed setup.`
+        : `Place ${entryType} order at $${res.data.entry} [Zone: ${entryZone}]. Wait for entry.`);
+
       const signalPayload = {
         userId: userId || null,
         strategyKey,
@@ -351,7 +365,7 @@ export class SignalsController implements OnModuleInit {
         takeProfit1: res.data.take_profit_1,
         takeProfit2: res.data.take_profit_2,
         riskRewardRatio: parseFloat((Math.abs(res.data.take_profit_1 - res.data.entry) / (Math.abs(res.data.entry - res.data.stop_loss) || 1)).toFixed(1)),
-        winProbability: Math.min(95, Math.max(35, Math.round(Number(res.data.confidence ?? 0.50) * 100))),
+        winProbability: calculatedWinProb,
         durationEstimate: interval === '1m' ? '1-5 mins (Scalping)' :
                           interval === '3m' ? '3-10 mins (Scalping)' :
                           interval === '5m' ? '5-15 mins (Scalping)' :
@@ -360,7 +374,12 @@ export class SignalsController implements OnModuleInit {
                           interval === '1h' ? '1-4 hours (Day Trade)' :
                           interval === '4h' ? '1-2 days' : '3-5 days',
         aiReasoning: { 
-          entry_type: res.data.entry_type || 'MARKET_NOW',
+          signal_grade: signalGrade,
+          is_locked: true,
+          locked_at: new Date().toISOString(),
+          entry_type: entryType,
+          entry_zone: entryZone,
+          entry_condition: entryCondition,
           indicators: res.data.indicators,
           explanation: res.data.ai_explanation,
           technicals: res.data.technicals,
@@ -379,17 +398,17 @@ export class SignalsController implements OnModuleInit {
         expiresAt: new Date(Date.now() + (interval === '1d' ? 3 * 24 : 1 * 4) * 60 * 60 * 1000), 
       };
 
-      let signal: any = null;
+      // Archive any previous active signals for this symbol rather than mutating them in-place
       if (existingActive) {
-        signal = await this.prisma.signal.update({
-          where: { id: existingActive.id },
-          data: signalPayload,
-        });
-      } else {
-        signal = await this.prisma.signal.create({
-          data: signalPayload,
+        await this.prisma.signal.updateMany({
+          where: { symbol: res.data.symbol, expiresAt: { gt: new Date() } },
+          data: { expiresAt: new Date() },
         });
       }
+
+      const signal = await this.prisma.signal.create({
+        data: signalPayload,
+      });
 
       return signal;
     } catch (err: any) {
@@ -455,10 +474,12 @@ export class SignalsController implements OnModuleInit {
         entryType,
         entryPrice,
         entryZone,
+        entryCondition,
         stopLoss,
         takeProfit1,
         takeProfit2,
         takeProfit3,
+        confidenceScore,
         calculatedWinProb,
         riskRewardRatio: customRR,
         signalGrade: customGrade,
@@ -515,6 +536,8 @@ export class SignalsController implements OnModuleInit {
         });
 
         const computedRR = customRR || parseFloat((Math.abs(takeProfit1 - entryPrice) / (Math.abs(entryPrice - stopLoss) || 1)).toFixed(1));
+        const finalConfidence = confidenceScore || calculatedWinProb || 75;
+        const finalGrade = customGrade || this.computeSignalGrade(finalConfidence, ema20, ema50, ema200, direction);
 
         const signalPayload = {
           symbol,
@@ -524,11 +547,17 @@ export class SignalsController implements OnModuleInit {
           takeProfit1,
           takeProfit2,
           riskRewardRatio: computedRR,
-          winProbability: calculatedWinProb,
+          winProbability: finalConfidence,
           durationEstimate,
           aiReasoning: {
+            signal_grade: finalGrade,
+            is_locked: true,
+            locked_at: new Date().toISOString(),
+            confidence_score: finalConfidence,
+            win_probability: calculatedWinProb || finalConfidence,
             entry_type: entryType,
             entry_zone: entryZone || `${(entryPrice * 0.999).toFixed(2)} - ${(entryPrice * 1.001).toFixed(2)}`,
+            entry_condition: entryCondition || (entryType === 'MARKET_NOW' ? `Execute ${direction} directly at Market ($${entryPrice.toFixed(2)})` : `Place ${entryType} at $${entryPrice.toFixed(2)} [Zone: ${entryZone}]`),
             take_profit_3: takeProfit3 || (direction === 'BUY' ? parseFloat((entryPrice + (Math.abs(takeProfit1 - entryPrice) * 2.2)).toFixed(2)) : parseFloat((entryPrice - (Math.abs(entryPrice - takeProfit1) * 2.2)).toFixed(2))),
             reasons_for: reasonsFor || [
               `EMA-20 (${ema20.toFixed(2)}) ${ema20 >= ema50 ? '>' : '<'} EMA-50 (${ema50.toFixed(2)}) structural alignment`,
@@ -587,19 +616,24 @@ export class SignalsController implements OnModuleInit {
             })(),
             timeframe: interval,
             status: 'ACTIVE',
-            signal_grade: customGrade || this.computeSignalGrade(calculatedWinProb, ema20, ema50, ema200, direction)
           },
           expiresAt: new Date(Date.now() + expirationMs),
         };
 
         if (existingActive) {
-          signal = await this.prisma.signal.update({
-            where: { id: existingActive.id },
-            data: signalPayload,
+          await this.prisma.signal.updateMany({
+            where: { symbol, expiresAt: { gt: new Date() } },
+            data: { expiresAt: new Date() },
           });
-        } else {
-          signal = await this.prisma.signal.create({
-            data: signalPayload,
+        }
+        signal = await this.prisma.signal.create({
+          data: signalPayload,
+        });
+
+        // Trigger autonomous broker auto-trade execution in background if signal is BUY/SELL
+        if (signal && ['BUY', 'SELL'].includes(signal.direction)) {
+          this.automationService.processSignalAutoTrade(signal as any).catch((err: any) => {
+            console.warn(`[AutoTrade Engine] Background dispatch notice for ${signal.symbol}: ${err.message}`);
           });
         }
       } catch (e: any) {
@@ -1271,13 +1305,78 @@ export class SignalsController implements OnModuleInit {
     return Math.min(92, Math.max(40, winProb));
   }
 
-  private computeSignalGrade(winProb: number, ema20: number, ema50: number, ema200: number, direction: string): string {
-    const tripleAligned = direction === 'BUY'
-      ? (ema20 > ema50 && ema50 > ema200)
-      : (ema20 < ema50 && ema50 < ema200);
-    if (winProb >= 80 && tripleAligned) return 'A (High Conviction)';
-    if (winProb >= 65) return 'B (Moderate Conviction)';
-    return 'C (Low Conviction — Caution)';
+  private calculatePrecisionEntry(
+    direction: 'BUY' | 'SELL',
+    currentPrice: number,
+    ema20: number,
+    vwap: number,
+    atr: number,
+    precision: number = 2
+  ): {
+    entryType: 'BUY_LIMIT' | 'SELL_LIMIT' | 'MARKET_NOW';
+    entryPrice: number;
+    entryZone: string;
+    entryCondition: string;
+  } {
+    const distFromEma = Math.abs(currentPrice - ema20);
+    const isExtended = distFromEma > (atr * 0.35);
+
+    if (direction === 'BUY') {
+      if (isExtended && currentPrice > ema20) {
+        // Price has extended higher — do not chase! Provide a BUY LIMIT on pullback
+        const limitPrice = parseFloat(Math.max(ema20, currentPrice - (atr * 0.30)).toFixed(precision));
+        const lower = (limitPrice - (atr * 0.12)).toFixed(precision);
+        const upper = (limitPrice + (atr * 0.12)).toFixed(precision);
+        return {
+          entryType: 'BUY_LIMIT',
+          entryPrice: limitPrice,
+          entryZone: `${lower} - ${upper}`,
+          entryCondition: `Wait for price pullback to institutional discount zone [${lower} - ${upper}]. Place BUY LIMIT at ${limitPrice}.`
+        };
+      } else {
+        const lower = (currentPrice - (atr * 0.10)).toFixed(precision);
+        const upper = (currentPrice + (atr * 0.10)).toFixed(precision);
+        return {
+          entryType: 'MARKET_NOW',
+          entryPrice: currentPrice,
+          entryZone: `${lower} - ${upper}`,
+          entryCondition: `Execute BUY directly at Market (${currentPrice.toFixed(precision)}). Price is confirmed at optimal accumulation floor.`
+        };
+      }
+    } else {
+      if (isExtended && currentPrice < ema20) {
+        // Price has dumped lower — provide a SELL LIMIT on relief retrace
+        const limitPrice = parseFloat(Math.min(ema20, currentPrice + (atr * 0.30)).toFixed(precision));
+        const lower = (limitPrice - (atr * 0.12)).toFixed(precision);
+        const upper = (limitPrice + (atr * 0.12)).toFixed(precision);
+        return {
+          entryType: 'SELL_LIMIT',
+          entryPrice: limitPrice,
+          entryZone: `${lower} - ${upper}`,
+          entryCondition: `Wait for price relief bounce to institutional premium zone [${lower} - ${upper}]. Place SELL LIMIT at ${limitPrice}.`
+        };
+      } else {
+        const lower = (currentPrice - (atr * 0.10)).toFixed(precision);
+        const upper = (currentPrice + (atr * 0.10)).toFixed(precision);
+        return {
+          entryType: 'MARKET_NOW',
+          entryPrice: currentPrice,
+          entryZone: `${lower} - ${upper}`,
+          entryCondition: `Execute SELL directly at Market (${currentPrice.toFixed(precision)}). Price is confirmed at optimal distribution ceiling.`
+        };
+      }
+    }
+  }
+
+  private computeSignalGrade(score: number, ema20?: number, ema50?: number, ema200?: number, direction?: string): string {
+    const tripleAligned = (direction && ema20 !== undefined && ema50 !== undefined && ema200 !== undefined)
+      ? (direction === 'BUY' ? (ema20 >= ema50 && ema50 >= ema200) : (ema20 <= ema50 && ema50 <= ema200))
+      : false;
+    if (score >= 85 || (score >= 80 && tripleAligned)) return 'A+ Setup (High Conviction Confluence)';
+    if (score >= 75) return 'A Setup (Institutional Confluence)';
+    if (score >= 68) return 'B+ Setup (Standard Confluence)';
+    if (score >= 60) return 'B Setup (Scalp Confluence)';
+    return 'C Setup (Speculative)';
   }
 
   private computeDynamicScores(rsi: number, ema20: number, ema50: number, ema200: number, entryPrice: number, vwap: number, direction: string): { momentum: number; volume: number; trend: number } {
@@ -2074,11 +2173,14 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     // Targets & Dynamic Risk-to-Reward Ratio (Timeframe Scaled & Adaptive Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const minPct = isScalp ? 0.0045 : 0.0080; // 0.45% - 0.80% minimum risk room
     const maxPct = isScalp ? 0.0120 : 0.0250; // 1.20% - 2.50% max risk room
-    const slDist = Math.min(Math.max(atr * 1.25, entryPrice * minPct), entryPrice * maxPct);
+    const slDist = Math.min(Math.max(atr * 1.25, effectiveEntry * minPct), effectiveEntry * maxPct);
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
     const swingSlice = candles.slice(-lookback);
@@ -2086,35 +2188,29 @@ export class SignalsController implements OnModuleInit {
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
-      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
-      : 'C Setup (Speculative)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
-    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated ${symbol} 12-Layer Crypto Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
@@ -2375,6 +2471,9 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(Math.max(atr * 1.25, isScalp ? 22 : 45), isScalp ? 55 : 120);
@@ -2385,35 +2484,29 @@ export class SignalsController implements OnModuleInit {
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
-      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
-      : 'C Setup (Speculative)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
-    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated US100 Institutional Tech Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
@@ -2674,6 +2767,9 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based for US30)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(Math.max(atr * 1.25, isScalp ? 35 : 75), isScalp ? 85 : 190);
@@ -2684,34 +2780,28 @@ export class SignalsController implements OnModuleInit {
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
-      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
-      : 'C Setup (Speculative)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
-    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated US30 12-Layer Industrial & Cyclical Value Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
@@ -2956,6 +3046,9 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     // Calculate Targets & Risk/Reward (Institutional Volatility & Structure-Based FX Protection)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = isJpy 
@@ -2969,35 +3062,29 @@ export class SignalsController implements OnModuleInit {
     const highestHigh = Math.max(...swingHighs);
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
-      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
-      : 'C Setup (Speculative)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.12)).toFixed(precision);
-    const entryZoneUpper = (entryPrice + (atr * 0.12)).toFixed(precision);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated EURUSD/FX Macro Intelligence Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at ${entryPrice.toFixed(precision)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss set at ${stopLoss.toFixed(precision)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(precision)),
       takeProfit1: parseFloat(takeProfit1.toFixed(precision)),
       takeProfit2: parseFloat(takeProfit2.toFixed(precision)),
@@ -3195,42 +3282,41 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const minPct = isScalp ? 0.004 : 0.008; // 0.4% - 0.8% minimum risk room
     const maxPct = isScalp ? 0.012 : 0.025; // 1.2% - 2.5% max risk room
-    const slDist = Math.min(Math.max(atr * 1.25, entryPrice * minPct), entryPrice * maxPct);
+    const slDist = Math.min(Math.max(atr * 1.25, effectiveEntry * minPct), effectiveEntry * maxPct);
 
     const lowestLow = Math.min(...recentLows);
     const highestHigh = Math.max(...recentHighs);
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
-    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated US Equities & Growth Engine evaluated ${symbol} during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
@@ -3433,6 +3519,9 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const isSpx = symbol.toUpperCase().includes('SPX');
     const slDist = isSpx 
@@ -3443,33 +3532,29 @@ export class SignalsController implements OnModuleInit {
     const highestHigh = Math.max(...recentHighs);
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
-    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated Broad Benchmark Index Engine evaluated ${symbol} during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at ${entryPrice.toFixed(2)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at ${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss set at ${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
@@ -3747,39 +3832,38 @@ export class SignalsController implements OnModuleInit {
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(Math.max(atr * 1.25, isScalp ? 0.25 : 0.45), isScalp ? 0.45 : 0.85);
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     // Structure Invalidation SL (Adaptive Session Swing Window)
     const swingSlice = candles.slice(-lookback);
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 75 ? 'A Setup (Institutional Confluence)'
-      : 'B Setup (Standard Confluence)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.12)).toFixed(precision);
-    const entryZoneUpper = (entryPrice + (atr * 0.12)).toFixed(precision);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated USDJPY Fed-BoJ Yield & Intervention Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). MoF Intervention Risk: ${interventionRiskLevel}. Primary bias: ${direction} at ${entryPrice.toFixed(precision)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). MoF Intervention Risk: ${interventionRiskLevel}. Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss set at ${stopLoss.toFixed(precision)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(precision)),
       takeProfit1: parseFloat(takeProfit1.toFixed(precision)),
       takeProfit2: parseFloat(takeProfit2.toFixed(precision)),
@@ -4090,6 +4174,9 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const effectiveEntry = precisionOrder.entryPrice;
+
     // 9. Exact Targets: Widened Structural SL for Gold ($5.00 min scalp, $12.00 min swing)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(
@@ -4103,33 +4190,26 @@ export class SignalsController implements OnModuleInit {
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
+      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
-    const effectiveSlDist = Math.abs(entryPrice - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 1.5) : entryPrice - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 2.6) : entryPrice - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? entryPrice + (effectiveSlDist * 3.8) : entryPrice - (effectiveSlDist * 3.8);
+    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - entryPrice) / Math.abs(entryPrice - stopLoss)).toFixed(1));
+    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
-    const signalGrade = confidenceScore >= 85 ? 'A+ Setup (High Conviction Confluence)'
-      : confidenceScore >= 76 ? 'A Setup (Institutional Confluence)'
-      : confidenceScore >= 68 ? 'B+ Setup (Standard Confluence)'
-      : confidenceScore >= 60 ? 'B Setup (Scalp Confluence)'
-      : 'C Setup (Speculative)';
-
-    const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
-    const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
+    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Institutional 12-Layer Confluence Engine evaluated XAUUSD setup during ${sessionName}. ` +
       `Data Source: ${goldSource}. Regime: ${regimeData.regime}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
+      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
       `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Intermarket Drivers: DXY ${dxy.price} (${dxy.trend}), US10Y ${us10y.yield}% (${us10y.trend}), VIX ${vix.level}. ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
-    const computedEvidence: any = this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2);
+    const computedEvidence: any = this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, effectiveEntry, stopLoss, direction, 2);
     computedEvidence.regime = regimeData.regime;
     computedEvidence.dxy = dxy;
     computedEvidence.us10y = us10y;
@@ -4139,9 +4219,10 @@ export class SignalsController implements OnModuleInit {
 
     return {
       direction,
-      entryType: 'MARKET_NOW',
-      entryPrice,
-      entryZone: `${entryZoneLower} - ${entryZoneUpper}`,
+      entryType: precisionOrder.entryType,
+      entryPrice: effectiveEntry,
+      entryZone: precisionOrder.entryZone,
+      entryCondition: precisionOrder.entryCondition,
       stopLoss: parseFloat(stopLoss.toFixed(2)),
       takeProfit1: parseFloat(takeProfit1.toFixed(2)),
       takeProfit2: parseFloat(takeProfit2.toFixed(2)),
@@ -4247,25 +4328,37 @@ export class SignalsController implements OnModuleInit {
     return totalVolume > 0 ? totalTypicalVolume / totalVolume : Number(candles[candles.length - 1]?.close || 0);
   }
 
-  // Calibrated Conviction & Probability Engine: replaces raw-score clamping with genuine conviction margin
+  // Multi-Factor Institutional Conviction & Probability Engine
   private calculateCalibratedConfidence(bullishScore: number, bearishScore: number): {
     confidence: number;
     margin: number;
     winProb: number;
   } {
-    const totalScore = bullishScore + bearishScore;
-    if (totalScore <= 0) return { confidence: 50, margin: 0, winProb: 50 };
-    const diff = Math.abs(bullishScore - bearishScore);
     const winningScore = Math.max(bullishScore, bearishScore);
-    const winRatio = winningScore / totalScore; // 0.50 to 1.00
-    const marginRatio = diff / totalScore;      // 0.00 to 1.00
+    const losingScore = Math.min(bullishScore, bearishScore);
+    const diff = Math.abs(bullishScore - bearishScore);
+    const totalScore = bullishScore + bearishScore;
 
-    // Blend: 55% conviction margin + 45% proportional win ratio
-    // A 65 vs 60 setup (margin 5/125 = 0.04) yields ~51% confidence (realistic coin-flip)
-    // An 85 vs 20 setup (margin 65/105 = 0.62) yields ~84% confidence (high conviction)
-    const rawCalibrated = (marginRatio * 55) + (winRatio * 45);
-    const confidence = Math.min(95, Math.max(35, Math.round(rawCalibrated)));
-    const winProb = Math.min(90, Math.max(40, Math.round((winRatio * 60) + (marginRatio * 30))));
+    if (winningScore <= 0) return { confidence: 50, margin: 0, winProb: 50 };
+
+    // 1. Base Score derived from winning confluence evidence (scale 50 to 95)
+    // winningScore ranges from 60 (minimum quality gate) to 100+ (near-perfect confluence)
+    const baseScore = Math.min(95, Math.max(50, winningScore));
+
+    // 2. Opposition Conflict Penalty: opposing evidence shaves up to 18 points
+    const conflictRatio = totalScore > 0 ? losingScore / totalScore : 0;
+    const conflictPenalty = conflictRatio * 20;
+
+    // 3. Margin Dominance Bonus: decisive edge adds up to +4 points
+    const dominanceBonus = diff >= 50 ? 4 : diff >= 35 ? 2 : 0;
+
+    // 4. Final Calibrated Confidence Score
+    const rawConfidence = baseScore - conflictPenalty + dominanceBonus;
+    const confidence = Math.min(95, Math.max(45, Math.round(rawConfidence)));
+
+    // 5. Statistical Win Probability: calibrated cleanly with confidence (realistic 50% - 88% range)
+    const winProb = Math.min(88, Math.max(50, Math.round(50 + (confidence - 50) * 0.82)));
+
     return { confidence, margin: diff, winProb };
   }
 
@@ -4411,7 +4504,7 @@ export class SignalsController implements OnModuleInit {
 }
 
 @Module({
-  imports: [SubscriptionModule],
+  imports: [SubscriptionModule, AutomationModule],
   controllers: [SignalsController],
 })
 export class SignalsModule {}

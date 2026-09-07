@@ -47,56 +47,6 @@ export class BrokersService {
         where: { userId },
         orderBy: { createdAt: 'desc' },
       });
-
-      // Default sample accounts if none connected yet
-      if (accounts.length === 0) {
-        const liveSample = await this.prisma.brokerAccount.create({
-          data: {
-            userId,
-            broker: 'JustMarkets',
-            accountType: 'LIVE',
-            platform: 'MT5',
-            server: 'JustMarkets-Live2',
-            accountNumber: '5892104',
-            encryptedCredentials: this.encrypt('sample_investor_pass'),
-            connectionStatus: 'CONNECTED',
-            balance: 12.96,
-            equity: 12.96,
-            margin: 0.0,
-            freeMargin: 12.96,
-            unrealizedPl: 0.0,
-            todayPl: 0.85,
-            overallPl: 2.40,
-            currency: 'USD',
-            leverage: '1:500',
-          }
-        });
-
-        const demoSample = await this.prisma.brokerAccount.create({
-          data: {
-            userId,
-            broker: 'FBS',
-            accountType: 'DEMO',
-            platform: 'MT5',
-            server: 'FBS-Demo-01',
-            accountNumber: '9204112',
-            encryptedCredentials: this.encrypt('sample_demo_pass'),
-            connectionStatus: 'CONNECTED',
-            balance: 10000.00,
-            equity: 10245.50,
-            margin: 150.00,
-            freeMargin: 10095.50,
-            unrealizedPl: 245.50,
-            todayPl: 120.00,
-            overallPl: 245.50,
-            currency: 'USD',
-            leverage: '1:500',
-          }
-        });
-
-        return this.formatAccountsResponse([liveSample, demoSample]);
-      }
-
       return this.formatAccountsResponse(accounts);
     } catch (err) {
       return {
@@ -536,9 +486,38 @@ export class BrokersService {
 
   async getOrders(userId: string) {
     try {
-      return await this.prisma.order.findMany({
-        where: { portfolio: { userId }, status: 'PENDING' },
+      const orders = await this.prisma.order.findMany({
+        where: { portfolio: { userId } },
         orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+
+      return orders.map(order => {
+        let meta: any = {};
+        try {
+          if (order.errorMessage && order.errorMessage.startsWith('{')) {
+            meta = JSON.parse(order.errorMessage);
+          }
+        } catch (e) {}
+
+        return {
+          id: order.id,
+          ticket: meta.ticket || order.id.slice(0, 8),
+          symbol: order.symbol,
+          direction: order.direction,
+          type: order.type,
+          quantity: order.quantity,
+          price: order.price,
+          stopLoss: order.stopLoss,
+          takeProfit: order.takeProfit,
+          status: order.status,
+          mode: meta.mode || 'PAPER_TRADING',
+          broker: meta.broker || 'TradeMind Terminal',
+          server: meta.server || 'Demo Server',
+          comment: meta.comment || '',
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
+        };
       });
     } catch (err) {
       return [];
@@ -588,7 +567,11 @@ export class BrokersService {
     if (symbol.includes('BTC') || symbol.includes('ETH') || symbol.includes('SOL')) contractSize = 1;
     if (symbol.includes('US30') || symbol.includes('US100')) contractSize = 10;
 
-    const approxPrice = body.price || 1.0850;
+    // Strict price validation: never silently fall back to random 1.0850
+    if (!body.price || isNaN(Number(body.price)) || Number(body.price) <= 0) {
+      throw new BadRequestException('A valid execution price is required to execute this order.');
+    }
+    const approxPrice = Number(body.price);
     const requiredMargin = parseFloat(((lots * contractSize * approxPrice) / leverageRatio).toFixed(2));
 
     if (acc.freeMargin < requiredMargin && orderType === 'MARKET') {
@@ -597,8 +580,17 @@ export class BrokersService {
       );
     }
 
-    // Generate unique MT5 Ticket ID
-    const ticketId = Math.floor(10000000 + Math.random() * 90000000).toString();
+    // Generate unique MT5/Broker Ticket ID
+    const ticketId = Math.floor(10000000 + (Date.now() % 89999999)).toString();
+    const executionMeta = JSON.stringify({
+      ticket: ticketId,
+      broker: acc.broker,
+      server: acc.server,
+      accountNumber: acc.accountNumber,
+      mode: 'PAPER_TRADING',
+      comment: body.comment || 'TradeMind Autonomous Execution',
+      placedAt: new Date().toISOString()
+    });
 
     // Update account margin and free margin
     const newUsedMargin = acc.margin + requiredMargin;
@@ -634,6 +626,7 @@ export class BrokersService {
         stopLoss: body.stopLoss || null,
         takeProfit: body.takeProfit || null,
         status: orderType === 'MARKET' ? 'FILLED' : 'PENDING',
+        errorMessage: executionMeta,
       },
     });
 
@@ -682,6 +675,8 @@ export class BrokersService {
     return {
       success: true,
       ticket: ticketId,
+      mode: 'PAPER_TRADING',
+      executionNotice: 'Paper Trading Simulated Order placed in compliance with Guardian Constitution',
       message: `Order #${ticketId} executed successfully: ${direction} ${lots} lot(s) of ${symbol} on ${acc.broker} (${acc.server}).`,
       order,
       account: updatedAccount,
@@ -779,12 +774,32 @@ export class BrokersService {
     });
     if (!acc) throw new NotFoundException('Connected broker account not found.');
 
+    const order = await this.prisma.order.findFirst({
+      where: {
+        portfolio: { userId },
+        OR: [
+          { id: ticket },
+          { errorMessage: { contains: ticket } }
+        ]
+      }
+    });
+
+    if (order) {
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          stopLoss: body.stopLoss !== undefined ? body.stopLoss : order.stopLoss,
+          takeProfit: body.takeProfit !== undefined ? body.takeProfit : order.takeProfit,
+        }
+      });
+    }
+
     return {
       success: true,
       ticket,
       stopLoss: body.stopLoss || null,
       takeProfit: body.takeProfit || null,
-      message: `Updated protection levels for position #${ticket} on ${acc.broker}.`,
+      message: `Updated protection levels for position #${ticket} on ${acc.broker} (${acc.server}).`,
     };
   }
 

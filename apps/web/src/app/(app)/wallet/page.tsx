@@ -16,13 +16,76 @@ import { toast } from 'react-hot-toast';
 import { apiFetch } from '@/lib/api';
 
 const SUPPORTED_BROKERS = [
-  { id: 'JustMarkets', name: 'JustMarkets', logo: '🟢', type: 'Forex & CFD Broker' },
-  { id: 'FBS', name: 'FBS', logo: '🟢', type: 'International Broker' },
-  { id: 'Exness', name: 'Exness', logo: '🟡', type: 'Multi-Asset Prime' },
-  { id: 'XM', name: 'XM Global', logo: '🔴', type: 'MetaTrader ECN' },
-  { id: 'IC Markets', name: 'IC Markets', logo: '🟢', type: 'Raw Spread Specialist' },
-  { id: 'Pepperstone', name: 'Pepperstone', logo: '🔵', type: 'Institutional Liquidity' },
-  { id: 'Deriv', name: 'Deriv', logo: '🔴', type: 'Synthetic & Forex' },
+  {
+    id: 'HFM',
+    name: 'HFM (HotForex)',
+    logo: '🔴',
+    type: 'Premium Multi-Asset ECN',
+    servers: ['HFMarketsSC-Live', 'HFMarketsSC-Live2', 'HFMarketsSC-Demo']
+  },
+  {
+    id: 'JustMarkets',
+    name: 'JustMarkets',
+    logo: '🟢',
+    type: 'Ultra Low Spreads',
+    servers: ['JustMarkets-Live', 'JustMarkets-Live2', 'JustMarkets-Live3', 'JustMarkets-Demo']
+  },
+  {
+    id: 'FBS',
+    name: 'FBS',
+    logo: '🟢',
+    type: 'International MT5 Broker',
+    servers: ['FBS-Real-01', 'FBS-Real-02', 'FBS-Real-03', 'FBS-Demo-01', 'FBS-Demo-02']
+  },
+  {
+    id: 'Exness',
+    name: 'Exness',
+    logo: '🟡',
+    type: 'Multi-Asset Prime',
+    servers: ['Exness-MT5Real', 'Exness-MT5Real2', 'Exness-MT5Real3', 'Exness-MT5Trial', 'Exness-MT5Trial2']
+  },
+  {
+    id: 'XM',
+    name: 'XM Global',
+    logo: '🔴',
+    type: 'MetaTrader ECN',
+    servers: ['XMGlobal-MT5', 'XMGlobal-MT5 2', 'XMGlobal-Demo', 'XMGlobal-Demo 2']
+  },
+  {
+    id: 'IC Markets',
+    name: 'IC Markets',
+    logo: '🟢',
+    type: 'Raw Spread Specialist',
+    servers: ['ICMarketsSC-MT5', 'ICMarketsSC-MT5-02', 'ICMarketsSC-Demo']
+  },
+  {
+    id: 'Pepperstone',
+    name: 'Pepperstone',
+    logo: '🔵',
+    type: 'Institutional Liquidity',
+    servers: ['Pepperstone-MT5-Live01', 'Pepperstone-MT5-Live02', 'Pepperstone-MT5-Demo01']
+  },
+  {
+    id: 'Deriv',
+    name: 'Deriv',
+    logo: '🔴',
+    type: 'Synthetic & Forex',
+    servers: ['Deriv-Server', 'Deriv-Server-02', 'Deriv-Demo']
+  },
+  {
+    id: 'OctaFX',
+    name: 'OctaFX',
+    logo: '🟣',
+    type: '0% Swap & Commission',
+    servers: ['OctaFX-Real', 'OctaFX-Real2', 'OctaFX-Demo']
+  },
+  {
+    id: 'FXTM',
+    name: 'FXTM',
+    logo: '🟠',
+    type: 'Micro & ECN Execution',
+    servers: ['ForexTimeFXTM-Live', 'ForexTimeFXTM-Live02', 'ForexTimeFXTM-Demo']
+  },
 ];
 
 export default function SecureWalletPage() {
@@ -75,6 +138,19 @@ export default function SecureWalletPage() {
     const interval = setInterval(fetchAccounts, 8000);
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-select optimal broker server whenever selected broker or account type changes
+  useEffect(() => {
+    const foundBroker = SUPPORTED_BROKERS.find(b => b.name === selectedBroker || b.id === selectedBroker);
+    if (foundBroker && foundBroker.servers && foundBroker.servers.length > 0) {
+      const match = foundBroker.servers.find(s =>
+        formAccountType === 'DEMO'
+          ? s.toLowerCase().includes('demo') || s.toLowerCase().includes('trial')
+          : !s.toLowerCase().includes('demo') && !s.toLowerCase().includes('trial')
+      );
+      setFormServer(match || foundBroker.servers[0]);
+    }
+  }, [selectedBroker, formAccountType]);
 
   const handleConnectBroker = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -479,15 +555,32 @@ export default function SecureWalletPage() {
                 {/* 3. Server Name & Account ID */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Exact Server Name</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. JustMarkets-Live2"
-                      value={formServer}
-                      onChange={(e) => setFormServer(e.target.value)}
-                      className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider">Broker Server</label>
+                      <span className="text-[10px] text-purple-400 font-mono">Auto-Selected</span>
+                    </div>
+                    {(() => {
+                      const currentBroker = SUPPORTED_BROKERS.find(b => b.name === selectedBroker || b.id === selectedBroker);
+                      const availableServers = currentBroker?.servers || [];
+                      return (
+                        <select
+                          value={formServer}
+                          onChange={(e) => setFormServer(e.target.value)}
+                          className="w-full input-glass rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none bg-slate-900 cursor-pointer"
+                        >
+                          {availableServers.map((srv) => (
+                            <option key={srv} value={srv} className="bg-slate-900 text-white">
+                              {srv}
+                            </option>
+                          ))}
+                          {!availableServers.includes(formServer) && formServer && (
+                            <option value={formServer} className="bg-slate-900 text-purple-300">
+                              {formServer} (Custom)
+                            </option>
+                          )}
+                        </select>
+                      );
+                    })()}
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Account ID / Login</label>

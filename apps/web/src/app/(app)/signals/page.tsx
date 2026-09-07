@@ -118,7 +118,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <Badge variant={isBuy ? 'buy' : 'sell'}>{signal.direction}</Badge>
             <Badge variant="neutral" size="xs">{signal.type}</Badge>
             {(() => {
-              const rawGrade = signal.signalGrade || signal.aiReasoning?.signal_grade || signal.aiReasoning?.signalGrade || (signal.confidence >= 88 ? 'A+ Setup' : signal.confidence >= 80 ? 'A Setup' : signal.confidence >= 70 ? 'B+ Setup' : signal.confidence >= 60 ? 'B Setup' : 'C Setup');
+              const rawGrade = signal.signalGrade || signal.aiReasoning?.signal_grade || signal.aiReasoning?.signalGrade || (signal.confidence >= 85 ? 'A+ Setup (High Conviction Confluence)' : signal.confidence >= 75 ? 'A Setup (Institutional Confluence)' : signal.confidence >= 68 ? 'B+ Setup (Standard Confluence)' : signal.confidence >= 60 ? 'B Setup (Scalp Confluence)' : 'C Setup (Speculative)');
               const letter = rawGrade.includes('A+') ? 'A+' : rawGrade.includes('A') ? 'A' : rawGrade.includes('B+') ? 'B+' : rawGrade.includes('B') ? 'B' : 'C';
               const isA = letter.startsWith('A');
               const isB = letter.startsWith('B');
@@ -129,13 +129,22 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
                   isB ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-cyan-500/10" :
                   "bg-amber-500/20 text-amber-300 border-amber-500/40"
                 )}>
-                  {isA ? '🏆 GRADE' : isB ? '📊 GRADE' : '⚠️ GRADE'} {letter} ({rawGrade.replace(/^(A\+|A|B\+|B|C)\s*/, '') || 'Institutional'})
+                  {isA ? '🔒 🏆 LOCKED' : isB ? '🔒 📊 LOCKED' : '🔒 ⚠️ LOCKED'} {letter} ({rawGrade.replace(/^(A\+|A|B\+|B|C)\s*/, '') || 'Institutional'})
                 </span>
               );
             })()}
-            <Badge variant={!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? 'buy' : 'blue'} size="xs">
-              {!signal.aiReasoning?.entry_type || ['MARKET_NOW', 'MARKET'].includes(signal.aiReasoning?.entry_type) ? '⚡ Direct Market NOW' : '🎯 Limit Retest Zone'}
-            </Badge>
+            {(() => {
+              const entryType = signal.aiReasoning?.entry_type || 'MARKET_NOW';
+              const isLimit = entryType === 'BUY_LIMIT' || entryType === 'SELL_LIMIT' || entryType === 'LIMIT';
+              return (
+                <span className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-mono font-bold border",
+                  isLimit ? "bg-blue-500/20 text-blue-300 border-blue-500/40" : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                )}>
+                  {isLimit ? `🎯 ${entryType.replace('_', ' ')} Retest` : '⚡ Direct Market NOW'}
+                </span>
+              );
+            })()}
             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
               ⏱️ {signal.aiReasoning?.timeframe || '15m'}
             </span>
@@ -209,6 +218,42 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
           );
         })}
       </div>
+
+      {/* Precision Institutional Entry Directive Banner */}
+      {(() => {
+        const entryType = signal.aiReasoning?.entry_type || 'MARKET_NOW';
+        const isLimit = entryType === 'BUY_LIMIT' || entryType === 'SELL_LIMIT' || entryType === 'LIMIT';
+        const entryZone = signal.aiReasoning?.entry_zone;
+        const condition = signal.aiReasoning?.entry_condition || (isLimit 
+          ? `Wait for price pullback to [${entryZone || signal.entry}]. Place ${entryType.replace('_', ' ')}.` 
+          : `Execute directly at Market ($${signal.entry}). Confluence confirmed.`);
+
+        return (
+          <div className={cn(
+            "p-3 rounded-xl border flex flex-col gap-1.5 transition-all text-xs",
+            isLimit 
+              ? "bg-blue-950/30 border-blue-500/30 text-blue-200" 
+              : "bg-emerald-950/20 border-emerald-500/20 text-emerald-200"
+          )}>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span>{isLimit ? '🎯' : '⚡'}</span>
+                <span className="font-mono font-bold text-[11px] uppercase tracking-wider">
+                  {isLimit ? `Institutional ${entryType.replace('_', ' ')} Order Directive` : 'Instant Market Execution'}
+                </span>
+              </div>
+              {entryZone && (
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 border border-white/10 text-white">
+                  Zone: <strong>{entryZone}</strong>
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+              {condition}
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Small Account & Intraday Risk Management Banner */}
       {(() => {
@@ -694,9 +739,14 @@ export default function SignalsPage() {
         ? userWatchlist
         : AVAILABLE_MARKETS.map(m => m.symbol);
 
-      const randSymbol = sourceList[Math.floor(Math.random() * sourceList.length)];
+      // Only target symbols that DO NOT already have an active locked signal
+      const existingSymbols = new Set(signals.map(s => s.symbol));
+      const unanalyzed = sourceList.filter(s => !existingSymbols.has(s));
+      if (unanalyzed.length === 0) return; // All tracked markets already have locked institutional signals
+
+      const randSymbol = unanalyzed[Math.floor(Math.random() * unanalyzed.length)];
       handleGenerateSignalSilent(randSymbol);
-    }, 15000);
+    }, 20000);
 
     return () => clearInterval(interval);
   }, [autoGenerate, signals, watchlist]);

@@ -45,19 +45,26 @@ export default function SettingsPage() {
     aiAccuracy: 0,
     totalProfit: 0
   });
+  const [walletBalance, setWalletBalance] = useState<number>(0);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const stats = await apiFetch<any>('/api/v2/portfolio/stats');
-        if (stats) {
+        const [stats, brokers] = await Promise.allSettled([
+          apiFetch<any>('/api/v2/portfolio/stats'),
+          apiFetch<any>('/api/v2/brokers/accounts')
+        ]);
+        if (stats.status === 'fulfilled' && stats.value) {
           setPortfolioStats({
-            totalTrades: stats.totalTrades || 0,
-            winRate: stats.winRate || 0,
-            signalsFollowed: stats.signalsFollowed || 0,
-            aiAccuracy: stats.aiAccuracy || 0,
-            totalProfit: stats.totalProfit || 0
+            totalTrades: stats.value.totalTrades || 0,
+            winRate: stats.value.winRate || 0,
+            signalsFollowed: stats.value.signalsFollowed || 0,
+            aiAccuracy: stats.value.aiAccuracy || 0,
+            totalProfit: stats.value.totalProfit || 0
           });
+        }
+        if (brokers.status === 'fulfilled' && brokers.value?.summary) {
+          setWalletBalance(brokers.value.summary.totalBalance || 0);
         }
       } catch (err) {}
     };
@@ -1392,14 +1399,16 @@ export default function SettingsPage() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="p-4 rounded-xl border border-white/5 bg-white/2">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Available Balance</span>
-                      <span className="text-2xl font-black text-white">$12,480.50</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Available Broker Balance</span>
+                      <span className="text-2xl font-black text-white font-mono">
+                        ${Number(walletBalance || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
                     </div>
 
                     <div className="p-4 rounded-xl border border-white/5 bg-white/2">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Default Payment Method</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Connected Funding / Broker Vault</span>
                       <span className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                        💳 Visa Ending in 4242
+                        🛡️ TradeMind Secure Vault
                       </span>
                     </div>
                   </div>
