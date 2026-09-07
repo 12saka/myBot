@@ -77,7 +77,7 @@ export default function SuperadminSubscriptionsPage() {
           { label: 'Total Revenue', value: `KES ${(fin.totalRevenueKes || 0).toLocaleString()}`, color: 'text-emerald-400' },
           { label: 'Active Subscriptions', value: (fin.activeSubscriptionsCount || 0).toLocaleString(), color: 'text-purple-300' },
           { label: 'Trial Users', value: (fin.trialUsersCount || 0).toLocaleString(), color: 'text-amber-300' },
-          { label: 'Trial-to-Paid Rate', value: `${fin.trialConversionRatePct || 34.2}%`, color: 'text-indigo-300' },
+          { label: 'Trial-to-Paid Rate', value: `${fin.trialConversionRatePct ?? 0}%`, color: 'text-indigo-300' },
         ]}
         actions={
           <button
@@ -98,7 +98,7 @@ export default function SuperadminSubscriptionsPage() {
               <Layers className="w-4 h-4 text-purple-400" />
               <span>Subscription Plan & Entitlement Governance</span>
             </h3>
-            <p className="text-xs text-slate-400 font-mono mt-0.5">Control pricing, weekly signal allowances, AI tiers, and trial durations.</p>
+            <p className="text-xs text-slate-400 font-mono mt-0.5">Control pricing, weekly signal allowances, strategy tiers, and trial durations.</p>
           </div>
         </div>
 

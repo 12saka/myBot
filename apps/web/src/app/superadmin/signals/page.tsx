@@ -79,7 +79,7 @@ export default function SuperadminSignalsPage() {
       {/* Executive Banner */}
       <AdminPageBanner
         badgeText="QUANTITATIVE SIGNAL OVERRIDE ENGINE"
-        title="AI Signal Audit & Governance Queue"
+        title="Signal Audit & Governance Queue"
         description="Audit live institutional confluence signals, inspect multi-target grids, review technical reasons, and force-expire invalid trades."
         icon={Zap}
         stats={[

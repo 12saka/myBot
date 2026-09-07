@@ -10,8 +10,8 @@ export class MarketsService implements OnModuleInit {
     { name: 'SOL/USD', type: 'crypto', binanceSymbol: 'SOLUSDT',  volatility: 1.5 },
     { name: 'BNB/USD', type: 'crypto', binanceSymbol: 'BNBUSDT',  volatility: 1.5 },
     { name: 'XRP/USD', type: 'crypto', binanceSymbol: 'XRPUSDT',  volatility: 0.005 },
-    { name: 'XAU/USD', type: 'commodity', binanceSymbol: 'PAXGUSDT', volatility: 5.0 },
-    { name: 'GOLD',    type: 'commodity', binanceSymbol: 'PAXGUSDT', volatility: 5.0 },
+    { name: 'XAU/USD', type: 'commodity', binanceSymbol: undefined, volatility: 5.0 },
+    { name: 'GOLD',    type: 'commodity', binanceSymbol: undefined, volatility: 5.0 },
     { name: 'AAPL',    type: 'stock',  binanceSymbol: null,       volatility: 0.6 },
     { name: 'TSLA',    type: 'stock',  binanceSymbol: null,       volatility: 1.2 },
     { name: 'NVDA',    type: 'stock',  binanceSymbol: null,       volatility: 3.0 },
@@ -431,13 +431,9 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // Gold spot pricing: Always take live Binance PAXGUSDT ($4,350+) or Yahoo COMEX GC=F ($4,400+)
+        // Gold spot pricing: Always take live Yahoo COMEX GC=F ($4,400+) or Twelve Data real XAU/USD spot
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
-          if (cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price > 1000) {
-            currentPrice = cryptoPriceMap['PAXGUSDT'].price;
-            changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
-            volume24h = cryptoPriceMap['PAXGUSDT'].volume;
-          } else if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price > 1000) {
+          if (yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price > 1000) {
             currentPrice = yahooPriceMap['GC=F'].price;
             changePct24h = yahooPriceMap['GC=F'].changePct;
             volume24h = yahooPriceMap['GC=F'].volume;
@@ -446,32 +442,26 @@ export class MarketsService implements OnModuleInit {
             changePct24h = yahooPriceMap['XAUUSD=X'].changePct;
             volume24h = yahooPriceMap['XAUUSD=X'].volume;
           } else {
-            try {
-              const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT', {}, 2500);
-              if (paxgRes.ok) {
-                const pData = await paxgRes.json();
-                if (pData && Number(pData.lastPrice) > 1000) {
-                  currentPrice = Number(pData.lastPrice);
-                  changePct24h = Number(pData.priceChangePercent || 0);
-                  volume24h = Number(pData.volume || 1000);
+            const tdKey = process.env.TWELVE_DATA_API_KEY;
+            if (tdKey) {
+              try {
+                const tdRes = await this.fetchWithTimeout(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${tdKey}`, {}, 2500);
+                if (tdRes.ok) {
+                  const tdData = await tdRes.json();
+                  if (tdData && Number(tdData.price) >= 1800) {
+                    currentPrice = Number(tdData.price);
+                  }
                 }
-              }
-            } catch (goldApiErr) {}
-          }
-        }
+              } catch (e) {}
+            }
 
-        if ((asset.name === 'XAU/USD' || asset.name === 'GOLD') && currentPrice <= 0) {
-          const tdKey = process.env.TWELVE_DATA_API_KEY;
-          if (tdKey) {
-            try {
-              const tdRes = await this.fetchWithTimeout(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${tdKey}`, {}, 3000);
-              if (tdRes.ok) {
-                const tdData = await tdRes.json();
-                if (tdData && Number(tdData.price) >= 1800) {
-                  currentPrice = Number(tdData.price);
-                }
-              }
-            } catch (e) {}
+            // Emergency-only fallback to Binance PAXGUSDT if real spot and COMEX futures fail
+            if (currentPrice <= 0 && cryptoPriceMap['PAXGUSDT'] && cryptoPriceMap['PAXGUSDT'].price > 1000) {
+              currentPrice = cryptoPriceMap['PAXGUSDT'].price;
+              changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
+              volume24h = cryptoPriceMap['PAXGUSDT'].volume;
+              console.warn(`[MarketsService] WARNING: Using PAXG crypto token proxy for ${asset.name} because spot feeds are unavailable.`);
+            }
           }
         }
 

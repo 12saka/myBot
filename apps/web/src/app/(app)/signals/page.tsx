@@ -289,7 +289,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
           onClick={() => setExpanded(!expanded)}
           className="flex-1 btn-ghost py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
         >
-          AI Reasoning
+          Strategy Reasoning
           <ChevronDown size={12} className={cn('transition-transform', expanded && 'rotate-180')} />
         </button>
         <button
@@ -365,7 +365,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             )}
 
             <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider border-b border-white/5 pb-1.5">
-              Multi-Factor AI Reasoning & Explanation
+              Multi-Factor Quantitative Reasoning
             </div>
 
             {/* 12-Layer XAUUSD / Confluence Breakdown */}
@@ -438,6 +438,66 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               </div>
             )}
 
+            {/* Live Intermarket & Macro Regime Drivers (Gold / Forex) */}
+            {signal.evidence && typeof signal.evidence === 'object' && (signal.evidence.dxy || signal.evidence.regime || signal.evidence.levels) && (
+              <div className="border-t border-white/5 pt-2.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                    🌐 Intermarket Drivers & Market Regime
+                  </div>
+                  {signal.evidence.goldSource && (
+                    <span className={cn(
+                      "text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border",
+                      String(signal.evidence.goldSource).includes('PROXY')
+                        ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                        : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                    )}>
+                      {String(signal.evidence.goldSource).includes('PROXY') ? '⚠️ PAXG Proxy' : '🟢 Real COMEX/Spot'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
+                  {signal.evidence.regime && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5 col-span-2">
+                      <span className="text-slate-500 block text-[9px]">Market Regime</span>
+                      <strong className="text-purple-300">{signal.evidence.regime}</strong>
+                    </div>
+                  )}
+                  {signal.evidence.dxy && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">DXY Dollar Index</span>
+                      <strong className={signal.evidence.dxy.trend === 'BEARISH' ? 'text-emerald-400' : signal.evidence.dxy.trend === 'BULLISH' ? 'text-rose-400' : 'text-slate-300'}>
+                        {signal.evidence.dxy.price} ({signal.evidence.dxy.trend})
+                      </strong>
+                    </div>
+                  )}
+                  {signal.evidence.us10y && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">US 10Y Yield</span>
+                      <strong className={signal.evidence.us10y.trend === 'FALLING' ? 'text-emerald-400' : signal.evidence.us10y.trend === 'RISING' ? 'text-rose-400' : 'text-slate-300'}>
+                        {signal.evidence.us10y.yield}% ({signal.evidence.us10y.trend})
+                      </strong>
+                    </div>
+                  )}
+                  {signal.evidence.vix && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5">
+                      <span className="text-slate-500 block text-[9px]">CBOE VIX</span>
+                      <strong className="text-amber-400">{signal.evidence.vix.level} ({signal.evidence.vix.regime})</strong>
+                    </div>
+                  )}
+                  {signal.evidence.levels && (
+                    <div className="p-2 rounded bg-slate-900/60 border border-white/5 col-span-2 sm:col-span-3">
+                      <span className="text-slate-500 block text-[9px]">Key Institutional Levels</span>
+                      <span className="text-slate-300 text-[10px]">
+                        Sup: <strong className="text-emerald-400">${signal.evidence.levels.nearestSupport}</strong> | Res: <strong className="text-rose-400">${signal.evidence.levels.nearestResistance}</strong> | Day: ${signal.evidence.levels.dailyLow} - ${signal.evidence.levels.dailyHigh}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Indicator Verdicts Breakdown */}
             {signal.indicatorVerdicts && Object.keys(signal.indicatorVerdicts).length > 0 && (
               <div className="border-t border-white/5 pt-2.5">
@@ -485,7 +545,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             )}
 
             <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider border-t border-white/5 pt-2 mt-2">
-              🧠 Real-Time AI Signal Architecture
+              🧠 Real-Time Quantitative Engine Architecture
             </div>
             <div className="text-[10px] text-slate-400 leading-normal bg-white/2 p-2.5 rounded-lg border border-white/5">
               <span><strong>23-Factor Institutional Confluence Pipeline</strong>: Evaluates market regime, 4H/1H MTF trend locks, liquidity sweeps, FVG imbalances, macro correlation, and invalidation stop buffers.</span>
@@ -567,7 +627,7 @@ export default function SignalsPage() {
     setNotificationsEnabled(granted);
     if (granted) {
       playSignalChime('NEW_SIGNAL');
-      sendDeviceNotification('TradeMind AI Alerts Active', {
+      sendDeviceNotification('TradeMind Alerts Active', {
         body: 'Device notifications activated! You will receive instant push alerts when new trade signals trigger or reach take profit.'
       });
       toast.success('On-device notifications enabled!');
@@ -691,7 +751,7 @@ export default function SignalsPage() {
 
   const fetchActiveSignals = async () => {
     setIsRefreshing(true);
-    const toastId = toast.loading('Refreshing AI signals from gateway...');
+    const toastId = toast.loading('Refreshing signals from gateway...');
     try {
       const raw = await apiFetch<any[]>('/api/v2/signals');
       if (Array.isArray(raw)) {
@@ -706,7 +766,7 @@ export default function SignalsPage() {
           return true;
         });
         setSignals(activeOnly);
-        toast.success('AI signals list updated successfully!', { id: toastId });
+        toast.success('Signals list updated successfully!', { id: toastId });
       }
     } catch (err: any) {
       toast.error(err.message || 'Failed to sync active signals.', { id: toastId });
@@ -731,7 +791,7 @@ export default function SignalsPage() {
 
       // Trigger Acoustic Chime & Native OS Device Push Alert
       playSignalChime('NEW_SIGNAL');
-      sendDeviceNotification(`⚡ New AI Signal: ${newSignal.direction} ${newSignal.symbol}`, {
+      sendDeviceNotification(`⚡ New Signal: ${newSignal.direction} ${newSignal.symbol}`, {
         body: `Entry: ${newSignal.entry} | Target: ${newSignal.tp1} | R:R: ${newSignal.riskReward}`,
       });
 
@@ -778,11 +838,11 @@ export default function SignalsPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <p className="text-xs font-bold text-white truncate">Incoming AI Trade Signal</p>
+                  <p className="text-xs font-bold text-white truncate">Incoming Trade Signal</p>
                   <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping shrink-0" />
                 </div>
                 <p className="text-[11px] text-slate-400 mt-0.5 leading-snug break-words">
-                  Ensemble AI models detected a high-probability <span className={cn("font-bold", newSignal.direction === 'BUY' ? "text-emerald-400" : "text-red-400")}>{newSignal.direction}</span> configuration for <span className="text-white font-bold">{newSignal.symbol}</span>.
+                  Quantitative strategy models detected a high-probability <span className={cn("font-bold", newSignal.direction === 'BUY' ? "text-emerald-400" : "text-red-400")}>{newSignal.direction}</span> configuration for <span className="text-white font-bold">{newSignal.symbol}</span>.
                 </p>
               </div>
               <button
@@ -802,7 +862,7 @@ export default function SignalsPage() {
 
   const handleGenerateSignal = async (symbol: string) => {
     setGeneratingSymbol(symbol);
-    const toastId = toast.loading(`Institutional AI running 4H Macro + 1H Flow + 15m Entry Top-Down Analysis for ${symbol}...`);
+    const toastId = toast.loading(`Institutional engine running 4H Macro + 1H Flow + 15m Entry Top-Down Analysis for ${symbol}...`);
     try {
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
@@ -867,7 +927,7 @@ export default function SignalsPage() {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
                 </span>
-                <span className="text-[10px] font-bold tracking-wider uppercase text-purple-300">Live AI Signal Dispatched</span>
+                <span className="text-[10px] font-bold tracking-wider uppercase text-purple-300">Live Signal Dispatched</span>
               </div>
               <span className="text-[9px] text-slate-400 font-mono">15m Top-Down</span>
             </div>
@@ -989,7 +1049,7 @@ export default function SignalsPage() {
     <motion.div className="space-y-6 pb-12 max-w-full overflow-x-hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
 
       <PageHeader
-        title="AI Signal Intelligence"
+        title="Signal Intelligence"
         subtitle="Ensemble predictions generated from multi-temporal price sequence vectors and technical crossovers."
         icon={Zap}
       >
@@ -1153,7 +1213,7 @@ export default function SignalsPage() {
         <div>
           <p className="text-xs font-bold text-amber-300">Trading Risk Disclaimer</p>
           <p className="text-[11px] text-amber-200/80 mt-0.5 leading-relaxed">
-            AI signals are probabilistic tools based on technical analysis — not financial advice. No signal is 100% guaranteed.
+            Signals are probabilistic tools based on technical analysis — not financial advice. No signal is 100% guaranteed.
             Always use stop losses and risk only capital you can afford to lose. Past performance does not guarantee future results.
           </p>
         </div>
@@ -1177,7 +1237,7 @@ export default function SignalsPage() {
       <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
           <div>
-            <h3 className="font-display font-bold text-white text-sm mb-0.5">Ensemble AI Market Directory</h3>
+            <h3 className="font-display font-bold text-white text-sm mb-0.5">Market Directory</h3>
             <p className="text-[11px] text-slate-400">Select any index, commodity, stock, or coin below to execute predictive models.</p>
           </div>
           
@@ -1269,7 +1329,7 @@ export default function SignalsPage() {
           <Zap className="mx-auto text-slate-600 mb-3" size={32} />
           <h4 className="font-bold text-white mb-1">No Active Signals</h4>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Select a market from the directory above or toggle Auto-Generator ON to produce AI predictive signals.
+            Select a market from the directory above or toggle Auto-Generator ON to produce predictive market signals.
           </p>
         </div>
       )}
@@ -1278,7 +1338,7 @@ export default function SignalsPage() {
       <div className="glass-panel rounded-2xl p-4 flex items-start gap-3 text-xs text-slate-500">
         <Shield size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
         <p>
-          <strong className="text-slate-400">Risk Disclaimer:</strong> AI signals are generated by algorithmic models analyzing historical patterns and current market data. Past performance does not guarantee future results. All trading carries risk. Always apply your own due diligence and ensure signals align with your risk tolerance and investment objectives.
+          <strong className="text-slate-400">Risk Disclaimer:</strong> Trading signals are generated by algorithmic quantitative models analyzing historical patterns and current market data. Past performance does not guarantee future results. All trading carries risk. Always apply your own due diligence and ensure signals align with your risk tolerance and investment objectives.
         </p>
       </div>
 
@@ -1314,7 +1374,7 @@ export default function SignalsPage() {
                   </div>
                   <div>
                     <h3 className="font-display font-bold text-white text-base">{selectedChartSignal.symbol} — Signal Chart & Full Analysis</h3>
-                    <p className="text-[10px] text-slate-500">Live TradingView charting feed annotated with AI indicators</p>
+                    <p className="text-[10px] text-slate-500">Live TradingView charting feed annotated with technical indicators</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1354,7 +1414,7 @@ export default function SignalsPage() {
               {/* Target Price Labels Overlay */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 backdrop-blur-md border-y border-white/5 px-6 py-3.5 flex-shrink-0">
                 {[
-                  { label: 'AI Entry Price', value: selectedChartSignal.entry.toLocaleString(), color: 'border-purple-500/20 text-purple-300 bg-purple-500/5' },
+                  { label: 'Entry Price', value: selectedChartSignal.entry.toLocaleString(), color: 'border-purple-500/20 text-purple-300 bg-purple-500/5' },
                   { label: 'Stop Loss (Invalidation)', value: selectedChartSignal.stopLoss.toLocaleString(), color: 'border-red-500/20 text-red-400 bg-red-500/5' },
                   { label: 'Take Profit 1', value: selectedChartSignal.tp1.toLocaleString(), color: 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' },
                   { label: 'Take Profit 2', value: selectedChartSignal.tp2.toLocaleString(), color: 'border-teal-500/20 text-teal-300 bg-teal-500/5' },
@@ -1392,7 +1452,7 @@ export default function SignalsPage() {
                         
                         {[
                           { label: 'Detected', active: true },
-                          { label: 'AI Analyzed', active: true },
+                          { label: 'Analyzed', active: true },
                           { label: 'Active', active: status === 'ACTIVE' || status === 'RUNNING' || status.includes('HIT') },
                           { label: 'Running', active: status === 'RUNNING' || status.includes('HIT') },
                           { label: 'Closed', active: status.includes('HIT') || status === 'CLOSED' },
@@ -1415,11 +1475,11 @@ export default function SignalsPage() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* AI Diagram Panel / Market Score */}
+                      {/* Diagram Panel / Confluence Score */}
                       <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
                         <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
                           <Sparkles size={14} className="text-purple-400" />
-                          AI Market Score
+                          Confluence Score
                         </h4>
                         <div className="space-y-3">
                           {[
@@ -1449,9 +1509,9 @@ export default function SignalsPage() {
                         </div>
                       </div>
 
-                      {/* AI Reasoning Checklist */}
+                      {/* Strategy Confluence Checklist */}
                       <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
-                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">AI Reasoning Checklist</h4>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Strategy Confluence Checklist</h4>
                         <div className="space-y-2.5 text-[11px]">
                           {[
                             { label: `Trend: ${scores.bullish > 50 ? 'Bullish' : 'Bearish'}`, check: scores.bullish > 50 ? scores.bullish > 55 : scores.bearish > 55 },
@@ -1590,9 +1650,9 @@ export default function SignalsPage() {
                       </div>
                     </div>
 
-                    {/* Deep AI Analysis & Outlook */}
+                    {/* Deep Analysis & Outlook */}
                     <div>
-                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">🧠 AI Analysis & Outlook</h4>
+                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">🧠 Market Analysis & Outlook</h4>
                       <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 text-xs text-purple-300 leading-relaxed space-y-3">
                         <div className="flex flex-wrap gap-3 text-[10px] border-b border-white/5 pb-3 mb-2">
                           <span className="bg-purple-500/10 border border-purple-500/20 rounded-lg px-2 py-0.5 font-bold">Strategy: {selectedChartSignal.strategy}</span>

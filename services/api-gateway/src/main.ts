@@ -40,8 +40,8 @@ async function bootstrap() {
 
   // Swagger docs
   const config = new DocumentBuilder()
-    .setTitle('TradeMind AI API')
-    .setDescription('Enterprise AI Trading Platform — REST API v2')
+    .setTitle('TradeMind API')
+    .setDescription('Enterprise Trading Platform — REST API v2')
     .setVersion('2.0.0')
     .addBearerAuth()
     .build();

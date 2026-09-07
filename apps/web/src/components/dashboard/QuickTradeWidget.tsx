@@ -187,7 +187,7 @@ export function QuickTradeWidget({
                     tradeMode === 'AI' ? 'bg-purple-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  <Cpu size={12} /> AI Signal Params
+                  <Cpu size={12} /> Signal Params
                 </button>
                 <button
                   type="button"
@@ -204,11 +204,11 @@ export function QuickTradeWidget({
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4 text-xs">
               {tradeMode === 'AI' && aiSignal ? (
-                /* AI Signals Mode Details Display */
+                /* Signals Mode Details Display */
                 <div className="space-y-3.5">
                   <div className="p-3.5 rounded-2xl border border-purple-500/25 bg-purple-500/5 space-y-2.5">
                     <div className="flex justify-between items-center text-[10px] text-purple-400 uppercase tracking-wider font-bold">
-                      <span>Applying AI Targets</span>
+                      <span>Applying Signal Targets</span>
                       <Badge variant="neutral">{aiSignal.strategy}</Badge>
                     </div>
                     <div className="flex items-center justify-between">
@@ -237,7 +237,7 @@ export function QuickTradeWidget({
                         <span className="font-mono font-bold text-teal-300">${aiSignal.tp2.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between border-t border-white/5 pt-1.5">
-                        <span>AI Signal Confidence</span>
+                        <span>Signal Confluence</span>
                         <span className="font-bold text-purple-400">{aiSignal.confidence}% Probability</span>
                       </div>
                       <div className="flex justify-between">

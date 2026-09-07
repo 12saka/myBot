@@ -785,45 +785,44 @@ export default function SuperadminUsersPage() {
               {active360Tab === 'ACADEMY' && (() => {
                 const acad = selectedUser.academyAnalytics || {};
                 const metrics = acad.metrics || {};
-                const diff = acad.difficultyProgress || { beginner: 100, intermediate: 82, advanced: 51 };
-                const skills = acad.skillMastery || { technicalAnalysis: 91, riskManagement: 88, marketStructure: 85, fundamentals: 76, tradingPsychology: 63 };
+                const completionPct = acad.overallProgressPct ?? 0;
 
                 return (
                   <div className="space-y-4 text-xs">
                     <div className="p-4 rounded-xl bg-gradient-to-r from-purple-950/60 to-indigo-950/60 border border-purple-500/30 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-white font-outfit text-sm">Overall Academy Completion</span>
-                        <span className="font-mono font-bold text-purple-300 text-base">{acad.overallProgressPct || 82}%</span>
+                        <span className="font-mono font-bold text-purple-300 text-base">{completionPct}%</span>
                       </div>
                       <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-white/10">
-                        <div className="bg-gradient-to-r from-purple-500 to-indigo-400 h-full rounded-full" style={{ width: `${acad.overallProgressPct || 82}%` }} />
+                        <div className="bg-gradient-to-r from-purple-500 to-indigo-400 h-full rounded-full" style={{ width: `${completionPct}%` }} />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center font-mono">
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="text-[9px] text-slate-400 block">Lessons</span>
-                        <span className="text-sm font-bold text-white">{metrics.lessonsCompleted || 142}</span>
+                        <span className="text-sm font-bold text-white">{metrics.lessonsCompleted ?? 0}</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="text-[9px] text-slate-400 block">Quizzes</span>
-                        <span className="text-sm font-bold text-white">{metrics.quizzesAttempted || 38}</span>
+                        <span className="text-sm font-bold text-white">{metrics.quizzesAttempted ?? 0}</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="text-[9px] text-slate-400 block">Avg Score</span>
-                        <span className="text-sm font-bold text-emerald-400">{metrics.avgScorePct || 87}%</span>
+                        <span className="text-sm font-bold text-emerald-400">{metrics.avgScorePct ?? 0}%</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="text-[9px] text-slate-400 block">Failed</span>
-                        <span className="text-sm font-bold text-amber-300">{metrics.failedQuizzesCount || 4}</span>
+                        <span className="text-sm font-bold text-amber-300">{metrics.failedQuizzesCount ?? 0}</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="text-[9px] text-slate-400 block">Certificates</span>
-                        <span className="text-sm font-bold text-purple-300">{metrics.certificatesCount || 3}</span>
+                        <span className="text-sm font-bold text-purple-300">{metrics.certificatesCount ?? 0}</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="text-[9px] text-slate-400 block">Streak</span>
-                        <span className="text-sm font-bold text-amber-400">{metrics.streakDays || 14}d</span>
+                        <span className="text-sm font-bold text-amber-400">{metrics.streakDays ?? 0}d</span>
                       </div>
                     </div>
                   </div>

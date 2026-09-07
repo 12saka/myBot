@@ -230,6 +230,7 @@ export class SignalsController implements OnModuleInit {
     const aiServiceUrl = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
     const apiKey = process.env.AI_SERVICE_API_KEY || 'internal-secret-key';
     const cachedCandles = await this.getOrFetchCandles(symbol, interval);
+    let intermarketData: any = null;
 
     try {
       let recentNews: any[] = [];
@@ -278,6 +279,11 @@ export class SignalsController implements OnModuleInit {
         activeSession = 'Sydney Session (Low Volatility)';
       }
 
+      const isGoldOrForex = symbol.toUpperCase().includes('XAU') || symbol.toUpperCase().includes('GOLD') || symbol.toUpperCase().includes('EUR') || symbol.toUpperCase().includes('USD') || symbol.toUpperCase().includes('JPY');
+      if (isGoldOrForex) {
+        intermarketData = await this.fetchIntermarketData();
+      }
+
       const body = {
         symbol,
         timeframe: interval,
@@ -286,11 +292,12 @@ export class SignalsController implements OnModuleInit {
           high: Number(c.high),
           low: Number(c.low),
           close: Number(c.close),
-          volume: Number(c.volume || 1000),
+          volume: Number(c.volume || 0),
           timestamp: (c.timestamp instanceof Date ? c.timestamp : new Date(c.timestamp)).toISOString(),
         })),
         news: recentNews,
         session: activeSession,
+        intermarket: intermarketData,
       };
 
       const signatureHeaders = generateHmacSignature(body, apiKey);
@@ -344,7 +351,7 @@ export class SignalsController implements OnModuleInit {
         takeProfit1: res.data.take_profit_1,
         takeProfit2: res.data.take_profit_2,
         riskRewardRatio: parseFloat((Math.abs(res.data.take_profit_1 - res.data.entry) / (Math.abs(res.data.entry - res.data.stop_loss) || 1)).toFixed(1)),
-        winProbability: Math.min(95, Math.max(55, Math.round((res.data.confidence || 0.78) * 100))),
+        winProbability: Math.min(95, Math.max(35, Math.round(Number(res.data.confidence ?? 0.50) * 100))),
         durationEstimate: interval === '1m' ? '1-5 mins (Scalping)' :
                           interval === '3m' ? '3-10 mins (Scalping)' :
                           interval === '5m' ? '5-15 mins (Scalping)' :
@@ -418,10 +425,10 @@ export class SignalsController implements OnModuleInit {
           result = this.stocksStrategyEngine(cachedCandles, symbol, interval, htfBias);
           break;
         case 'METALS':
-          result = this.goldStrategyEngine(cachedCandles, symbol, interval, htfBias);
+          result = this.goldStrategyEngine(cachedCandles, symbol, interval, htfBias, intermarketData);
           break;
         case 'USDJPY':
-          result = this.usdjpyStrategyEngine(cachedCandles, symbol, interval, htfBias);
+          result = this.usdjpyStrategyEngine(cachedCandles, symbol, interval, htfBias, intermarketData);
           break;
         case 'FOREX':
           result = this.forexStrategyEngine(cachedCandles, symbol, interval, htfBias);
@@ -754,21 +761,174 @@ export class SignalsController implements OnModuleInit {
       return candles;
     }
     
-    // 3. Otherwise, fetch real-time. Try Binance first if crypto or Gold (PAXGUSDT tracks London Spot Gold 1:1).
+    // 3. Otherwise, fetch real-time.
     const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(baseSymbol);
     const isGold = baseSymbol.includes('XAU') || baseSymbol.includes('GOLD') || cleanSymbol.includes('XAU') || cleanSymbol.includes('GOLD');
     let fetched = false;
 
-    if (isCrypto || isGold) {
+    // GOLD (XAU/USD): Prioritize Twelve Data spot and Yahoo COMEX Gold futures (GC=F). DO NOT use PAXG token unless emergency.
+    if (isGold) {
+      // 3.1. Try Twelve Data real spot XAU/USD first
+      const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
+      if (twelveDataKey) {
+        try {
+          let tdInterval = interval;
+          if (interval === '1h') tdInterval = '1h';
+          const response = await this.fetchWithTimeout(
+            `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${tdInterval}&outputsize=100&apikey=${twelveDataKey}`,
+            {},
+            3000
+          );
+          if (response.ok) {
+            const data = await response.json();
+            const values = data.values || [];
+            if (values.length > 0 && !data.code) {
+              await this.prisma.historicalCandle.deleteMany({
+                where: { symbol: cleanSymbol, interval }
+              });
+
+              const newCandles = [];
+              const reversedValues = [...values].reverse();
+              for (const v of reversedValues) {
+                const candle = await this.prisma.historicalCandle.create({
+                  data: {
+                    symbol: cleanSymbol,
+                    interval,
+                    timestamp: new Date(v.datetime),
+                    open: parseFloat(v.open),
+                    high: parseFloat(v.high),
+                    low: parseFloat(v.low),
+                    close: parseFloat(v.close),
+                    volume: parseFloat(v.volume || 0),
+                  }
+                });
+                newCandles.push(candle);
+              }
+              fetched = true;
+              console.log(`[SignalsController] Gold spot candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
+              return newCandles;
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[SignalsController] Twelve Data spot fetch failed for ${cleanSymbol}: ${err.message}. Trying Yahoo COMEX GC=F.`);
+        }
+      }
+
+      // 3.2. Try Yahoo Finance COMEX Gold Futures (GC=F) — Real market price (~$4,476+)
+      if (!fetched) {
+        try {
+          let yahooInterval = interval;
+          if (interval === '1h') yahooInterval = '60m';
+          let range = '2d';
+          if (interval === '1m') range = '1d';
+          else if (interval === '3m' || interval === '5m') range = '2d';
+          else if (interval === '15m' || interval === '30m') range = '5d';
+          else if (interval === '1h') range = '7d';
+
+          const res = await this.fetchWithTimeout(
+            `https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=${yahooInterval}&range=${range}`,
+            {},
+            3500
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const chartData = data?.chart?.result?.[0];
+            const timestamps = chartData?.timestamp || [];
+            const quote = chartData?.indicators?.quote?.[0] || {};
+            const opens = quote.open || [];
+            const highs = quote.high || [];
+            const lows = quote.low || [];
+            const closes = quote.close || [];
+            const volumes = quote.volume || [];
+
+            if (timestamps.length > 0) {
+              await this.prisma.historicalCandle.deleteMany({
+                where: { symbol: cleanSymbol, interval }
+              });
+
+              const newCandles = [];
+              for (let i = 0; i < timestamps.length; i++) {
+                if (opens[i] === null || closes[i] === null) continue;
+                const candle = await this.prisma.historicalCandle.create({
+                  data: {
+                    symbol: cleanSymbol,
+                    interval,
+                    timestamp: new Date(timestamps[i] * 1000),
+                    open: parseFloat(opens[i]),
+                    high: parseFloat(highs[i]),
+                    low: parseFloat(lows[i]),
+                    close: parseFloat(closes[i]),
+                    volume: parseFloat(volumes[i] || 0),
+                  }
+                });
+                newCandles.push(candle);
+              }
+              fetched = true;
+              console.log(`[SignalsController] Real COMEX Gold (GC=F) candlesticks fetched from Yahoo Finance for ${cleanSymbol} (last close: $${closes.filter((c: any) => c !== null).slice(-1)[0]}).`);
+              return newCandles;
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[SignalsController] Failed to fetch live Yahoo COMEX Gold candles for ${cleanSymbol}: ${err.message}. Trying emergency PAXG.`);
+        }
+      }
+
+      // 3.3. Last-resort emergency fallback: Binance PAXGUSDT (Explicitly flagged as PROXY)
+      if (!fetched) {
+        try {
+          let binanceInterval = interval;
+          if (interval === '1h') binanceInterval = '1h';
+          const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
+          const headers: Record<string, string> = {};
+          if (binanceApiKey) headers['X-MBX-APIKEY'] = binanceApiKey;
+
+          const res = await this.fetchWithTimeout(
+            `https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=${binanceInterval}&limit=150`,
+            { headers },
+            3000
+          );
+          if (res.ok) {
+            const klines = await res.json();
+            await this.prisma.historicalCandle.deleteMany({
+              where: { symbol: cleanSymbol, interval }
+            });
+
+            const newCandles = [];
+            for (const k of klines) {
+              const candle = await this.prisma.historicalCandle.create({
+                data: {
+                  symbol: cleanSymbol,
+                  interval,
+                  timestamp: new Date(k[0]),
+                  open: parseFloat(k[1]),
+                  high: parseFloat(k[2]),
+                  low: parseFloat(k[3]),
+                  close: parseFloat(k[4]),
+                  volume: parseFloat(k[5]),
+                }
+              });
+              newCandles.push(candle);
+            }
+            fetched = true;
+            console.warn(`[SignalsController] WARNING: Using PAXG crypto token proxy for ${cleanSymbol} because spot and COMEX feeds failed.`);
+            return newCandles;
+          }
+        } catch (err: any) {
+          console.error(`[SignalsController] All Gold candle providers (TwelveData, Yahoo COMEX, Binance PAXG) failed for ${cleanSymbol}: ${err.message}`);
+        }
+      }
+    }
+
+    // Standard Crypto Assets (BTC, ETH, SOL, BNB, XRP) -> Fetch from Binance
+    if (isCrypto && !isGold) {
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
       try {
-        const binanceSym = isGold ? 'PAXGUSDT' : `${baseSymbol}USDT`;
+        const binanceSym = `${baseSymbol}USDT`;
         const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
         const headers: Record<string, string> = {};
-        if (binanceApiKey) {
-          headers['X-MBX-APIKEY'] = binanceApiKey;
-        }
+        if (binanceApiKey) headers['X-MBX-APIKEY'] = binanceApiKey;
+
         const res = await this.fetchWithTimeout(
           `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`,
           { headers }
@@ -778,7 +938,7 @@ export class SignalsController implements OnModuleInit {
           await this.prisma.historicalCandle.deleteMany({
             where: { symbol: cleanSymbol, interval }
           });
-          
+
           const newCandles = [];
           for (const k of klines) {
             const candle = await this.prisma.historicalCandle.create({
@@ -799,7 +959,7 @@ export class SignalsController implements OnModuleInit {
           return newCandles;
         }
       } catch (err: any) {
-        console.warn(`[SignalsController] Failed to fetch live Binance candles for ${cleanSymbol}: ${err.message}. Trying Twelve Data fallback.`);
+        console.warn(`[SignalsController] Failed to fetch live Binance candles for crypto ${cleanSymbol}: ${err.message}. Trying Twelve Data fallback.`);
       }
     }
 
@@ -1262,11 +1422,13 @@ export class SignalsController implements OnModuleInit {
       bias1h = 'BEARISH';
     }
 
-    // 2. Synthesize 4H Candles from 1H Candles (every 4 consecutive 1h candles = 1 4h candle)
+    // 2. Synthesize 4H Candles from 1H Candles (aligned 4-hour blocks)
     const candles4h: any[] = [];
-    for (let i = 0; i < candles1h.length; i += 4) {
+    const fullBlocks = Math.floor(candles1h.length / 4) * 4;
+    const startIndex = candles1h.length - fullBlocks; // Align from the newest candles backwards
+    for (let i = startIndex; i < candles1h.length; i += 4) {
       const chunk = candles1h.slice(i, i + 4);
-      if (chunk.length > 0) {
+      if (chunk.length === 4) {
         candles4h.push({
           open: Number(chunk[0].open),
           high: Math.max(...chunk.map(c => Number(c.high))),
@@ -1453,7 +1615,7 @@ export class SignalsController implements OnModuleInit {
     if (['US100', 'NAS100', 'NQ'].some(c => s.includes(c))) return 'INDICES_US100';
     if (['US30', 'DOW', 'YM'].some(c => s.includes(c))) return 'INDICES_US30';
     if (['SPX500', 'SPX', 'ES', 'DAX40', 'DAX', 'GER40', 'GER30'].some(c => s.includes(c))) return 'INDICES_BROAD';
-    if (['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'GOOG', 'META', 'NFLX', 'AMD'].some(c => s === c || s.startsWith(c))) return 'STOCKS';
+    if (['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'GOOG', 'META', 'NFLX', 'AMD', 'INTC', 'CRM', 'ORCL', 'PLTR', 'BABA', 'UBER', 'COIN', 'DIS', 'PYPL', 'JPM', 'BAC', 'V', 'MA', 'XOM', 'CVX'].some(c => s === c || s.startsWith(c))) return 'STOCKS';
     if (['USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'CADJPY', 'CHFJPY', 'NZDJPY'].some(c => s.includes(c)) || s.endsWith('JPY')) return 'USDJPY';
     if (['EURUSD', 'GBPUSD', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURGBP', 'EURCAD', 'GBPAUD', 'EURAUD', 'OIL', 'WTI', 'BRENT'].some(c => s.includes(c)) || symbol.includes('/')) return 'FOREX';
     return 'UNKNOWN';
@@ -1465,6 +1627,219 @@ export class SignalsController implements OnModuleInit {
     if (interval === '15m' || interval === '30m') return 24;
     if (interval === '1h') return 24;
     return 20; // 4h, 1d
+  }
+
+  private intermarketCache: { data: any; cachedAt: number } | null = null;
+
+  async fetchIntermarketData(): Promise<{
+    dxy: { price: number; change1h: number; trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' };
+    us10y: { yield: number; change1h: number; trend: 'RISING' | 'FALLING' | 'FLAT' };
+    vix: { level: number; regime: 'LOW_RISK' | 'NORMAL' | 'ELEVATED' | 'EXTREME' };
+    goldSpot: { price: number; source: string; isRealSpot: boolean };
+  }> {
+    const now = Date.now();
+    if (this.intermarketCache && (now - this.intermarketCache.cachedAt) < 60000) {
+      return this.intermarketCache.data;
+    }
+
+    let dxy = { price: 0, change1h: 0, trend: 'NEUTRAL' as 'BULLISH' | 'BEARISH' | 'NEUTRAL' };
+    let us10y = { yield: 0, change1h: 0, trend: 'FLAT' as 'RISING' | 'FALLING' | 'FLAT' };
+    let vix = { level: 0, regime: 'NORMAL' as 'LOW_RISK' | 'NORMAL' | 'ELEVATED' | 'EXTREME' };
+    let goldSpot = { price: 0, source: 'UNAVAILABLE', isRealSpot: false };
+
+    try {
+      const symbols = ['DX-Y.NYB', '^TNX', '^VIX', 'GC=F'];
+      const results = await Promise.allSettled(
+        symbols.map(sym =>
+          this.fetchWithTimeout(
+            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=15m&range=1d`,
+            {},
+            3000
+          ).then(r => r.ok ? r.json() : null)
+        )
+      );
+
+      // Process DXY
+      if (results[0].status === 'fulfilled' && results[0].value?.chart?.result?.[0]) {
+        const meta = results[0].value.chart.result[0].meta;
+        const quote = results[0].value.chart.result[0].indicators?.quote?.[0];
+        const closes = (quote?.close || []).filter((c: any) => c !== null && !isNaN(c));
+        const price = Number(meta.regularMarketPrice || closes[closes.length - 1] || 0);
+        if (price > 0) {
+          const prevClose = Number(meta.chartPreviousClose || meta.previousClose || closes[0] || price);
+          const change1h = prevClose > 0 ? parseFloat((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0;
+          const trend = change1h > 0.08 ? 'BULLISH' : change1h < -0.08 ? 'BEARISH' : 'NEUTRAL';
+          dxy = { price: parseFloat(price.toFixed(3)), change1h, trend };
+        }
+      }
+
+      // Process US10Y (^TNX)
+      if (results[1].status === 'fulfilled' && results[1].value?.chart?.result?.[0]) {
+        const meta = results[1].value.chart.result[0].meta;
+        const quote = results[1].value.chart.result[0].indicators?.quote?.[0];
+        const closes = (quote?.close || []).filter((c: any) => c !== null && !isNaN(c));
+        const yVal = Number(meta.regularMarketPrice || closes[closes.length - 1] || 0);
+        if (yVal > 0) {
+          const prevY = Number(meta.chartPreviousClose || meta.previousClose || closes[0] || yVal);
+          const change1h = prevY > 0 ? parseFloat((((yVal - prevY) / prevY) * 100).toFixed(2)) : 0;
+          const trend = change1h > 0.15 ? 'RISING' : change1h < -0.15 ? 'FALLING' : 'FLAT';
+          us10y = { yield: parseFloat(yVal.toFixed(3)), change1h, trend };
+        }
+      }
+
+      // Process VIX (^VIX)
+      if (results[2].status === 'fulfilled' && results[2].value?.chart?.result?.[0]) {
+        const meta = results[2].value.chart.result[0].meta;
+        const level = Number(meta.regularMarketPrice || 0);
+        if (level > 0) {
+          const regime = level > 28 ? 'EXTREME' : level > 20 ? 'ELEVATED' : level < 14 ? 'LOW_RISK' : 'NORMAL';
+          vix = { level: parseFloat(level.toFixed(2)), regime };
+        }
+      }
+
+      // Process Gold COMEX (GC=F)
+      if (results[3].status === 'fulfilled' && results[3].value?.chart?.result?.[0]) {
+        const meta = results[3].value.chart.result[0].meta;
+        const price = Number(meta.regularMarketPrice || 0);
+        if (price > 1000) {
+          goldSpot = { price: parseFloat(price.toFixed(2)), source: 'YAHOO_COMEX_FUTURES', isRealSpot: true };
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[SignalsService] Intermarket fetch warning: ${err.message}. Market feeds marked neutral.`);
+    }
+
+    const compiled = { dxy, us10y, vix, goldSpot };
+    this.intermarketCache = { data: compiled, cachedAt: now };
+    return compiled;
+  }
+
+  private detectGoldRegime(
+    candles: any[],
+    atr: number,
+    ema20: number,
+    ema50: number,
+    ema200: number,
+    dxyTrend: string = 'NEUTRAL',
+    yieldTrend: string = 'FLAT'
+  ): {
+    regime: string;
+    description: string;
+    volatilityPercentile: number;
+    regimeBias: 'BUY' | 'SELL' | 'NEUTRAL';
+  } {
+    const closes = candles.map(c => Number(c.close));
+    const currentPrice = closes[closes.length - 1];
+    const lastCandle = candles[candles.length - 1];
+    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
+
+    // Calculate rolling 50-period average ATR
+    const atr50 = this.calcATR(candles, Math.min(50, candles.length));
+    const atrRatio = atr50 > 0 ? atr / atr50 : 1.0;
+    const volPercentile = Math.min(100, Math.round(atrRatio * 50));
+
+    // 24-bar high/low extremes
+    const slice24 = candles.slice(-24);
+    const max24 = Math.max(...slice24.map(c => Number(c.high)).slice(0, -1));
+    const min24 = Math.min(...slice24.map(c => Number(c.low)).slice(0, -1));
+
+    // 1. Breakout / Breakdown with displacement
+    if (currentPrice > max24 && lastBody > atr * 1.1) {
+      return {
+        regime: 'BULLISH_BREAKOUT',
+        description: `Impulsive bullish breakout above 24-bar high ($${max24.toFixed(2)}) with displacement volume`,
+        volatilityPercentile: volPercentile,
+        regimeBias: 'BUY'
+      };
+    }
+    if (currentPrice < min24 && lastBody > atr * 1.1) {
+      return {
+        regime: 'BEARISH_BREAKDOWN',
+        description: `Impulsive bearish breakdown below 24-bar low ($${min24.toFixed(2)}) with displacement volume`,
+        volatilityPercentile: volPercentile,
+        regimeBias: 'SELL'
+      };
+    }
+
+    // 2. High Volatility Expansion
+    if (atrRatio > 1.5) {
+      return {
+        regime: 'VOLATILITY_EXPANSION',
+        description: `ATR expanded ${((atrRatio - 1) * 100).toFixed(0)}% above 50-bar baseline ($${atr.toFixed(2)} vs $${atr50.toFixed(2)})`,
+        volatilityPercentile: volPercentile,
+        regimeBias: 'NEUTRAL'
+      };
+    }
+
+    // 3. Clear Trend Regimes (Aligned with DXY and Yields)
+    if (currentPrice > ema20 && ema20 > ema50 && ema50 > ema200) {
+      const dxyConfirm = dxyTrend === 'BEARISH' ? 'confirmed by softening DXY' : 'counter-DXY flow';
+      return {
+        regime: 'BULLISH_TREND',
+        description: `Triple stacked bullish EMAs (20>50>200) above $${ema200.toFixed(2)} — ${dxyConfirm}`,
+        volatilityPercentile: volPercentile,
+        regimeBias: 'BUY'
+      };
+    }
+
+    if (currentPrice < ema20 && ema20 < ema50 && ema50 < ema200) {
+      const dxyConfirm = dxyTrend === 'BULLISH' ? 'confirmed by strong USD' : 'sovereign de-risking';
+      return {
+        regime: 'BEARISH_TREND',
+        description: `Triple stacked bearish EMAs (20<50<200) below $${ema200.toFixed(2)} — ${dxyConfirm}`,
+        volatilityPercentile: volPercentile,
+        regimeBias: 'SELL'
+      };
+    }
+
+    // 4. Choppy Range Consolidation
+    const emaDist = Math.abs(ema20 - ema50);
+    if (emaDist < (atr * 0.25)) {
+      return {
+        regime: 'RANGE_CONSOLIDATION',
+        description: `Compressed market structure between $${min24.toFixed(2)} and $${max24.toFixed(2)}. EMAs flat.`,
+        volatilityPercentile: volPercentile,
+        regimeBias: 'NEUTRAL'
+      };
+    }
+
+    return {
+      regime: 'TRANSITIONAL_STRUCTURE',
+      description: `Market seeking liquidity between $${ema50.toFixed(2)} and $${ema200.toFixed(2)}`,
+      volatilityPercentile: volPercentile,
+      regimeBias: 'NEUTRAL'
+    };
+  }
+
+  private calcGoldLevels(candles: any[], currentPrice: number) {
+    const sliceLast24 = candles.slice(-24);
+    const dailyHigh = Math.max(...sliceLast24.map(c => Number(c.high)));
+    const dailyLow = Math.min(...sliceLast24.map(c => Number(c.low)));
+    const dailyOpen = Number(sliceLast24[0]?.open || currentPrice);
+
+    // Calculate nearest $25 round psychological numbers
+    const baseRound = Math.floor(currentPrice / 25) * 25;
+    const roundLevels = [baseRound - 25, baseRound, baseRound + 25, baseRound + 50];
+
+    const supports = [dailyLow, ...roundLevels.filter(lvl => lvl < currentPrice)].sort((a, b) => b - a);
+    const resistances = [dailyHigh, ...roundLevels.filter(lvl => lvl > currentPrice)].sort((a, b) => a - b);
+
+    const nearestSupport = supports[0] || (currentPrice - 15);
+    const nearestResistance = resistances[0] || (currentPrice + 15);
+
+    const distToSupport = parseFloat((currentPrice - nearestSupport).toFixed(2));
+    const distToResistance = parseFloat((nearestResistance - currentPrice).toFixed(2));
+
+    return {
+      dailyHigh: parseFloat(dailyHigh.toFixed(2)),
+      dailyLow: parseFloat(dailyLow.toFixed(2)),
+      dailyOpen: parseFloat(dailyOpen.toFixed(2)),
+      nearestSupport: parseFloat(nearestSupport.toFixed(2)),
+      nearestResistance: parseFloat(nearestResistance.toFixed(2)),
+      distToSupport,
+      distToResistance,
+      psychologicalLevels: roundLevels
+    };
   }
 
   private btcStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
@@ -1554,31 +1929,46 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) (16 Points)
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish crypto momentum`);
+    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.12% Neutral Deadband (16 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0012) {
+      if (ema20 > ema50) {
+        bullishScore += 16;
+        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish crypto momentum (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 16;
+        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish crypto momentum (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish crypto momentum`);
+      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — trend transition neutral`);
     }
 
-    // Layer 2: HTF Macro Regime (200 EMA) (14 Points)
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`Bitcoin price above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+    // Layer 2: HTF Macro Regime (200 EMA) with 0.20% Neutral Deadband (14 Points)
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0020) {
+      if (entryPrice > ema200) {
+        bullishScore += 14;
+        reasonsFor.push(`Bitcoin price above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+      } else {
+        bearishScore += 14;
+        reasonsAgainst.push(`Bitcoin price below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`Bitcoin price below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      reasonsFor.push(`Price oscillating directly on 200 EMA ($${ema200.toFixed(2)}) — macro inflection neutral`);
     }
 
-    // Layer 3: VWAP Institutional Floor (15 Points)
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — institutional spot accumulation floor`);
+    // Layer 3: VWAP Institutional Floor with 0.15% Neutral Zone (15 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0015) {
+      if (entryPrice > vwap) {
+        bullishScore += 15;
+        reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — institutional spot accumulation floor`);
+      } else {
+        bearishScore += 15;
+        reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — institutional overhead supply resistance`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — institutional overhead supply resistance`);
+      reasonsFor.push(`Price at VWAP equilibrium ($${vwap.toFixed(2)}) — no institutional imbalance`);
     }
 
     // Layer 4: Liquidity Structure & BOS (16 Points)
@@ -1599,7 +1989,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 5: Institutional Displacement (12 Points)
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
@@ -1610,7 +2000,7 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Layer 6: FVG & Order Block Imbalance (13 Points)
+    // Layer 6: FVG & Order Block Imbalance (16 Points)
     if (fvg.fvg_detected) {
       if (fvg.type === 'BULLISH') {
         bullishScore += 8;
@@ -1645,7 +2035,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 8: Session Window Timing
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
@@ -1662,11 +2052,20 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Direction determination
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    // Direction determination with NO-TRADE check on exact score ties
+    if (bullishScore === bearishScore) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} balanced momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting directional catalyst.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
+      };
+    }
+
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
+
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
 
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
@@ -1722,7 +2121,7 @@ export class SignalsController implements OnModuleInit {
       takeProfit3: parseFloat(takeProfit3.toFixed(2)),
       riskRewardRatio: rrRatio,
       confidenceScore,
-      calculatedWinProb: confidenceScore,
+      calculatedWinProb,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -1831,31 +2230,46 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) (16 Points)
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish index momentum`);
+    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0010) {
+      if (ema20 > ema50) {
+        bullishScore += 16;
+        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish index momentum (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 16;
+        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish index momentum (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish index momentum`);
+      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — index momentum neutral`);
     }
 
-    // Layer 2: HTF 200 EMA Regime (14 Points)
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`Index trading above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+    // Layer 2: HTF 200 EMA Regime with 0.15% Neutral Deadband (14 Points)
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0015) {
+      if (entryPrice > ema200) {
+        bullishScore += 14;
+        reasonsFor.push(`Index trading above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+      } else {
+        bearishScore += 14;
+        reasonsAgainst.push(`Index trading below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`Index trading below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      reasonsFor.push(`Index price right at 200 EMA ($${ema200.toFixed(2)}) — inflection neutral`);
     }
 
-    // Layer 3: VWAP Mega-Cap Floor (15 Points)
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`Index above VWAP ($${vwap.toFixed(2)}) — mega-cap tech institutional demand floor`);
+    // Layer 3: VWAP Mega-Cap Floor with 0.12% Neutral Zone (15 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0012) {
+      if (entryPrice > vwap) {
+        bullishScore += 15;
+        reasonsFor.push(`Index above VWAP ($${vwap.toFixed(2)}) — mega-cap tech institutional demand floor`);
+      } else {
+        bearishScore += 15;
+        reasonsAgainst.push(`Index below VWAP ($${vwap.toFixed(2)}) — mega-cap tech overhead supply resistance`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`Index below VWAP ($${vwap.toFixed(2)}) — mega-cap tech overhead supply resistance`);
+      reasonsFor.push(`Index balanced at VWAP ($${vwap.toFixed(2)}) — institutional equilibrium`);
     }
 
     // Layer 4: Liquidity Sweeps & BOS (16 Points)
@@ -1876,7 +2290,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 5: Institutional Displacement (12 Points)
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
@@ -1887,7 +2301,7 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Layer 6: FVG & Order Block Imbalance (13 Points)
+    // Layer 6: FVG & Order Block Imbalance (16 Points)
     if (fvg.fvg_detected) {
       if (fvg.type === 'BULLISH') {
         bullishScore += 8;
@@ -1922,7 +2336,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 8: Session Timing
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
@@ -1940,10 +2354,19 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Determine Direction & Final Confluence Score
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    if (bullishScore === bearishScore) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} balanced momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting directional breakout.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
+      };
+    }
+
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
+
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
 
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
@@ -1997,7 +2420,7 @@ export class SignalsController implements OnModuleInit {
       takeProfit3: parseFloat(takeProfit3.toFixed(2)),
       riskRewardRatio: rrRatio,
       confidenceScore,
-      calculatedWinProb: confidenceScore,
+      calculatedWinProb,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -2106,31 +2529,46 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) (16 Points)
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) blue-chip bullish trend`);
+    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0010) {
+      if (ema20 > ema50) {
+        bullishScore += 16;
+        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) blue-chip bullish trend (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 16;
+        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) blue-chip bearish trend (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) blue-chip bearish trend`);
+      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — industrial trend neutral`);
     }
 
-    // Layer 2: HTF 200 EMA Regime (14 Points)
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`US30 price trading above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+    // Layer 2: HTF 200 EMA Regime with 0.15% Neutral Deadband (14 Points)
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0015) {
+      if (entryPrice > ema200) {
+        bullishScore += 14;
+        reasonsFor.push(`US30 price trading above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+      } else {
+        bearishScore += 14;
+        reasonsAgainst.push(`US30 price trading below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`US30 price trading below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      reasonsFor.push(`US30 oscillating on 200 EMA ($${ema200.toFixed(2)}) — inflection neutral`);
     }
 
-    // Layer 3: VWAP Demand Floor (15 Points)
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — industrial & financial capital demand floor active`);
+    // Layer 3: VWAP Demand Floor with 0.12% Neutral Zone (15 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0012) {
+      if (entryPrice > vwap) {
+        bullishScore += 15;
+        reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — industrial & financial capital demand floor active`);
+      } else {
+        bearishScore += 15;
+        reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — industrial & financial overhead resistance`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — industrial & financial overhead resistance`);
+      reasonsFor.push(`Price at VWAP equilibrium ($${vwap.toFixed(2)}) — balanced value flow`);
     }
 
     // Layer 4: Liquidity Sweeps & BOS (16 Points)
@@ -2151,7 +2589,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 5: Institutional Displacement (12 Points)
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
@@ -2162,7 +2600,7 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Layer 6: FVG & Order Block Imbalance (13 Points)
+    // Layer 6: FVG & Order Block Imbalance (16 Points)
     if (fvg.fvg_detected) {
       if (fvg.type === 'BULLISH') {
         bullishScore += 8;
@@ -2197,17 +2635,37 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 8: Session Timing
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
 
-    // Determine Direction & High-Conviction Threshold (58/100)
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    // Regime-Specific Strategy Adjustments: Mean Reversion Protection for US30
+    if (isRanging) {
+      if (entryPrice > vwap * 1.008) {
+        bullishScore -= 10;
+        reasonsAgainst.push('Ranging Regime: Price extended above VWAP — mean reversion risk');
+      } else if (entryPrice < vwap * 0.992) {
+        bearishScore -= 10;
+        reasonsAgainst.push('Ranging Regime: Price extended below VWAP — mean reversion risk');
+      }
+    }
+
+    // Determine Direction & High-Conviction Threshold with tie handling
+    if (bullishScore === bearishScore) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} balanced momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting directional breakout.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
+      };
+    }
+
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
+
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
 
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
@@ -2260,7 +2718,7 @@ export class SignalsController implements OnModuleInit {
       takeProfit3: parseFloat(takeProfit3.toFixed(2)),
       riskRewardRatio: rrRatio,
       confidenceScore,
-      calculatedWinProb: confidenceScore,
+      calculatedWinProb,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -2316,9 +2774,10 @@ export class SignalsController implements OnModuleInit {
     const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
-    // 3. Asian Session Range & Liquidity Sweeps (00:00 - 07:00 UTC)
-    const recentHighs = candles.slice(-24).map(c => Number(c.high));
-    const recentLows = candles.slice(-24).map(c => Number(c.low));
+    // 3. Asian Session Range & Liquidity Sweeps (00:00 - 07:00 UTC) with Adaptive Lookback
+    const fxLookback = this.getAdaptiveLookback(interval);
+    const recentHighs = candles.slice(-fxLookback).map(c => Number(c.high));
+    const recentLows = candles.slice(-fxLookback).map(c => Number(c.low));
     const asianHigh = Math.max(...recentHighs.slice(0, -1));
     const asianLow = Math.min(...recentLows.slice(0, -1));
 
@@ -2363,31 +2822,46 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    // Layer 1: EMA Trend Structure (16 Points)
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`EMA-20 (${ema20.toFixed(precision)}) > EMA-50 (${ema50.toFixed(precision)}) structural bullish alignment`);
+    // Layer 1: EMA Trend Structure with 0.05% Neutral Deadband (16 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0005) {
+      if (ema20 > ema50) {
+        bullishScore += 16;
+        reasonsFor.push(`EMA-20 (${ema20.toFixed(precision)}) > EMA-50 (${ema50.toFixed(precision)}) structural bullish alignment (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 16;
+        reasonsAgainst.push(`EMA-20 (${ema20.toFixed(precision)}) < EMA-50 (${ema50.toFixed(precision)}) structural bearish alignment (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`EMA-20 (${ema20.toFixed(precision)}) < EMA-50 (${ema50.toFixed(precision)}) structural bearish alignment`);
+      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — trend transition neutral`);
     }
 
-    // Layer 2: VWAP Demand Floor (15 Points)
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`Price trading above VWAP (${vwap.toFixed(precision)}) — institutional demand floor active`);
+    // Layer 2: VWAP Demand Floor with 0.06% Neutral Zone (15 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0006) {
+      if (entryPrice > vwap) {
+        bullishScore += 15;
+        reasonsFor.push(`Price trading above VWAP (${vwap.toFixed(precision)}) — institutional demand floor active`);
+      } else {
+        bearishScore += 15;
+        reasonsAgainst.push(`Price trading below VWAP (${vwap.toFixed(precision)}) — institutional overhead resistance`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`Price trading below VWAP (${vwap.toFixed(precision)}) — institutional overhead resistance`);
+      reasonsFor.push(`Price balanced at VWAP (${vwap.toFixed(precision)}) — FX value equilibrium`);
     }
 
-    // Layer 3: Higher-Timeframe 200 EMA Regime (14 Points)
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`Price above 200 EMA (${ema200.toFixed(precision)}) — HTF macro bull regime`);
+    // Layer 3: Higher-Timeframe 200 EMA Regime with 0.08% Neutral Deadband (14 Points)
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0008) {
+      if (entryPrice > ema200) {
+        bullishScore += 14;
+        reasonsFor.push(`Price above 200 EMA (${ema200.toFixed(precision)}) — HTF macro bull regime`);
+      } else {
+        bearishScore += 14;
+        reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(precision)}) — HTF macro bear regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(precision)}) — HTF macro bear regime`);
+      reasonsFor.push(`Price oscillating right at 200 EMA (${ema200.toFixed(precision)}) — macro inflection neutral`);
     }
 
     // Layer 4: Asian Range Liquidity Sweeps & BOS (16 Points)
@@ -2408,7 +2882,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 5: Institutional FX Displacement (12 Points)
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
@@ -2419,7 +2893,7 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Layer 6: FVG & Order Block Imbalance (13 Points)
+    // Layer 6: FVG & Order Block Imbalance (16 Points)
     if (fvg.fvg_detected) {
       if (fvg.type === 'BULLISH') {
         bullishScore += 8;
@@ -2454,17 +2928,26 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 8: Prime Session Timing
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
 
-    // Determine Direction & High-Conviction Threshold (58/100)
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    // Determine Direction with tie handling
+    if (bullishScore === bearishScore) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} balanced FX momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting macro catalyst.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
+      };
+    }
+
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
+
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
 
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
@@ -2479,9 +2962,9 @@ export class SignalsController implements OnModuleInit {
       ? Math.min(Math.max(atr * 1.25, isScalp ? 0.25 : 0.45), isScalp ? 0.45 : 0.85)
       : Math.min(Math.max(atr * 1.25, isScalp ? 0.0022 : 0.0038), isScalp ? 0.0045 : 0.0075); // Minimum 22-38 pips buffer for EUR/USD
 
-    // Institutional Structure Invalidation SL (24-Candle Session Swing Window)
-    const swingLows = candles.slice(-24).map(c => Number(c.low));
-    const swingHighs = candles.slice(-24).map(c => Number(c.high));
+    // Institutional Structure Invalidation SL (Adaptive Session Swing Window)
+    const swingLows = candles.slice(-fxLookback).map(c => Number(c.low));
+    const swingHighs = candles.slice(-fxLookback).map(c => Number(c.high));
     const lowestLow = Math.min(...swingLows);
     const highestHigh = Math.max(...swingHighs);
 
@@ -2602,28 +3085,46 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`4H + 1H Equities Institutional Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) structural bullish trend`);
+    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.12% Neutral Deadband (16 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0012) {
+      if (ema20 > ema50) {
+        bullishScore += 16;
+        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) structural bullish trend (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 16;
+        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) structural bearish trend (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) structural bearish trend`);
+      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — equity momentum neutral`);
     }
 
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`Trading above VWAP ($${vwap.toFixed(2)}) — institutional demand floor active`);
+    // Layer 2: VWAP Demand Floor with 0.15% Neutral Zone (15 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0015) {
+      if (entryPrice > vwap) {
+        bullishScore += 15;
+        reasonsFor.push(`Trading above VWAP ($${vwap.toFixed(2)}) — institutional demand floor active`);
+      } else {
+        bearishScore += 15;
+        reasonsAgainst.push(`Trading below VWAP ($${vwap.toFixed(2)}) — overhead volume resistance`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`Trading below VWAP ($${vwap.toFixed(2)}) — overhead volume resistance`);
+      reasonsFor.push(`Price oscillating at equity VWAP ($${vwap.toFixed(2)}) — institutional equilibrium`);
     }
 
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`Price above 200 EMA ($${ema200.toFixed(2)}) — Macro Bull Market Regime`);
+    // Layer 3: Macro 200 EMA Regime with 0.20% Neutral Deadband (14 Points)
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0020) {
+      if (entryPrice > ema200) {
+        bullishScore += 14;
+        reasonsFor.push(`Price above 200 EMA ($${ema200.toFixed(2)}) — Macro Bull Market Regime`);
+      } else {
+        bearishScore += 14;
+        reasonsAgainst.push(`Price below 200 EMA ($${ema200.toFixed(2)}) — Macro Bear Market Regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`Price below 200 EMA ($${ema200.toFixed(2)}) — Macro Bear Market Regime`);
+      reasonsFor.push(`Price at 200 EMA ($${ema200.toFixed(2)}) — long-term secular inflection neutral`);
     }
 
     if (sweptPDL_Rejection || breakoutPDH) {
@@ -2635,7 +3136,7 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(sweptPDH_Rejection ? `Liquidity Sweep of Session High ($${pdh.toFixed(2)}) with institutional rejection` : `BOS Breakdown below Session Low ($${pdl.toFixed(2)})`);
     }
 
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       if (lastClose > lastOpen) {
         bullishScore += 12;
         reasonsFor.push(`Institutional Buy Displacement candle ($${lastBody.toFixed(2)} move > 1.15x ATR)`);
@@ -2673,10 +3174,20 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`RSI momentum accelerating bearish (${rsi.toFixed(1)})`);
     }
 
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    // Direction determination with tie handling
+    if (bullishScore === bearishScore) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} balanced equity momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting institutional earnings or volume push.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
+      };
+    }
+
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
+
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
 
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
@@ -2726,7 +3237,7 @@ export class SignalsController implements OnModuleInit {
       takeProfit3: parseFloat(takeProfit3.toFixed(2)),
       riskRewardRatio: rrRatio,
       confidenceScore,
-      calculatedWinProb: confidenceScore,
+      calculatedWinProb,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -2788,6 +3299,25 @@ export class SignalsController implements OnModuleInit {
     const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
     const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
 
+    // Real Session Timing Classification for Global Indices (UTC)
+    const currentHour = new Date().getUTCHours();
+    const currentMin = new Date().getUTCMinutes();
+    let sessionName = 'Asian Globex Session (Overnight Consolidation)';
+    let sessionScore = 2;
+    if (currentHour >= 7 && currentHour < 13) {
+      sessionName = 'European Core Cash Session (Frankfurt/London DAX High Liquidity)';
+      sessionScore = 4;
+    } else if (currentHour === 13 && currentMin >= 30) {
+      sessionName = 'US Cash Session Open (SPX Primary Volume Window)';
+      sessionScore = 5;
+    } else if (currentHour >= 14 && currentHour < 16) {
+      sessionName = 'Europe / US Benchmark Overlap';
+      sessionScore = 5;
+    } else if (currentHour >= 16 && currentHour < 20) {
+      sessionName = 'US Afternoon Cash Session';
+      sessionScore = 4;
+    }
+
     let bullishScore = 0;
     let bearishScore = 0;
     const reasonsFor: string[] = [];
@@ -2801,28 +3331,46 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`4H + 1H Index Confluence: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`EMA-20 (${ema20.toFixed(2)}) > EMA-50 (${ema50.toFixed(2)}) bullish trend`);
+    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0010) {
+      if (ema20 > ema50) {
+        bullishScore += 16;
+        reasonsFor.push(`EMA-20 (${ema20.toFixed(2)}) > EMA-50 (${ema50.toFixed(2)}) bullish trend (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 16;
+        reasonsAgainst.push(`EMA-20 (${ema20.toFixed(2)}) < EMA-50 (${ema50.toFixed(2)}) bearish trend (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`EMA-20 (${ema20.toFixed(2)}) < EMA-50 (${ema50.toFixed(2)}) bearish trend`);
+      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — index trend neutral`);
     }
 
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`Trading above VWAP (${vwap.toFixed(2)}) demand floor`);
+    // Layer 2: VWAP Demand Floor with 0.12% Neutral Zone (15 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0012) {
+      if (entryPrice > vwap) {
+        bullishScore += 15;
+        reasonsFor.push(`Trading above VWAP (${vwap.toFixed(2)}) demand floor`);
+      } else {
+        bearishScore += 15;
+        reasonsAgainst.push(`Trading below VWAP (${vwap.toFixed(2)}) resistance`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`Trading below VWAP (${vwap.toFixed(2)}) resistance`);
+      reasonsFor.push(`Price oscillating at index VWAP (${vwap.toFixed(2)}) — benchmark equilibrium`);
     }
 
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`Above 200 EMA (${ema200.toFixed(2)}) macro bull regime`);
+    // Layer 3: 200 EMA Regime with 0.15% Neutral Deadband (14 Points)
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0015) {
+      if (entryPrice > ema200) {
+        bullishScore += 14;
+        reasonsFor.push(`Above 200 EMA (${ema200.toFixed(2)}) macro bull regime`);
+      } else {
+        bearishScore += 14;
+        reasonsAgainst.push(`Below 200 EMA (${ema200.toFixed(2)}) macro bear regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`Below 200 EMA (${ema200.toFixed(2)}) macro bear regime`);
+      reasonsFor.push(`Price right at 200 EMA (${ema200.toFixed(2)}) — macro inflection neutral`);
     }
 
     if (sweptPDL_Rejection || breakoutPDH) {
@@ -2834,9 +3382,14 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(sweptPDH_Rejection ? `Liquidity sweep of session high (${pdh.toFixed(2)}) with rejection` : `BOS Breakdown below session low (${pdl.toFixed(2)})`);
     }
 
-    if (isDisplacement) {
-      if (lastClose > lastOpen) bullishScore += 12;
-      else bearishScore += 12;
+    if (isDisplacement && lastClose !== lastOpen) {
+      if (lastClose > lastOpen) {
+        bullishScore += 12;
+        reasonsFor.push(`Institutional Index Displacement ($${lastBody.toFixed(2)} move > 1.15x ATR)`);
+      } else {
+        bearishScore += 12;
+        reasonsAgainst.push(`Institutional Index Displacement ($${lastBody.toFixed(2)} move > 1.15x ATR)`);
+      }
     }
 
     if (fvg.fvg_detected) {
@@ -2852,10 +3405,27 @@ export class SignalsController implements OnModuleInit {
     if (rsi > 52 && rsi < 72) bullishScore += 15;
     else if (rsi < 48 && rsi > 28) bearishScore += 15;
 
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    // Layer 8: Session Timing
+    if (isDisplacement && lastClose !== lastOpen) {
+      const isBullBody = lastClose > lastOpen;
+      if (isBullBody) bullishScore += sessionScore;
+      else bearishScore += sessionScore;
+    }
+
+    // Determine Direction with tie handling
+    if (bullishScore === bearishScore) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} balanced benchmark momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting macro catalyst.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
+      };
+    }
+
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
+
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
 
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
@@ -2890,7 +3460,7 @@ export class SignalsController implements OnModuleInit {
     const entryZoneLower = (entryPrice - (atr * 0.15)).toFixed(2);
     const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
 
-    const aiValidation = `Dedicated Broad Benchmark Index Engine evaluated ${symbol}. ` +
+    const aiValidation = `Dedicated Broad Benchmark Index Engine evaluated ${symbol} during ${sessionName}. ` +
       `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at ${entryPrice.toFixed(2)} ` +
       `with invalidation stop loss set at ${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
@@ -2906,14 +3476,14 @@ export class SignalsController implements OnModuleInit {
       takeProfit3: parseFloat(takeProfit3.toFixed(2)),
       riskRewardRatio: rrRatio,
       confidenceScore,
-      calculatedWinProb: confidenceScore,
+      calculatedWinProb,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
       liquidityStatus: sweptPDL_Rejection ? 'Session Low Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Session High Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active Index Displacement' : 'Normal Volatility',
-      sessionStatus: 'Active Index Trading Session',
+      sessionStatus: sessionName,
       reasonsFor,
       reasonsAgainst,
       aiValidation,
@@ -2921,7 +3491,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private usdjpyStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
+  private usdjpyStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, intermarket?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -3018,31 +3588,58 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    // Layer 1: Yield Spread & EMA Trend Structure (16 Points)
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`US-Japan yield spread expanding: EMA-20 (${ema20.toFixed(2)}) > EMA-50 (${ema50.toFixed(2)})`);
+    // Layer 1: Yield Spread & EMA Trend Structure with 0.05% Neutral Deadband (16 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0005) {
+      if (ema20 > ema50) {
+        bullishScore += 16;
+        reasonsFor.push(`US-Japan yield spread expanding: EMA-20 (${ema20.toFixed(2)}) > EMA-50 (${ema50.toFixed(2)}) (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 16;
+        reasonsAgainst.push(`US-Japan yield spread contracting: EMA-20 (${ema20.toFixed(2)}) < EMA-50 (${ema50.toFixed(2)}) (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`US-Japan yield spread contracting: EMA-20 (${ema20.toFixed(2)}) < EMA-50 (${ema50.toFixed(2)})`);
+      reasonsFor.push(`USDJPY EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — yield spread inflection neutral`);
     }
 
-    // Layer 2: VWAP Carry Trade Demand Floor (15 Points)
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`USDJPY above VWAP (${vwap.toFixed(2)}) — JPY carry trade demand active`);
+    // Layer 2: VWAP Carry Trade Demand Floor with 0.06% Neutral Zone (15 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0006) {
+      if (entryPrice > vwap) {
+        bullishScore += 15;
+        reasonsFor.push(`USDJPY above VWAP (${vwap.toFixed(2)}) — JPY carry trade demand active`);
+      } else {
+        bearishScore += 15;
+        reasonsAgainst.push(`USDJPY below VWAP (${vwap.toFixed(2)}) — JPY carry trade unwinding / risk-off`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`USDJPY below VWAP (${vwap.toFixed(2)}) — JPY carry trade unwinding / risk-off`);
+      reasonsFor.push(`USDJPY balanced right at VWAP (${vwap.toFixed(2)}) — carry equilibrium`);
     }
 
-    // Layer 3: Higher-Timeframe 200 EMA Regime (14 Points)
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`Price above 200 EMA (${ema200.toFixed(2)}) — HTF macro bull regime`);
+    // Layer 3: Higher-Timeframe 200 EMA Regime with 0.08% Neutral Deadband (14 Points)
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0008) {
+      if (entryPrice > ema200) {
+        bullishScore += 14;
+        reasonsFor.push(`Price above 200 EMA (${ema200.toFixed(2)}) — HTF macro bull regime`);
+      } else {
+        bearishScore += 14;
+        reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(2)}) — HTF macro bear regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(2)}) — HTF macro bear regime`);
+      reasonsFor.push(`Price oscillating right at 200 EMA (${ema200.toFixed(2)}) — macro inflection neutral`);
+    }
+
+    // Optional Intermarket Integration: US10Y Yield Spread Direction (10 Points)
+    if (intermarket?.us10y && intermarket.us10y.yield > 0) {
+      const us10y = intermarket.us10y;
+      if (us10y.trend === 'RISING') {
+        bullishScore += 6;
+        reasonsFor.push(`US 10Y Treasury Yield rising (${us10y.yield}%) — widening US-Japan rate differential supports USDJPY`);
+      } else if (us10y.trend === 'FALLING') {
+        bearishScore += 6;
+        reasonsAgainst.push(`US 10Y Treasury Yield falling (${us10y.yield}%) — narrowing rate differential pressures USDJPY`);
+      }
     }
 
     // Layer 4: Tokyo Session Liquidity Sweeps & BOS (16 Points)
@@ -3063,7 +3660,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 5: Institutional FX Displacement (12 Points)
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) {
         bullishScore += 12;
@@ -3074,7 +3671,7 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Layer 6: FVG & Order Block Imbalance (13 Points)
+    // Layer 6: FVG & Order Block Imbalance (16 Points)
     if (fvg.fvg_detected) {
       if (fvg.type === 'BULLISH') {
         bullishScore += 8;
@@ -3109,7 +3706,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Layer 8: Session Timing
-    if (isDisplacement) {
+    if (isDisplacement && lastClose !== lastOpen) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
@@ -3124,11 +3721,20 @@ export class SignalsController implements OnModuleInit {
       reasonsAgainst.push('⚠️ HIGH MoF Intervention Risk above 155.00 — verbal intervention warnings active');
     }
 
-    // Direction determination
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    // Direction determination with tie handling
+    if (bullishScore === bearishScore) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `${symbol} balanced USD/JPY momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting Fed-BoJ catalyst.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
+      };
+    }
+
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
+
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
 
     // Apply universal quality gate
     const gateResult = this.applyQualityGate({
@@ -3180,7 +3786,7 @@ export class SignalsController implements OnModuleInit {
       takeProfit3: parseFloat(takeProfit3.toFixed(precision)),
       riskRewardRatio: rrRatio,
       confidenceScore,
-      calculatedWinProb: confidenceScore,
+      calculatedWinProb,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -3195,7 +3801,7 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
-  private goldStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any) {
+  private goldStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, intermarket?: any) {
     if (!candles || candles.length < 10) {
       return {
         direction: 'WAIT',
@@ -3227,6 +3833,12 @@ export class SignalsController implements OnModuleInit {
     const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
     const isDisplacement = lastBody > (atr * 1.15);
 
+    // Candle Microstructure Metrics
+    const bodyToRangeRatio = parseFloat((lastBody / candleRange).toFixed(2));
+    const upperWickRatio = parseFloat((upperWick / candleRange).toFixed(2));
+    const lowerWickRatio = parseFloat((lowerWick / candleRange).toFixed(2));
+    const closePosition = parseFloat(((lastClose - lastLow) / candleRange).toFixed(2)); // 0 = close at low, 1 = close at high
+
     // 2. Liquidity Sweep vs Breakout (BOS) Detection (Adaptive Session Lookback)
     const lookback = this.getAdaptiveLookback(interval);
     const recentHighs = candles.slice(-lookback).map(c => Number(c.high));
@@ -3244,157 +3856,253 @@ export class SignalsController implements OnModuleInit {
     // Bearish Breakdown (BOS - Break of Structure below Min Low with strong bear close)
     const breakdownLow = lastClose <= minLow && lastClose < lastOpen;
 
-    // 3. Session Classification (UTC based)
+    // 3. Auto-Calculated S/R Levels & Psychological Round Numbers ($25 increments)
+    const levels = this.calcGoldLevels(candles, entryPrice);
+
+    // 4. Intermarket Feeds (DXY, US10Y Yield, VIX)
+    const dxy = intermarket?.dxy || { price: 0, change1h: 0, trend: 'NEUTRAL' };
+    const us10y = intermarket?.us10y || { yield: 0, change1h: 0, trend: 'FLAT' };
+    const vix = intermarket?.vix || { level: 0, regime: 'NORMAL' };
+    const goldSource = intermarket?.goldSpot?.source || 'YAHOO_COMEX_FUTURES';
+
+    // 5. Market Regime Detection
+    const regimeData = this.detectGoldRegime(candles, atr, ema20, ema50, ema200, dxy.trend, us10y.trend);
+
+    // 6. Session Classification (UTC based)
     const currentHour = new Date().getUTCHours();
     let sessionName = 'Asian Session (Range Build)';
-    let sessionScore = 3;
+    let sessionScore = 2;
     if (currentHour >= 7 && currentHour < 12) {
       sessionName = 'London Session (Expansion)';
       sessionScore = 4;
     } else if (currentHour >= 12 && currentHour < 17) {
       sessionName = 'London / New York Overlap (Prime Volume Window)';
-      sessionScore = 5;
+      sessionScore = 4;
     } else if (currentHour >= 17 && currentHour < 21) {
       sessionName = 'New York Session (Sub-Session)';
-      sessionScore = 4;
+      sessionScore = 3;
     }
 
-    // 4. Multi-Layer Confluence Scoring (Total 100 Points)
+    // 7. Multi-Layer Confluence Scoring (102 Points Total)
     let bullishScore = 0;
     let bearishScore = 0;
     const reasonsFor: string[] = [];
     const reasonsAgainst: string[] = [];
 
-    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
+    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (18 Points)
     if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
+      bullishScore += 18;
       reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
+      bearishScore += 18;
       reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
     }
 
-    // Layer 1: EMA Trend Structure (16 Points)
-    if (ema20 > ema50) {
-      bullishScore += 16;
-      reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish gold trend alignment`);
+    // Layer 1: Market Regime Alignment (12 Points)
+    if (regimeData.regimeBias === 'BUY') {
+      bullishScore += 12;
+      reasonsFor.push(`Market Regime: ${regimeData.regime} (${regimeData.description})`);
+    } else if (regimeData.regimeBias === 'SELL') {
+      bearishScore += 12;
+      reasonsAgainst.push(`Market Regime: ${regimeData.regime} (${regimeData.description})`);
     } else {
-      bearishScore += 16;
-      reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish gold trend alignment`);
+      reasonsFor.push(`Regime: ${regimeData.regime} — Volatility percentile: ${regimeData.volatilityPercentile}%`);
     }
 
-    // Layer 2: VWAP Institutional Price Level (15 Points)
-    if (entryPrice >= vwap) {
-      bullishScore += 15;
-      reasonsFor.push(`Price trading above VWAP ($${vwap.toFixed(2)}) — institutional spot demand floor active`);
+    // Layer 2: EMA Trend Structure 20/50/200 with Neutral Deadbands (10 Points)
+    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
+    if (emaSpreadPct >= 0.0008) { // 0.08% deadband
+      if (ema20 > ema50) {
+        bullishScore += 10;
+        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish gold trend alignment (+${(emaSpreadPct * 100).toFixed(2)}%)`);
+      } else {
+        bearishScore += 10;
+        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish gold trend alignment (-${(emaSpreadPct * 100).toFixed(2)}%)`);
+      }
     } else {
-      bearishScore += 15;
-      reasonsAgainst.push(`Price trading below VWAP ($${vwap.toFixed(2)}) — institutional overhead supply resistance`);
+      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — gold trend neutral`);
     }
 
-    // Layer 3: Higher-Timeframe 200 EMA Regime (14 Points)
-    if (entryPrice >= ema200) {
-      bullishScore += 14;
-      reasonsFor.push(`Price above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
+    if (ema200DistPct >= 0.0012) { // 0.12% deadband
+      if (entryPrice > ema200) {
+        bullishScore += 5;
+        reasonsFor.push(`Price above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
+      } else {
+        bearishScore += 5;
+        reasonsAgainst.push(`Price below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      }
     } else {
-      bearishScore += 14;
-      reasonsAgainst.push(`Price below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
+      reasonsFor.push(`Price at 200 EMA ($${ema200.toFixed(2)}) — macro inflection neutral`);
     }
 
-    // Layer 4: Liquidity Sweeps & BOS (16 Points)
+    // Layer 3: VWAP & Psychological S/R Floor/Ceiling with Neutral Deadbands (8 Points)
+    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
+    if (vwapDistPct >= 0.0008) { // 0.08% deadband
+      if (entryPrice > vwap) {
+        bullishScore += 4;
+        reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — institutional demand floor`);
+      } else {
+        bearishScore += 4;
+        reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — overhead supply resistance`);
+      }
+    } else {
+      reasonsFor.push(`Price oscillating at VWAP equilibrium ($${vwap.toFixed(2)})`);
+    }
+
+    const srDiff = Math.abs(levels.distToSupport - levels.distToResistance);
+    if (srDiff >= 1.50) { // $1.50 deadband
+      if (levels.distToSupport < levels.distToResistance) {
+        bullishScore += 4;
+        reasonsFor.push(`Proximity to major support at $${levels.nearestSupport.toFixed(2)} (only $${levels.distToSupport} away)`);
+      } else {
+        bearishScore += 4;
+        reasonsAgainst.push(`Proximity to major resistance at $${levels.nearestResistance.toFixed(2)} (only $${levels.distToResistance} away)`);
+      }
+    } else {
+      reasonsFor.push(`Price equidistant between support ($${levels.nearestSupport.toFixed(2)}) and resistance ($${levels.nearestResistance.toFixed(2)})`);
+    }
+
+    // Layer 4: US Dollar Index (DXY) Inverse Correlation (10 Points)
+    if (dxy.trend === 'BEARISH' && dxy.price > 0) {
+      bullishScore += 10;
+      reasonsFor.push(`US Dollar Index (DXY at ${dxy.price}, ${dxy.change1h > 0 ? '+' : ''}${dxy.change1h}%) softening — tailwind for XAU/USD`);
+    } else if (dxy.trend === 'BULLISH' && dxy.price > 0) {
+      bearishScore += 10;
+      reasonsAgainst.push(`US Dollar Index (DXY at ${dxy.price}, +${dxy.change1h}%) firming — headwind for gold valuation`);
+    } else if (dxy.price > 0) {
+      reasonsFor.push(`DXY Index neutral at ${dxy.price} (${dxy.change1h}%)`);
+    }
+
+    // Layer 5: US 10-Year Treasury Yields & Real Rates (8 Points)
+    if (us10y.trend === 'FALLING' && us10y.yield > 0) {
+      bullishScore += 8;
+      reasonsFor.push(`US 10Y Yield falling (${us10y.yield}%, ${us10y.change1h}%) — reduces opportunity cost of non-yielding bullion`);
+    } else if (us10y.trend === 'RISING' && us10y.yield > 0) {
+      bearishScore += 8;
+      reasonsAgainst.push(`US 10Y Yield rising (${us10y.yield}%, +${us10y.change1h}%) — higher real rates compress gold demand`);
+    } else if (us10y.yield > 0) {
+      reasonsFor.push(`US 10Y Yield steady at ${us10y.yield}%`);
+    }
+
+    // Layer 6: Smart Money Liquidity Sweeps & BOS (10 Points)
     if (sweptLow_Rejection) {
-      bullishScore += 16;
-      reasonsFor.push(`Sell-Side Liquidity Swept below $${minLow.toFixed(2)} with hammer rejection wick`);
+      bullishScore += 10;
+      reasonsFor.push(`Sell-Side Liquidity Swept below $${minLow.toFixed(2)} with strong hammer wick`);
     } else if (breakoutHigh) {
-      bullishScore += 16;
-      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${maxHigh.toFixed(2)}`);
+      bullishScore += 10;
+      reasonsFor.push(`Bullish Break of Structure (BOS) above previous swing high $${maxHigh.toFixed(2)}`);
     }
 
     if (sweptHigh_Rejection) {
-      bearishScore += 16;
+      bearishScore += 10;
       reasonsAgainst.push(`Buy-Side Liquidity Swept above $${maxHigh.toFixed(2)} with shooting star rejection wick`);
     } else if (breakdownLow) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${minLow.toFixed(2)}`);
+      bearishScore += 10;
+      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous swing low $${minLow.toFixed(2)}`);
     }
 
-    // Layer 5: Volume & Displacement Candles (12 Points)
+    // Layer 7: Displacement & Candle Microstructure (6 Points)
     if (isDisplacement) {
       const isBullBody = lastClose > lastOpen;
-      if (isBullBody) {
-        bullishScore += 12;
-        reasonsFor.push(`Strong bullish displacement candle body ($${lastBody.toFixed(2)} > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Strong bearish displacement candle body ($${lastBody.toFixed(2)} > 1.15x ATR)`);
+      if (isBullBody && closePosition >= 0.70) {
+        bullishScore += 6;
+        reasonsFor.push(`Bullish displacement candle body ($${lastBody.toFixed(2)} > 1.15x ATR, close at ${Math.round(closePosition * 100)}% of range)`);
+      } else if (!isBullBody && closePosition <= 0.30) {
+        bearishScore += 6;
+        reasonsAgainst.push(`Bearish displacement candle body ($${lastBody.toFixed(2)} > 1.15x ATR, close at ${Math.round(closePosition * 100)}% of range)`);
       }
     }
 
-    // Layer 6: FVG & Order Block Imbalance (12 Points)
+    // Layer 8: FVG & Order Block Imbalance (6 Points)
     if (fvg.fvg_detected) {
       if (fvg.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Fair Value Gap (FVG) imbalance zone detected (gap size: $${fvg.gap_size})`);
+        bullishScore += 3;
+        reasonsFor.push(`Bullish Fair Value Gap (FVG) imbalance zone at $${fvg.gap_size}`);
       } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Fair Value Gap (FVG) imbalance zone detected (gap size: $${fvg.gap_size})`);
+        bearishScore += 3;
+        reasonsAgainst.push(`Bearish Fair Value Gap (FVG) imbalance zone at $${fvg.gap_size}`);
       }
     }
 
     if (ob.order_block_detected) {
       if (ob.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone identified at ${ob.price_level}`);
+        bullishScore += 3;
+        reasonsFor.push(`Bullish Order Block liquidity floor identified at ${ob.price_level}`);
       } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone identified at ${ob.price_level}`);
+        bearishScore += 3;
+        reasonsAgainst.push(`Bearish Order Block liquidity ceiling identified at ${ob.price_level}`);
       }
     }
 
-    // Layer 7: RSI Momentum Alignment (15 Points)
+    // Layer 9: RSI Momentum & Divergence Window (6 Points)
     if (rsi > 52 && rsi < 72) {
-      bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish momentum`);
+      bullishScore += 6;
+      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy upward momentum without exhaustion`);
     } else if (rsi < 48 && rsi > 28) {
-      bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish momentum`);
+      bearishScore += 6;
+      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy downward momentum without exhaustion`);
     } else if (rsi >= 72) {
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of pullbacks`);
+      bearishScore += 4;
+      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — mean-reversion risk`);
     } else if (rsi <= 28) {
-      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
+      bullishScore += 4;
+      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short-squeeze risk`);
     }
 
-    // Layer 8: Session Timing
+    // Layer 10: CBOE VIX Volatility & Safe-Haven Regime (4 Points)
+    if (vix.level > 0 && (vix.regime === 'ELEVATED' || vix.regime === 'EXTREME')) {
+      bullishScore += 4;
+      reasonsFor.push(`CBOE VIX elevated at ${vix.level} (${vix.regime}) — safe-haven bid activated for bullion`);
+    } else if (vix.level > 0) {
+      reasonsFor.push(`VIX calm at ${vix.level} (${vix.regime})`);
+    }
+
+    // Layer 11: Session Window
     if (isDisplacement) {
       const isBullBody = lastClose > lastOpen;
       if (isBullBody) bullishScore += sessionScore;
       else bearishScore += sessionScore;
     }
 
+    // 8. Quality Gate: NO TRADE / WAIT if edge is insufficient
+    const scoreDiff = Math.abs(bullishScore - bearishScore);
+    if (scoreDiff < 12) {
+      return {
+        direction: 'WAIT',
+        invalidationReason: `Gold market in neutral consolidation. Bullish (${bullishScore}) vs Bearish (${bearishScore}) score difference is only ${scoreDiff} pts (< 12 pts threshold). Awaiting decisive breakout from $${levels.nearestSupport} - $${levels.nearestResistance}.`,
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
+      };
+    }
+
     // Direction determination
-    const isBull = bullishScore >= bearishScore;
-    const rawScore = isBull ? bullishScore : bearishScore;
-    const confidenceScore = Math.min(95, Math.max(40, rawScore));
+    const isBull = bullishScore > bearishScore;
     const direction = isBull ? 'BUY' : 'SELL';
 
+    // Calibrated conviction & probability calculation
+    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
+
     // Apply universal quality gate
-    const marketRegimeGate = direction === 'BUY' ? 'Bullish Expansion' : 'Bearish Expansion';
+    const marketRegimeGate = regimeData.regime;
     const gateResult = this.applyQualityGate({
       bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
       candles, direction, symbol, marketRegime: marketRegimeGate, htfBias
     });
     if (gateResult) return gateResult;
 
-    // Calculate Exact Targets (Timeframe Scaled & Adaptive Volatility Structure Based Gold Targets)
+    // 9. Exact Targets: Widened Structural SL for Gold ($5.00 min scalp, $12.00 min swing)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 1.25, isScalp ? 3.50 : 8.00), isScalp ? 8.50 : 25.00);
+    const slDist = Math.min(
+      Math.max(atr * 1.35, isScalp ? 5.00 : 12.00),
+      isScalp ? 14.00 : 32.00
+    );
 
-    // Structure Invalidation SL (Adaptive Session Swing Window)
+    // Structure Invalidation SL (Adaptive Session Swing Window with ATR buffer)
     const swingSlice = candles.slice(-lookback);
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
-    const stopLoss = direction === 'BUY' 
+    const stopLoss = direction === 'BUY'
       ? Math.max(entryPrice - (slDist * 1.4), Math.min(entryPrice - slDist, lowestLow - (atr * 0.45)))
       : Math.min(entryPrice + (slDist * 1.4), Math.max(entryPrice + slDist, highestHigh + (atr * 0.45)));
 
@@ -3415,9 +4123,19 @@ export class SignalsController implements OnModuleInit {
     const entryZoneUpper = (entryPrice + (atr * 0.15)).toFixed(2);
 
     const aiValidation = `Institutional 12-Layer Confluence Engine evaluated XAUUSD setup during ${sessionName}. ` +
+      `Data Source: ${goldSource}. Regime: ${regimeData.regime}. ` +
       `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${entryPrice.toFixed(2)} ` +
       `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `Intermarket Drivers: DXY ${dxy.price} (${dxy.trend}), US10Y ${us10y.yield}% (${us10y.trend}), VIX ${vix.level}. ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
+
+    const computedEvidence: any = this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2);
+    computedEvidence.regime = regimeData.regime;
+    computedEvidence.dxy = dxy;
+    computedEvidence.us10y = us10y;
+    computedEvidence.vix = vix;
+    computedEvidence.goldSource = goldSource;
+    computedEvidence.levels = levels;
 
     return {
       direction,
@@ -3430,9 +4148,9 @@ export class SignalsController implements OnModuleInit {
       takeProfit3: parseFloat(takeProfit3.toFixed(2)),
       riskRewardRatio: rrRatio,
       confidenceScore,
-      calculatedWinProb: confidenceScore,
+      calculatedWinProb,
       signalGrade,
-      marketRegime: `${marketRegimeGate} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
+      marketRegime: `${regimeData.regime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Flow)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
       liquidityStatus: sweptLow_Rejection ? 'Sell-Side Swept' : breakoutHigh ? 'Bullish BOS Breakout' : sweptHigh_Rejection ? 'Buy-Side Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
@@ -3441,13 +4159,16 @@ export class SignalsController implements OnModuleInit {
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
+      evidence: computedEvidence
     };
   }
 
   private calcEMA(vals: number[], period: number): number {
     if (!vals || vals.length === 0) return 0;
-    if (vals.length < period) return vals[vals.length - 1];
+    if (vals.length < period) {
+      // Use arithmetic mean (SMA) of available values instead of blindly returning current price
+      return vals.reduce((a, b) => a + b, 0) / vals.length;
+    }
     const k = 2 / (period + 1);
     let ema = vals.slice(0, period).reduce((a, b) => a + b, 0) / period;
     for (let i = period; i < vals.length; i++) {
@@ -3524,6 +4245,28 @@ export class SignalsController implements OnModuleInit {
     }
 
     return totalVolume > 0 ? totalTypicalVolume / totalVolume : Number(candles[candles.length - 1]?.close || 0);
+  }
+
+  // Calibrated Conviction & Probability Engine: replaces raw-score clamping with genuine conviction margin
+  private calculateCalibratedConfidence(bullishScore: number, bearishScore: number): {
+    confidence: number;
+    margin: number;
+    winProb: number;
+  } {
+    const totalScore = bullishScore + bearishScore;
+    if (totalScore <= 0) return { confidence: 50, margin: 0, winProb: 50 };
+    const diff = Math.abs(bullishScore - bearishScore);
+    const winningScore = Math.max(bullishScore, bearishScore);
+    const winRatio = winningScore / totalScore; // 0.50 to 1.00
+    const marginRatio = diff / totalScore;      // 0.00 to 1.00
+
+    // Blend: 55% conviction margin + 45% proportional win ratio
+    // A 65 vs 60 setup (margin 5/125 = 0.04) yields ~51% confidence (realistic coin-flip)
+    // An 85 vs 20 setup (margin 65/105 = 0.62) yields ~84% confidence (high conviction)
+    const rawCalibrated = (marginRatio * 55) + (winRatio * 45);
+    const confidence = Math.min(95, Math.max(35, Math.round(rawCalibrated)));
+    const winProb = Math.min(90, Math.max(40, Math.round((winRatio * 60) + (marginRatio * 30))));
+    return { confidence, margin: diff, winProb };
   }
 
   // Background signal outcome resolution evaluator running every 15 seconds

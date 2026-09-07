@@ -107,8 +107,8 @@ export default function NewsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <PageHeader
-          title="AI News & Sentiment"
-          subtitle="Real-time macro updates, sentiment analytics, and AI news feeds."
+          title="Market News & Sentiment"
+          subtitle="Real-time macro updates, sentiment analytics, and institutional market feeds."
           icon={Newspaper}
         />
         <button
@@ -272,15 +272,15 @@ export default function NewsPage() {
           {/* Right sidebar: Recent market flows & AI Insights summary */}
           <div className="space-y-6">
             
-            {/* AI News digest block */}
+            {/* Market News digest block */}
             <motion.div variants={ITEM_ANIMS} className="glass-panel rounded-2xl border border-purple-500/10 p-5 bg-gradient-to-b from-purple-500/5 to-transparent space-y-4">
               <h3 className="font-display font-bold text-white text-xs flex items-center gap-1.5">
                 <Sparkles size={14} className="text-purple-400" />
-                AI Market Sentiment Digest
+                Market Sentiment Digest
               </h3>
               
               <p className="text-[11px] leading-relaxed text-slate-400">
-                AI agents have parsed the latest {articles.length} news stories. The current global sentiment bias is:
+                Quantitative filters have parsed the latest {articles.length} news stories. The current global sentiment bias is:
               </p>
 
               {(() => {
@@ -296,7 +296,7 @@ export default function NewsPage() {
 
                 return (
                   <div className="bg-slate-900/40 rounded-xl p-3 border border-white/5 text-center space-y-1">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block">AI Sentiment Bias</span>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block">Global Sentiment Bias</span>
                     <span className={`text-sm font-bold text-gradient-${color}`}>{bias}</span>
                   </div>
                 );

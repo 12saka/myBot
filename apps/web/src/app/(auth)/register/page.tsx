@@ -236,7 +236,7 @@ export default function RegisterPage() {
       localStorage.removeItem('trademind_token');
       localStorage.removeItem('trademind_profile');
 
-      toast.success('Registration & Payment setup complete! Please log in to access TradeMind AI.');
+      toast.success('Registration & Payment setup complete! Please log in to access TradeMind.');
       setTimeout(() => {
         router.push('/login');
       }, 1500);
@@ -259,7 +259,7 @@ export default function RegisterPage() {
             <span className="h-8 w-8 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-xs">
               TM
             </span>
-            TradeMind AI
+            TradeMind
           </Link>
         </div>
 
@@ -591,7 +591,7 @@ export default function RegisterPage() {
                     <label className="block text-[10px] uppercase font-bold text-slate-500 mb-2">Select Plan</label>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { label: 'Pro Trader ($99/mo)', desc: 'Full AI Signals + STK Push' },
+                        { label: 'Pro Trader ($99/mo)', desc: 'Full Institutional Signals + STK Push' },
                         { label: 'VIP Unlimited ($199/mo)', desc: 'Zero Limits + Master Bots' },
                         { label: 'Basic ($29/mo)', desc: '15m Signals + Alerts' },
                         { label: 'System Testing Free', desc: 'Unlimited Sys Testing' },

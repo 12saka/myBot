@@ -55,8 +55,8 @@ export class StrategiesService implements OnModuleInit {
         isActive: true
       },
       {
-        name: 'AI Signal Following',
-        description: 'Autonomous execution of 10-step institutional AI ensemble signal outputs across Forex, Metals & Crypto.',
+        name: 'Quantitative Signal Execution',
+        description: 'Autonomous execution of multi-factor institutional quantitative strategy signal outputs across Forex, Metals & Crypto.',
         historicalReturn: 38.9,
         winRate: 79.4,
         riskScore: 3,

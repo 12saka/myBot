@@ -22,7 +22,7 @@ const NAV_GROUPS = [
       { href: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
       { href: '/terminal',   label: 'MT5 Terminal', icon: Monitor          },
       { href: '/markets',    label: 'Markets',      icon: TrendingUp       },
-      { href: '/signals',    label: 'AI Signals',   icon: Zap              },
+      { href: '/signals',    label: 'Signals',      icon: Zap              },
       { href: '/portfolio',  label: 'Portfolio',    icon: Briefcase        },
     ],
   },
@@ -36,9 +36,9 @@ const NAV_GROUPS = [
   {
     label: 'Intelligence',
     items: [
-      { href: '/copilot',    label: 'AI Copilot',   icon: Bot              },
+      { href: '/copilot',    label: 'Copilot',      icon: Bot              },
       { href: '/automation', label: 'Automation',   icon: Cpu              },
-      { href: '/news',       label: 'AI News',      icon: Newspaper        },
+      { href: '/news',       label: 'Market News',  icon: Newspaper        },
       { href: '/academy',    label: 'Academy',      icon: BookOpen         },
     ],
   },
@@ -162,7 +162,6 @@ export function Sidebar() {
                 <span className="font-display text-lg font-bold tracking-tight gradient-text">
                   TradeMind
                 </span>
-                <span className="text-xs text-purple-400 font-semibold ml-1">AI</span>
               </motion.div>
             )}
           </AnimatePresence>

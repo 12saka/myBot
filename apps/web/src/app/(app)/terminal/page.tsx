@@ -76,45 +76,41 @@ export default function TerminalPage() {
   const [executingOrder, setExecutingOrder] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Active Positions State (MT5 Synchronized)
-  const [positions, setPositions] = useState<OpenPosition[]>([
-    {
-      ticket: '5892104',
-      symbol: 'XAUUSD',
-      type: 'BUY',
-      lots: 0.05,
-      openPrice: 2678.50,
-      currentPrice: 2685.40,
-      sl: 2665.00,
-      tp: 2710.00,
-      swap: -0.45,
-      commission: 0.00,
-      profit: 34.50,
-      pips: 69.0,
-      openTime: new Date(Date.now() - 3600 * 1000 * 2).toLocaleTimeString(),
-    },
-    {
-      ticket: '5892109',
-      symbol: 'EURUSD',
-      type: 'BUY',
-      lots: 0.10,
-      openPrice: 1.08420,
-      currentPrice: 1.08542,
-      sl: 1.08150,
-      tp: 1.09000,
-      swap: 0.00,
-      commission: 0.00,
-      profit: 12.20,
-      pips: 12.2,
-      openTime: new Date(Date.now() - 3600 * 1000 * 5).toLocaleTimeString(),
-    },
-  ]);
+  const { tickers } = useMarketStore();
+  const [positions, setPositions] = useState<OpenPosition[]>([]);
 
   const [journalLogs, setJournalLogs] = useState<string[]>([
     `[${new Date().toLocaleTimeString()}] MT5 Terminal Bridge Engine initialized.`,
-    `[${new Date().toLocaleTimeString()}] WebSocket Stream connected to Broker Liquidity Gateway.`,
-    `[${new Date().toLocaleTimeString()}] Authenticated AES-256 session token verified.`,
+    `[${new Date().toLocaleTimeString()}] Authenticated session verified.`,
   ]);
+
+  const fetchPositions = async () => {
+    try {
+      const res = await apiFetch<any[]>('/api/v2/brokers/positions');
+      if (Array.isArray(res)) {
+        const mapped: OpenPosition[] = res.map((p: any, idx: number) => ({
+          ticket: p.id ? p.id.substring(0, 8) : (5800000 + idx).toString(),
+          symbol: p.symbol,
+          type: (p.quantity ?? 0) >= 0 ? 'BUY' : 'SELL',
+          lots: Math.abs(p.quantity ?? 0.01),
+          openPrice: p.averagePrice ?? p.currentPrice ?? 0,
+          currentPrice: p.currentPrice ?? 0,
+          sl: undefined,
+          tp: undefined,
+          swap: 0.0,
+          commission: 0.0,
+          profit: p.currentPrice && p.averagePrice ? parseFloat(((p.currentPrice - p.averagePrice) * Math.abs(p.quantity ?? 0.01) * 100).toFixed(2)) : 0.0,
+          pips: 0.0,
+          openTime: p.updatedAt ? new Date(p.updatedAt).toLocaleTimeString() : new Date().toLocaleTimeString(),
+        }));
+        setPositions(mapped);
+      } else {
+        setPositions([]);
+      }
+    } catch (e) {
+      setPositions([]);
+    }
+  };
 
   const fetchAccounts = async () => {
     try {
@@ -132,6 +128,7 @@ export default function TerminalPage() {
 
   useEffect(() => {
     fetchAccounts();
+    fetchPositions();
   }, []);
 
   const handleSyncAccount = async () => {
@@ -140,6 +137,7 @@ export default function TerminalPage() {
     try {
       await apiFetch(`/api/v2/brokers/${activeAccount.id}/sync`, { method: 'POST' });
       await fetchAccounts();
+      await fetchPositions();
       setJournalLogs(prev => [`[${new Date().toLocaleTimeString()}] Synchronized account metrics for #${activeAccount.accountNumber}`, ...prev]);
       toast.success('Broker account state synchronized.');
     } catch (err: any) {
@@ -177,7 +175,7 @@ export default function TerminalPage() {
         }),
       });
 
-      const newTicket = res.ticket || Math.floor(1000000 + Math.random() * 9000000).toString();
+      const newTicket = res.ticket || (res.order && res.order.id ? res.order.id.substring(0, 8) : Date.now().toString().slice(-7));
       const newPos: OpenPosition = {
         ticket: newTicket,
         symbol: selectedSymbol.symbol,
@@ -202,6 +200,7 @@ export default function TerminalPage() {
 
       toast.success(`⚡ Order #${newTicket} executed: ${direction} ${lotSize} lot ${selectedSymbol.symbol} @ ${execPrice}`);
       fetchAccounts();
+      fetchPositions();
     } catch (err: any) {
       toast.error(err.message || 'Execution rejected by broker');
     } finally {
@@ -226,6 +225,7 @@ export default function TerminalPage() {
 
       toast.success(`Closed position #${pos.ticket} (${pos.symbol}). P&L: ${pos.profit >= 0 ? '+' : ''}$${pos.profit.toFixed(2)}`);
       fetchAccounts();
+      fetchPositions();
     } catch (err: any) {
       toast.error(err.message || 'Failed to close position');
     }
@@ -233,12 +233,31 @@ export default function TerminalPage() {
 
   // Calculated Account Summary Metrics
   const totalOpenPl = positions.reduce((sum, p) => sum + p.profit, 0);
-  const displayEquity = activeAccount ? activeAccount.balance + totalOpenPl : 10245.50;
-  const displayMargin = activeAccount ? activeAccount.margin : 150.00;
+  const displayEquity = activeAccount ? activeAccount.balance + totalOpenPl : 0;
+  const displayMargin = activeAccount ? activeAccount.margin : 0;
   const displayFreeMargin = displayEquity - displayMargin;
   const marginLevel = displayMargin > 0 ? ((displayEquity / displayMargin) * 100).toFixed(0) : '0';
 
-  const filteredWatchlist = DEFAULT_WATCHLIST.filter(w =>
+  const dynamicWatchlist = DEFAULT_WATCHLIST.map(w => {
+    const rawKey = w.symbol;
+    const slashKey = w.symbol.length === 6 && !w.symbol.includes('/') 
+      ? `${w.symbol.slice(0, 3)}/${w.symbol.slice(3)}` 
+      : w.symbol;
+    const ticker = tickers.find(t => t.symbol === rawKey || t.symbol === slashKey);
+    if (ticker && ticker.price) {
+      const spreadVal = w.spread;
+      const point = w.symbol.includes('JPY') ? 0.01 : w.symbol.includes('XAU') ? 0.1 : w.symbol.includes('BTC') ? 1.0 : 0.0001;
+      return {
+        ...w,
+        bid: (ticker as any).bid || ticker.price,
+        ask: (ticker as any).ask || parseFloat((ticker.price + (spreadVal * point)).toFixed(w.symbol.includes('JPY') ? 3 : w.symbol.includes('BTC') ? 2 : 5)),
+        change: ticker.change24h ?? w.change,
+      };
+    }
+    return w;
+  });
+
+  const filteredWatchlist = dynamicWatchlist.filter(w =>
     w.symbol.toLowerCase().includes(watchlistSearch.toLowerCase()) ||
     w.name.toLowerCase().includes(watchlistSearch.toLowerCase())
   );

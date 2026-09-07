@@ -101,7 +101,7 @@ export const useAIStore = create<AIState>((set) => ({
     {
       id: 'welcome',
       role: 'assistant',
-      content: "Hello Timothy! 👋 I'm TradeMind AI. I monitor live market structure, SMC order blocks, liquidity sweeps, and quantitative indicators across BTC, ETH, Gold, EUR/USD, USD/JPY, US100, and US30. How can I assist your trading today?",
+      content: "Hello Timothy! 👋 I'm TradeMind. I monitor live market structure, SMC order blocks, liquidity sweeps, and quantitative indicators across BTC, ETH, Gold, EUR/USD, USD/JPY, US100, and US30. How can I assist your trading today?",
       timestamp: new Date(),
     },
   ],

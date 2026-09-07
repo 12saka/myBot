@@ -178,15 +178,15 @@ export default function MarketsPage() {
         </button>
       </PageHeader>
 
-      {/* Interactive Market Insights & Guidance Banner */}
-      <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-slate-300">
+      {/* Real-Time Market Guidance Banner */}
+      <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30">
+          <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
             <Activity size={18} />
           </div>
           <div>
             <div className="font-bold text-white text-sm">💡 Real-Time Market Execution Guidance</div>
-            <div className="text-[11px] text-slate-400">Click any asset row below to load instant 500ms TradingView charts, AI volume profiles, and execute 1-click trades.</div>
+            <div className="text-[11px] text-slate-400">Click any asset row below to load instant 500ms TradingView charts, volume profiles, and execute 1-click trades.</div>
           </div>
         </div>
         <Badge variant="purple" size="md">Sub-Second WS Active</Badge>
@@ -368,9 +368,9 @@ export default function MarketsPage() {
                   <button
                     onClick={() => fetchAIAnalysis(selectedSymbol)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/25 text-purple-300 hover:text-purple-200 text-[11px] font-semibold transition-colors cursor-pointer"
-                    title="Analyse with AI"
+                    title="Analyze Market"
                   >
-                    <BrainCircuit size={13} /> AI Analyse
+                    <BrainCircuit size={13} /> Analyze
                   </button>
                   <button
                     onClick={() => setIsFullscreen(!isFullscreen)}
@@ -393,7 +393,7 @@ export default function MarketsPage() {
                 <TradingViewWidget symbol={selectedSymbol} height="100%" />
               </div>
 
-              {/* AI Analysis Panel */}
+              {/* Analysis Panel */}
               <AnimatePresence>
                 {showAiPanel && (
                   <motion.div
@@ -404,7 +404,7 @@ export default function MarketsPage() {
                   >
                     <div className="flex items-center gap-2 py-3">
                       <BrainCircuit size={15} className="text-purple-400" />
-                      <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">Gemini AI Market Analysis</span>
+                      <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">Institutional Market Analysis</span>
                       {aiLoading && <Loader2 size={12} className="text-slate-500 animate-spin ml-auto" />}
                       {!aiLoading && aiAnalysis && (
                         <button
@@ -420,7 +420,7 @@ export default function MarketsPage() {
                         {[80, 95, 70, 85, 60].map((w, i) => (
                           <div key={i} className="h-3 rounded-full bg-white/5 animate-pulse" style={{ width: `${w}%` }} />
                         ))}
-                        <p className="text-[10px] text-slate-600 mt-1">Gemini is analysing {selectedSymbol} market conditions...</p>
+                        <p className="text-[10px] text-slate-600 mt-1">Analyzing {selectedSymbol} market conditions...</p>
                       </div>
                     )}
                     {!aiLoading && aiAnalysis && (
@@ -440,7 +440,7 @@ export default function MarketsPage() {
                   className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/25 text-purple-300 text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {aiLoading ? <Loader2 size={13} className="animate-spin" /> : <BrainCircuit size={13} />}
-                  {aiLoading ? 'Analysing...' : 'AI Full Analysis'}
+                  {aiLoading ? 'Analysing...' : 'Full Market Analysis'}
                 </button>
                 <button
                   onClick={() => setIsTradeOpen(true)}

@@ -30,7 +30,7 @@ export class CopilotController {
   constructor(private readonly copilotService: CopilotService) {}
 
   @Post('chat')
-  @ApiOperation({ summary: 'Chat with TradeMind AI Copilot' })
+  @ApiOperation({ summary: 'Chat with TradeMind Copilot' })
   async chat(@Request() req: any, @Body() dto: CopilotChatDto) {
     let message = dto.message;
     let history = dto.history || [];

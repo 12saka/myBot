@@ -36,8 +36,8 @@ export default function ChoosePlanPage() {
       priceYearly: 0,
       desc: '14 days full platform access with 10 weekly signals',
       features: [
-        '10 AI Signals per week',
-        'Basic Gemini AI Strategy',
+        '10 Signals per week',
+        'Basic Quantitative Strategy',
         'Full Living Academy & Quizzes',
         'PayHero M-Pesa STK Integration',
         'No Credit Card Required',
@@ -52,8 +52,8 @@ export default function ChoosePlanPage() {
       priceYearly: 14990,
       desc: 'Essential institutional signals & full Academy',
       features: [
-        '10 AI Signals per week',
-        'Basic Gemini AI Strategy',
+        '10 Signals per week',
+        'Basic Quantitative Strategy',
         'Full Living Academy & Quizzes',
         'Crypto & Forex Coverage',
         'PayHero M-Pesa STK Push',
@@ -68,7 +68,7 @@ export default function ChoosePlanPage() {
       priceYearly: 34990,
       desc: '50 signals/week, Advanced SMC strategy & complete Academy',
       features: [
-        '50 AI Signals per week',
+        '50 Signals per week',
         'Advanced SMC Strategy Engine',
         'Full Academy & Advanced Quizzes',
         'Gold, Crypto & Forex Markets',
@@ -186,7 +186,7 @@ export default function ChoosePlanPage() {
           </div>
           <h2 className="font-display font-black text-white text-2xl">Choose Your Trading Tier</h2>
           <p className="text-slate-400 text-xs max-w-md mx-auto leading-relaxed">
-            Select a plan to configure your AI strategies parameters. Registration is free and card configurations can be skipped.
+            Select a plan to configure your strategy parameters. Registration is free and card configurations can be skipped.
           </p>
 
           {/* Monthly / Yearly Billing Toggle */}

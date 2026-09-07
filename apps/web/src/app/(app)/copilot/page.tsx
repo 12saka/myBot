@@ -14,8 +14,8 @@ import { cn } from '@/lib/utils';
 const QUICK_PROMPTS = [
   { icon: TrendingUp, text: 'Analyze BTC/USD current market conditions' },
   { icon: Shield,     text: 'Review my portfolio risk and suggest adjustments' },
-  { icon: BarChart3,  text: 'What are the top AI signals right now?' },
-  { icon: Zap,        text: 'Explain the Smart Money AI strategy' },
+  { icon: BarChart3,  text: 'What are the top market signals right now?' },
+  { icon: Zap,        text: 'Explain the Smart Money strategy' },
 ];
 
 
@@ -109,14 +109,14 @@ export default function CopilotPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-140px)]">
       <PageHeader
-        title="AI Copilot"
-        subtitle="Powered by multi-agent GPT-4o + FinBERT + custom trading models"
+        title="Copilot"
+        subtitle="Institutional assistant powered by financial market intelligence and quantitative models"
         icon={Bot}
         className="mb-4"
       >
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 font-semibold">
           <Sparkles size={12} />
-          AI Online
+          Online
         </div>
       </PageHeader>
 
@@ -124,7 +124,7 @@ export default function CopilotPage() {
       <div className="glass-card rounded-2xl p-3.5 border border-indigo-500/20 bg-indigo-950/10 mb-4 flex items-center justify-between text-xs text-slate-300">
         <div className="flex items-center gap-2.5">
           <Sparkles size={16} className="text-indigo-400" />
-          <span><strong>AI Copilot Guidance</strong>: Ask for instant market analysis, portfolio risk reviews, or strategy explanations. Try typing <em>"What is the BTC/USD signal confidence?"</em></span>
+          <span><strong>Copilot Guidance</strong>: Ask for instant market analysis, portfolio risk reviews, or strategy explanations. Try typing <em>"What is the BTC/USD signal confidence?"</em></span>
         </div>
       </div>
 
@@ -148,7 +148,7 @@ export default function CopilotPage() {
           </div>
 
           <div className="glass-card rounded-2xl p-4">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">AI Capabilities</h3>
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">System Capabilities</h3>
             <ul className="space-y-2 text-xs text-slate-400">
               {[
                 'Real-time market analysis',
@@ -221,7 +221,7 @@ export default function CopilotPage() {
               </button>
             </form>
             <p className="text-[10px] text-slate-600 mt-2 text-center">
-              TradeMind Copilot uses real-time data + AI models. Not financial advice. Always verify signals.
+              TradeMind Copilot uses real-time market data and quantitative models. Not financial advice. Always verify signals.
             </p>
           </div>
         </div>

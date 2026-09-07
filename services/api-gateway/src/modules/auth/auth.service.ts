@@ -82,7 +82,7 @@ export class AuthService {
         {
           from: `TradeMind Security <${sender}>`,
           to: [email],
-          subject: 'Your TradeMind AI Security Code',
+          subject: 'Your TradeMind Security Code',
           html: `<p>Your 6-digit one-time verification code is <strong>${otp}</strong>. It will expire in 5 minutes. Do not share this code with anyone.</p>`,
         },
         {
@@ -118,7 +118,7 @@ export class AuthService {
         new URLSearchParams({
           username: atUsername,
           to: phone,
-          message: `Your TradeMind AI security code is *${otp}*. Valid for 5 minutes.`,
+          message: `Your TradeMind security code is *${otp}*. Valid for 5 minutes.`,
         }).toString(),
         {
           headers: {

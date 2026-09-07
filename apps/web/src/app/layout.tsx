@@ -18,25 +18,25 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   manifest: '/manifest.json',
   title: {
-    default: 'TradeMind AI — Intelligent Autonomous Trading Platform',
-    template: '%s | TradeMind AI',
+    default: 'TradeMind — Intelligent Autonomous Trading Platform',
+    template: '%s | TradeMind',
   },
   description:
-    'Enterprise-grade AI-powered trading platform. Real-time signals, autonomous execution, portfolio intelligence, and institutional analytics — powered by next-generation machine learning.',
-  keywords: ['AI trading', 'algorithmic trading', 'portfolio management', 'crypto trading', 'forex AI', 'stock signals'],
-  authors: [{ name: 'TradeMind AI' }],
-  creator: 'TradeMind AI',
+    'Enterprise-grade quantitative trading platform. Real-time signals, autonomous execution, portfolio intelligence, and institutional analytics.',
+  keywords: ['quantitative trading', 'algorithmic trading', 'portfolio management', 'crypto trading', 'forex signals', 'stock signals'],
+  authors: [{ name: 'TradeMind' }],
+  creator: 'TradeMind',
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    title: 'TradeMind AI — Intelligent Autonomous Trading Platform',
-    description: 'Enterprise-grade AI-powered trading platform with real-time signals and autonomous execution.',
-    siteName: 'TradeMind AI',
+    title: 'TradeMind — Intelligent Autonomous Trading Platform',
+    description: 'Enterprise-grade quantitative trading platform with real-time signals and autonomous execution.',
+    siteName: 'TradeMind',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'TradeMind AI',
-    description: 'Enterprise-grade AI-powered trading platform.',
+    title: 'TradeMind',
+    description: 'Enterprise-grade quantitative trading platform.',
   },
 };
 

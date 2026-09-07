@@ -83,7 +83,7 @@ export default function SecureWalletPage() {
       return;
     }
     if (!formAuthorized) {
-      toast.error('You must authorize TradeMind AI access to connect this account.');
+      toast.error('You must authorize TradeMind access to connect this account.');
       return;
     }
 
@@ -127,7 +127,7 @@ export default function SecureWalletPage() {
           closePositions: nextState
         })
       });
-      toast.success(`AI Trading Mode ${nextState ? 'ENABLED 🟢' : 'DISABLED 🔴'} for ${acc.broker} #${acc.accountNumber}`);
+      toast.success(`Automated Trading Mode ${nextState ? 'ENABLED 🟢' : 'DISABLED 🔴'} for ${acc.broker} #${acc.accountNumber}`);
       if (selectedAccount && selectedAccount.id === acc.id) {
         setSelectedAccount({
           ...selectedAccount,
@@ -139,7 +139,7 @@ export default function SecureWalletPage() {
       }
       fetchAccounts();
     } catch (err: any) {
-      toast.error(err.message || 'Failed to update AI Trading status.');
+      toast.error(err.message || 'Failed to update Automated Trading status.');
     }
   };
 
@@ -149,13 +149,13 @@ export default function SecureWalletPage() {
         method: 'PATCH',
         body: JSON.stringify(newGuard)
       });
-      toast.success(`AI Risk Guard parameters updated for ${acc.broker}`);
+      toast.success(`Risk Guard parameters updated for ${acc.broker}`);
       if (selectedAccount && selectedAccount.id === acc.id) {
         setSelectedAccount({ ...selectedAccount, ...newGuard });
       }
       fetchAccounts();
     } catch (err: any) {
-      toast.error(err.message || 'Failed to update AI Risk Guard.');
+      toast.error(err.message || 'Failed to update Risk Guard.');
     }
   };
 
@@ -164,7 +164,9 @@ export default function SecureWalletPage() {
     try {
       await apiFetch(`/api/v2/brokers/${accId}`, { method: 'DELETE' });
       toast.success('Broker account disconnected.');
-      setSelectedAccount(null);
+      if (selectedAccount && selectedAccount.id === accId) {
+        setSelectedAccount(null);
+      }
       fetchAccounts();
     } catch (err: any) {
       toast.error(err.message || 'Failed to disconnect account.');
@@ -179,8 +181,8 @@ export default function SecureWalletPage() {
   return (
     <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
       <PageHeader
-        title="TradeMind AI — Secure Wallet"
-        subtitle="Financial command center & encrypted credential vault for broker account integration, risk guard, and AI execution permissions."
+        title="TradeMind — Secure Wallet"
+        subtitle="Financial command center & encrypted credential vault for broker account integration, risk guard, and automated execution permissions."
         icon={WalletIcon}
       >
         <div className="flex items-center gap-3">
@@ -302,7 +304,7 @@ export default function SecureWalletPage() {
                   </div>
                 </div>
                 <Badge variant={acc.aiTradingEnabled ? "green" : "neutral"} size="xs">
-                  {acc.aiTradingEnabled ? '⚡ AI Executing' : '👁 Read-Only'}
+                  {acc.aiTradingEnabled ? '⚡ Auto-Executing' : '👁 Read-Only'}
                 </Badge>
               </div>
 
@@ -393,7 +395,7 @@ export default function SecureWalletPage() {
                   <Lock size={20} className="text-purple-400" />
                   <div>
                     <h3 className="font-display font-bold text-white text-lg">Connect Trading Account</h3>
-                    <p className="text-xs text-slate-400">Encrypted financial-control vault for TradeMind AI</p>
+                    <p className="text-xs text-slate-400">Encrypted financial-control vault for TradeMind</p>
                   </div>
                 </div>
                 <button onClick={() => setIsConnectOpen(false)} className="p-1 rounded-lg bg-white/5 text-slate-400 hover:text-white">
@@ -524,7 +526,7 @@ export default function SecureWalletPage() {
                     className="h-4 w-4 rounded border-purple-500 text-purple-600 focus:ring-purple-500 cursor-pointer"
                   />
                   <label htmlFor="authCheck" className="text-xs font-medium text-slate-200 cursor-pointer">
-                    I authorize TradeMind AI to access this account for market analysis & authorized execution.
+                    I authorize TradeMind to access this account for market analysis & authorized execution.
                   </label>
                 </div>
 
@@ -582,7 +584,7 @@ export default function SecureWalletPage() {
                 </button>
               </div>
 
-              {/* Sub-Tabs: Overview, Permissions, AI Risk Guard, Audit Logs */}
+              {/* Sub-Tabs: Overview, Permissions, Risk Guard, Audit Logs */}
               <div className="flex bg-white/5 p-1 rounded-xl border border-white/5 text-xs">
                 {(['overview', 'permissions', 'riskGuard', 'audit'] as const).map((t) => (
                   <button
@@ -593,7 +595,7 @@ export default function SecureWalletPage() {
                       activeModalTab === t ? "bg-purple-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
                     )}
                   >
-                    {t === 'riskGuard' ? '🛡 AI Risk Guard' : t}
+                    {t === 'riskGuard' ? '🛡 Risk Guard' : t}
                   </button>
                 ))}
               </div>
@@ -625,7 +627,7 @@ export default function SecureWalletPage() {
                   </div>
 
                   <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 space-y-2">
-                    <span className="text-xs font-bold text-white uppercase tracking-wider block">Recent AI Activity</span>
+                    <span className="text-xs font-bold text-white uppercase tracking-wider block">Recent Activity</span>
                     <div className="text-[11px] font-mono text-slate-400 space-y-1">
                       <div className="flex justify-between"><span>13:10 BTCUSD analyzed</span><span className="text-emerald-400">✓ Confluence 88%</span></div>
                       <div className="flex justify-between"><span>12:55 XAUUSD signal generated</span><span className="text-purple-400">🏆 A+ Setup</span></div>
@@ -641,13 +643,13 @@ export default function SecureWalletPage() {
                   <div className="p-4 rounded-xl bg-purple-950/40 border border-purple-500/30 flex items-center justify-between">
                     <div>
                       <div className="font-bold text-white text-sm flex items-center gap-2">
-                        <span>🟢 AI Trading Mode</span>
+                        <span>🟢 Automated Trading Mode</span>
                         <Badge variant={selectedAccount.aiTradingEnabled ? "green" : "neutral"} size="xs">
                           {selectedAccount.aiTradingEnabled ? 'ACTIVE' : 'OFF'}
                         </Badge>
                       </div>
                       <p className="text-xs text-slate-400 mt-1">
-                        When active, TradeMind AI can execute trades automatically based on your Risk Guard limits.
+                        When active, TradeMind can execute trades automatically based on your Risk Guard limits.
                       </p>
                     </div>
                     <button
@@ -658,7 +660,7 @@ export default function SecureWalletPage() {
                       )}
                     >
                       <Power size={14} />
-                      {selectedAccount.aiTradingEnabled ? 'Disable AI Trading' : 'Enable AI Trading'}
+                      {selectedAccount.aiTradingEnabled ? 'Disable Automated Trading' : 'Enable Automated Trading'}
                     </button>
                   </div>
 
@@ -675,7 +677,7 @@ export default function SecureWalletPage() {
                         <tr><td className="p-3 text-slate-200">View open positions</td><td className="p-3 text-right text-emerald-400 font-bold">✅ Authorized</td></tr>
                         <tr><td className="p-3 text-slate-200">View pending orders</td><td className="p-3 text-right text-emerald-400 font-bold">✅ Authorized</td></tr>
                         <tr><td className="p-3 text-slate-200">Market structure analysis</td><td className="p-3 text-right text-emerald-400 font-bold">✅ Authorized</td></tr>
-                        <tr><td className="p-3 text-slate-200">Generate AI signals</td><td className="p-3 text-right text-emerald-400 font-bold">✅ Authorized</td></tr>
+                        <tr><td className="p-3 text-slate-200">Generate market signals</td><td className="p-3 text-right text-emerald-400 font-bold">✅ Authorized</td></tr>
                         <tr><td className="p-3 text-slate-200">Place live trades</td><td className="p-3 text-right font-bold">{selectedAccount.placeTrades ? <span className="text-emerald-400">✅ Authorized</span> : <span className="text-rose-400">🔴 Disabled</span>}</td></tr>
                         <tr><td className="p-3 text-slate-200">Modify Stop Loss / Take Profit</td><td className="p-3 text-right font-bold">{selectedAccount.modifySlTp ? <span className="text-emerald-400">✅ Authorized</span> : <span className="text-rose-400">🔴 Disabled</span>}</td></tr>
                         <tr><td className="p-3 text-slate-200">Close open positions</td><td className="p-3 text-right font-bold">{selectedAccount.closePositions ? <span className="text-emerald-400">✅ Authorized</span> : <span className="text-rose-400">🔴 Disabled</span>}</td></tr>
@@ -686,13 +688,13 @@ export default function SecureWalletPage() {
                 </div>
               )}
 
-              {/* 3. AI RISK GUARD TAB */}
+              {/* 3. RISK GUARD TAB */}
               {activeModalTab === 'riskGuard' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-3 rounded-xl bg-purple-500/10 border border-purple-500/20">
                     <span className="text-xs font-bold text-white flex items-center gap-2">
                       <ShieldCheck size={16} className="text-purple-400" />
-                      AI Risk Guard Protection
+                      Risk Guard Protection
                     </span>
                     <button
                       onClick={() => handleUpdateRiskGuard(selectedAccount, { riskGuardActive: !selectedAccount.riskGuardActive })}

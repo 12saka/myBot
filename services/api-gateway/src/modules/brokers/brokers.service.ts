@@ -702,10 +702,47 @@ export class BrokersService {
     const symbol = (body.symbol || 'EURUSD').toUpperCase();
     const lots = Math.max(0.01, Number(body.lots || 0.01));
 
-    // Release margin and add simulated realized PnL
+    // Approximate contract size: Forex = 100,000; Gold = 100 oz; Crypto = 1 unit; Indices = 10 units
+    let contractSize = 100000;
+    if (symbol.includes('XAU') || symbol.includes('GOLD')) contractSize = 100;
+    if (symbol.includes('BTC') || symbol.includes('ETH') || symbol.includes('SOL')) contractSize = 1;
+    if (symbol.includes('US30') || symbol.includes('US100')) contractSize = 10;
+
+    let realizedPnl = 0.0;
+    // Lookup authentic open position asset for entry price
+    const asset = await this.prisma.asset.findFirst({
+      where: {
+        portfolio: { userId },
+        symbol,
+      },
+    });
+
+    if (asset && body.closePrice && asset.averagePrice) {
+      const isBuy = asset.quantity >= 0;
+      const diff = isBuy ? (body.closePrice - asset.averagePrice) : (asset.averagePrice - body.closePrice);
+      realizedPnl = parseFloat((diff * lots * contractSize).toFixed(2));
+    } else if (body.closePrice && asset && asset.currentPrice) {
+      const isBuy = asset.quantity >= 0;
+      const diff = isBuy ? (body.closePrice - asset.currentPrice) : (asset.currentPrice - body.closePrice);
+      realizedPnl = parseFloat((diff * lots * contractSize).toFixed(2));
+    }
+
+    // Clean up closed asset or reduce quantity
+    if (asset) {
+      const remainingQty = Math.max(0, Math.abs(asset.quantity) - lots);
+      if (remainingQty <= 0.0001) {
+        await this.prisma.asset.delete({ where: { id: asset.id } }).catch(() => {});
+      } else {
+        await this.prisma.asset.update({
+          where: { id: asset.id },
+          data: { quantity: asset.quantity >= 0 ? remainingQty : -remainingQty },
+        }).catch(() => {});
+      }
+    }
+
+    // Release margin and add realized PnL
     const releasedMargin = Math.min(acc.margin, 35.0);
     const newUsedMargin = Math.max(0, acc.margin - releasedMargin);
-    const realizedPnl = parseFloat(((Math.random() * 40) - 5).toFixed(2)); // Realistic PnL
     const newBalance = parseFloat((acc.balance + realizedPnl).toFixed(2));
     const newEquity = parseFloat((acc.equity + realizedPnl).toFixed(2));
     const newFreeMargin = parseFloat((newEquity - newUsedMargin).toFixed(2));

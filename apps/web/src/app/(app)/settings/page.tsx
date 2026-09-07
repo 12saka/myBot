@@ -689,7 +689,7 @@ export default function SettingsPage() {
           { id: 'overview', label: 'Overview', icon: User },
           { id: 'kyc', label: 'Verification (KYC)', icon: Shield },
           { id: 'security', label: 'Security & Keys', icon: Key },
-          { id: 'ai', label: 'AI Preferences', icon: BrainCircuit },
+          { id: 'ai', label: 'Trading Preferences', icon: BrainCircuit },
           { id: 'billing', label: 'Wallet & Billing', icon: Wallet },
           { id: 'activity', label: 'Activity Logs', icon: History },
         ].map(tab => (
@@ -1218,7 +1218,7 @@ export default function SettingsPage() {
                     <div>
                       <h3 className="font-display font-bold text-white text-sm flex items-center gap-2">
                         <BrainCircuit size={16} className="text-purple-400" />
-                        AI Risk & Bot Safety Suite
+                        Risk & Bot Safety Suite
                       </h3>
                       <p className="text-[10px] text-slate-400 mt-0.5">Configure capital allocation limits, lot size caps, stop-loss enforcement, and drawdown safeguards.</p>
                     </div>
@@ -1348,10 +1348,10 @@ export default function SettingsPage() {
                     {[
                       { key: 'email', label: 'Email Notifications', desc: 'Receive daily report digests.' },
                       { key: 'sms', label: 'SMS Notifications', desc: 'Alerts for margin thresholds.' },
-                      { key: 'whatsapp', label: 'WhatsApp Alerts', desc: 'Instant AI signal dispatches.' },
+                      { key: 'whatsapp', label: 'WhatsApp Alerts', desc: 'Instant signal dispatches.' },
                       { key: 'push', label: 'Push Notifications', desc: 'Real-time dashboard popups.' },
                       { key: 'marketAlerts', label: 'Market Volatility Reports', desc: 'Alerts on high volatility nodes.' },
-                      { key: 'signalAlerts', label: 'AI Signal Execution Matches', desc: 'Instant confirmations on triggers.' },
+                      { key: 'signalAlerts', label: 'Signal Execution Matches', desc: 'Instant confirmations on triggers.' },
                     ].map(ch => (
                       <div key={ch.key} className="p-3.5 rounded-xl border border-white/5 bg-slate-900/20 flex justify-between items-center">
                         <div>
@@ -1758,7 +1758,7 @@ export default function SettingsPage() {
                 { label: 'Total Trades', val: portfolioStats.totalTrades.toLocaleString() },
                 { label: 'Win Rate', val: `${portfolioStats.winRate}%` },
                 { label: 'Signals Followed', val: portfolioStats.signalsFollowed.toLocaleString() },
-                { label: 'AI Accuracy', val: `${portfolioStats.aiAccuracy}%` },
+                { label: 'Model Accuracy', val: `${portfolioStats.aiAccuracy}%` },
               ].map(stat => (
                 <div key={stat.label} className="p-3 rounded-xl border border-white/5 bg-slate-900/30">
                   <div className="font-semibold text-slate-200 text-sm">{stat.val}</div>

@@ -45,17 +45,22 @@ export default function SuperadminDashboardPage() {
 
   const handleRescanSignals = async () => {
     setActionLoading(true);
-    const toastId = toast.loading('Triggering AI signal engine rescan across all markets...');
+    const toastId = toast.loading('Triggering signal engine rescan across flagship markets...');
     try {
-      await apiFetch('/api/v2/signals/generate', {
-        method: 'POST',
-        body: JSON.stringify({ symbol: 'BTC/USD', interval: '1h' })
-      });
-      await apiFetch('/api/v2/signals/generate', {
-        method: 'POST',
-        body: JSON.stringify({ symbol: 'US30', interval: '1h' })
-      });
-      toast.success('AI engine rescan completed successfully!', { id: toastId });
+      const scanTargets = [
+        { symbol: 'BTC/USD', interval: '1h' },
+        { symbol: 'XAU/USD', interval: '1h' },
+        { symbol: 'EUR/USD', interval: '1h' },
+        { symbol: 'US30', interval: '1h' },
+        { symbol: 'NAS100', interval: '1h' },
+      ];
+      for (const target of scanTargets) {
+        await apiFetch('/api/v2/signals/generate', {
+          method: 'POST',
+          body: JSON.stringify(target)
+        }).catch(() => null);
+      }
+      toast.success('Signal engine rescan completed successfully!', { id: toastId });
       fetchOverview();
     } catch (err: any) {
       toast.error(err.message || 'Rescan failed.', { id: toastId });
@@ -75,7 +80,7 @@ export default function SuperadminDashboardPage() {
   const kpis = [
     { title: 'Total Registered Users', value: data?.totalUsers || 0, icon: Users, color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
     { title: 'Pending KYC Queue', value: data?.totalKycPending || 0, icon: ShieldCheck, color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' },
-    { title: 'Active AI Signals', value: data?.totalActiveSignals || 0, icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
+    { title: 'Active Signals', value: data?.totalActiveSignals || 0, icon: Zap, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
     { title: 'Connected Broker Syncs', value: data?.activeBrokers || 0, icon: Cpu, color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20' },
   ];
 
@@ -94,7 +99,7 @@ export default function SuperadminDashboardPage() {
             Superadmin Operations Center
           </h1>
           <p className="text-xs text-slate-400 font-mono">
-            Platform-wide governance, AI signal audit queue, compliance KYC verification, and LMS academy management.
+            Platform-wide governance, signal audit queue, compliance KYC verification, and LMS academy management.
           </p>
         </div>
 
@@ -113,8 +118,8 @@ export default function SuperadminDashboardPage() {
             disabled={actionLoading}
             className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-outfit font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-500/20 transition disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${actionLoading ? 'animate-spin' : ''}`} />
-            <span>Trigger AI Signal Rescan</span>
+            <Zap className="w-4 h-4 text-white" />
+            <span>Trigger Signal Rescan</span>
           </button>
         </div>
       </div>
@@ -153,7 +158,7 @@ export default function SuperadminDashboardPage() {
             <Zap className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition" />
             <ArrowUpRight className="w-4 h-4 text-slate-500 group-hover:text-white transition" />
           </div>
-          <h3 className="text-sm font-bold text-white mt-3 font-outfit">AI Signal Audit Queue</h3>
+          <h3 className="text-sm font-bold text-white mt-3 font-outfit">Signal Audit Queue</h3>
           <p className="text-[11px] text-slate-400 font-mono mt-1">Audit confidence breakdowns & override signals</p>
         </Link>
 

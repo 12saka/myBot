@@ -73,7 +73,7 @@ export class CopilotService {
         } else {
           const fallbackDetail = err.response?.data?.reply || err.response?.data?.detail || err.response?.data?.message;
           return {
-            reply: fallbackDetail || "⚠️ **TradeMind AI Copilot**: Analytical backend is currently waking up on Render (free tier cold start). Please wait ~15-30 seconds and send your query again.",
+            reply: fallbackDetail || "⚠️ **TradeMind Copilot**: Analytical backend is currently waking up on Render (free tier cold start). Please wait ~15-30 seconds and send your query again.",
             timestamp: new Date().toISOString(),
           };
         }
@@ -88,7 +88,7 @@ export class CopilotService {
     }
 
     return {
-      reply: "⚠️ **TradeMind AI Copilot**: Analytical backend is currently waking up on Render. Please send your query again in a moment.",
+      reply: "⚠️ **TradeMind Copilot**: Analytical backend is currently waking up on Render. Please send your query again in a moment.",
       timestamp: new Date().toISOString(),
     };
   }

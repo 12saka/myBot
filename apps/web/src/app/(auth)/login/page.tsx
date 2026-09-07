@@ -132,7 +132,7 @@ export default function LoginPage() {
               <Lock className="text-purple-400" size={20} />
             </div>
             <h2 className="text-2xl font-display font-bold text-white">Enter the Ecosystem</h2>
-            <p className="text-xs text-slate-400 mt-2">Access TradeMind AI autonomous trading center</p>
+            <p className="text-xs text-slate-400 mt-2">Access TradeMind autonomous trading center</p>
           </div>
 
           {suspendedMsg && (

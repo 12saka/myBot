@@ -32,8 +32,8 @@ from google import genai
 from google.genai import types
 
 app = FastAPI(
-    title="TradeMind AI - Python Intelligence Service",
-    description="Ensemble AI signal generation, technical indicators engine, and Gemini Copilot.",
+    title="TradeMind - Python Intelligence Service",
+    description="Ensemble signal generation, technical indicators engine, and Gemini Copilot.",
     version="2.0.0"
 )
 
@@ -102,6 +102,7 @@ class PredictRequest(BaseModel):
     news: Optional[List[NewsItem]] = None
     session: Optional[str] = None
     historical_outcomes: Optional[List[dict]] = None
+    intermarket: Optional[dict] = None
 
 class PredictResponse(BaseModel):
     symbol: str
@@ -543,6 +544,27 @@ async def get_prediction(
     symbol = req.symbol.upper()
     candles = req.candles or []          # bind early so all blocks can reference it
     timeframe = req.timeframe or "1h"   # bind early for prompt interpolation
+
+    # Fail closed: reject signal generation when real candle history is insufficient
+    if not candles or len(candles) < 20:
+        return PredictResponse(
+            symbol=symbol,
+            direction="WAIT",
+            confidence=0.0,
+            entry=0.0,
+            stop_loss=0.0,
+            take_profit_1=0.0,
+            take_profit_2=0.0,
+            indicators=["Insufficient Verified Market Candles"],
+            ai_explanation=f"TradeMind Institutional Quality Gate: Minimum 20 verified historical candles required for {symbol} on {timeframe} timeframe. Refusing to generate speculative signals without verified market data.",
+            timestamp=datetime.utcnow().isoformat(),
+            technicals={},
+            structure={},
+            scores={"bullish": 0, "bearish": 0},
+            category_scores={"technical": 0.0, "fundamental": 0.0, "sentiment": 0.0, "correlation": 0.0, "volume": 0.0, "on_chain": None}
+        )
+
+    current_price = float(candles[-1].close)
     indicators = calculate_technical_indicators(candles)
     structure = detect_market_structure(candles)
     mtf = analyze_multi_timeframe(candles)
@@ -553,36 +575,6 @@ async def get_prediction(
         hits = sum(1 for o in req.historical_outcomes if o.get('outcome') == 'HIT_TP1')
         total = len(req.historical_outcomes)
         if total > 0: win_rate = hits / total
-    
-    # Determine fallback price based on symbol category if no candles are present
-    fallback_price = 100.0  # default for stocks
-    symbol_upper = symbol.upper()
-    if 'BTC' in symbol_upper:
-        fallback_price = 64000.0
-    elif 'ETH' in symbol_upper:
-        fallback_price = 3400.0
-    elif 'SOL' in symbol_upper:
-        fallback_price = 140.0
-    elif 'EUR' in symbol_upper:
-        fallback_price = 1.0850
-    elif 'GBP' in symbol_upper:
-        fallback_price = 1.2750
-    elif 'JPY' in symbol_upper:
-        fallback_price = 158.00
-    elif 'XAU' in symbol_upper or 'GOLD' in symbol_upper:
-        fallback_price = 2350.0
-    elif 'XAG' in symbol_upper or 'SILVER' in symbol_upper:
-        fallback_price = 30.0
-    elif 'WTI' in symbol_upper or 'OIL' in symbol_upper or 'BRENT' in symbol_upper:
-        fallback_price = 80.0
-    elif 'US30' in symbol_upper:
-        fallback_price = 39000.0
-    elif 'NAS' in symbol_upper or 'NDX' in symbol_upper:
-        fallback_price = 19000.0
-    elif 'SPX' in symbol_upper:
-        fallback_price = 5400.0
-
-    current_price = candles[-1].close if candles else fallback_price
     
     # --- PRO 7-Step Institutional 5-Factor Weighted Scoring Engine ---
     # 1. Trend Confluence Score (Max 30%)
@@ -631,26 +623,26 @@ async def get_prediction(
     elif structure.get("sweep_bearish"): smc_score_bear += 6.0
 
     # 1. Market Regime & Trend Alignment (Max 20%)
-    adx_val = indicators.get("adx") or 25.0
-    atr_val = indicators.get("atr") or (current_price * 0.01)
+    adx_val = float(indicators.get("adx") or 0.0)
+    atr_val = float(indicators.get("atr") or 0.0)
     
-    regime_name = "TRENDING_BULLISH" if trend_score_bull > trend_score_bear and adx_val > 22 else "TRENDING_BEARISH" if trend_score_bear > trend_score_bull and adx_val > 22 else "HIGH_VOLATILITY_RANGE" if adx_val <= 22 else "CONSOLIDATION"
+    regime_name = "TRENDING_BULLISH" if trend_score_bull > trend_score_bear and adx_val > 22 else "TRENDING_BEARISH" if trend_score_bear > trend_score_bull and adx_val > 22 else "HIGH_VOLATILITY_RANGE" if adx_val <= 22 and adx_val > 0 else "CONSOLIDATION"
     
-    trend_weight_bull = 20.0 if "BULLISH" in regime_name else 5.0
-    trend_weight_bear = 20.0 if "BEARISH" in regime_name else 5.0
+    trend_weight_bull = 20.0 if "BULLISH" in regime_name else 0.0
+    trend_weight_bear = 20.0 if "BEARISH" in regime_name else 0.0
 
     # 2. Institutional Macro Fundamentals & Central Bank Intelligence (Max 20%)
-    macro_weight_bull = 10.0
-    macro_weight_bear = 10.0
+    macro_weight_bull = 0.0
+    macro_weight_bear = 0.0
     if req.news:
         bull_kws = ["beat", "surge", "growth", "record", "upgrade", "cut", "bullish", "profit", "accumulat", "expansion", "rally", "inflow", "boj intervention", "yields rise", "fomc dovish", "fed rate cut"]
         bear_kws = ["miss", "crash", "plunge", "downgrade", "hike", "inflation", "bearish", "layoff", "lawsuit", "investigat", "recession", "war", "yields drop", "fomc hawkish", "fed rate hike"]
         news_bull_count = sum(1 for n in req.news if any(k in (n.headline + " " + n.summary).lower() for k in bull_kws))
         news_bear_count = sum(1 for n in req.news if any(k in (n.headline + " " + n.summary).lower() for k in bear_kws))
         if news_bull_count > news_bear_count:
-            macro_weight_bull = 20.0; macro_weight_bear = 0.0
+            macro_weight_bull = 15.0; macro_weight_bear = 0.0
         elif news_bear_count > news_bull_count:
-            macro_weight_bear = 20.0; macro_weight_bull = 0.0
+            macro_weight_bear = 15.0; macro_weight_bull = 0.0
 
     # 3. Institutional Liquidity & SMC Sweeps (Max 15%)
     liq_weight_bull = 0.0; liq_weight_bear = 0.0
@@ -660,34 +652,98 @@ async def get_prediction(
     if structure.get("order_block_bearish"): liq_weight_bear += 7.0
 
     # 4. Volume Profile (POC, VAH, VAL) (Max 10%)
-    vol_weight_bull = 5.0; vol_weight_bear = 5.0
-    rvol = indicators.get("rvol", 1.0)
+    vol_weight_bull = 0.0; vol_weight_bear = 0.0
+    rvol = float(indicators.get("rvol") or 1.0)
     if rvol > 1.25:
         if trend_weight_bull > trend_weight_bear: vol_weight_bull = 10.0
-        else: vol_weight_bear = 10.0
+        elif trend_weight_bear > trend_weight_bull: vol_weight_bear = 10.0
 
     # 5. Dedicated Index & Cross-Asset Correlation Engines (Max 10%)
-    cor_weight_bull = 5.0; cor_weight_bear = 5.0
+    cor_weight_bull = 0.0; cor_weight_bear = 0.0
     sym_upper = symbol.upper()
     if 'US100' in sym_upper or 'NAS' in sym_upper:
         if trend_score_bull > trend_score_bear:
-            cor_weight_bull = 9.5; cor_weight_bear = 0.5
-        else:
-            cor_weight_bear = 9.5; cor_weight_bull = 0.5
+            cor_weight_bull = 8.0; cor_weight_bear = 0.0
+        elif trend_score_bear > trend_score_bull:
+            cor_weight_bear = 8.0; cor_weight_bull = 0.0
     elif 'US30' in sym_upper or 'DOW' in sym_upper:
-        if rvol > 1.1:
-            cor_weight_bull = 9.0; cor_weight_bear = 1.0
-        else:
-            cor_weight_bull = 5.0; cor_weight_bear = 5.0
+        if trend_score_bull > trend_score_bear:
+            cor_weight_bull = 8.0 if rvol > 1.1 else 6.0
+            cor_weight_bear = 0.0
+        elif trend_score_bear > trend_score_bull:
+            cor_weight_bear = 8.0 if rvol > 1.1 else 6.0
+            cor_weight_bull = 0.0
     elif 'SPX' in sym_upper or 'S&P' in sym_upper:
-        cor_weight_bull = 8.5; cor_weight_bear = 1.5
-    elif 'BTC' in sym_upper:
-        cor_weight_bull = 8.0; cor_weight_bear = 2.0
+        if trend_score_bull > trend_score_bear:
+            cor_weight_bull = 8.0; cor_weight_bear = 0.0
+        elif trend_score_bear > trend_score_bull:
+            cor_weight_bear = 8.0; cor_weight_bull = 0.0
+    elif 'BTC' in sym_upper or 'ETH' in sym_upper or 'SOL' in sym_upper:
+        # Crypto momentum alignment: real trend + structure direction
+        if trend_score_bull > trend_score_bear and struct_score_bull >= struct_score_bear:
+            cor_weight_bull = 8.0; cor_weight_bear = 0.0
+        elif trend_score_bear > trend_score_bull and struct_score_bear >= struct_score_bull:
+            cor_weight_bear = 8.0; cor_weight_bull = 0.0
+        elif trend_score_bull > trend_score_bear:
+            cor_weight_bull = 5.0; cor_weight_bear = 0.0
+        elif trend_score_bear > trend_score_bull:
+            cor_weight_bear = 5.0; cor_weight_bull = 0.0
     elif 'XAU' in sym_upper or 'GOLD' in sym_upper:
-        cor_weight_bull = 8.0; cor_weight_bear = 2.0
+        if req.intermarket:
+            dxy_trend = req.intermarket.get("dxy", {}).get("trend", "NEUTRAL")
+            yield_trend = req.intermarket.get("us10y", {}).get("trend", "FLAT")
+            vix_regime = req.intermarket.get("vix", {}).get("regime", "NORMAL")
+
+            if dxy_trend == "BEARISH":
+                cor_weight_bull += 3.5
+            elif dxy_trend == "BULLISH":
+                cor_weight_bear += 3.5
+
+            if yield_trend == "FALLING":
+                cor_weight_bull += 3.0
+            elif yield_trend == "RISING":
+                cor_weight_bear += 3.0
+
+            if vix_regime in ["ELEVATED", "EXTREME"]:
+                cor_weight_bull += 2.0
+    elif 'JPY' in sym_upper:
+        # USDJPY & JPY pairs: Real Yield Spread and DXY correlation
+        if req.intermarket:
+            dxy_trend = req.intermarket.get("dxy", {}).get("trend", "NEUTRAL")
+            yield_trend = req.intermarket.get("us10y", {}).get("trend", "FLAT")
+            if dxy_trend == "BULLISH":
+                cor_weight_bull += 3.5
+            elif dxy_trend == "BEARISH":
+                cor_weight_bear += 3.5
+            if yield_trend == "RISING":
+                cor_weight_bull += 4.5
+            elif yield_trend == "FALLING":
+                cor_weight_bear += 4.5
+    elif any(fx in sym_upper for fx in ['EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF']):
+        # Forex major pairs: Driven by DXY inverse / direct correlation
+        if req.intermarket:
+            dxy_trend = req.intermarket.get("dxy", {}).get("trend", "NEUTRAL")
+            is_usd_counter = sym_upper.endswith('USD')  # EURUSD, GBPUSD: inverse to DXY
+            is_usd_base = sym_upper.startswith('USD')     # USDCAD, USDCHF: direct to DXY
+            if is_usd_counter:
+                if dxy_trend == "BEARISH":
+                    cor_weight_bull += 6.0
+                elif dxy_trend == "BULLISH":
+                    cor_weight_bear += 6.0
+            elif is_usd_base:
+                if dxy_trend == "BULLISH":
+                    cor_weight_bull += 6.0
+                elif dxy_trend == "BEARISH":
+                    cor_weight_bear += 6.0
+    else:
+        # Equities / other: Index beta correlation with SPX trend
+        if trend_score_bull > trend_score_bear:
+            cor_weight_bull = 6.0; cor_weight_bear = 0.0
+        elif trend_score_bear > trend_score_bull:
+            cor_weight_bear = 6.0; cor_weight_bull = 0.0
 
     # 6. Pattern Recognition (Max 5%)
-    pat_weight_bull = 3.0; pat_weight_bear = 3.0
+    pat_weight_bull = 0.0; pat_weight_bear = 0.0
     if structure.get("fvg_bullish"): pat_weight_bull = 5.0
     elif structure.get("fvg_bearish"): pat_weight_bear = 5.0
 
@@ -696,18 +752,19 @@ async def get_prediction(
     # -------------------------------------------------------------------------
 
     # Step 1 & 2: Asset-Specific Weighted Module Scoring (0 - 100 per module)
-    smc_module = 92.0 if (structure.get("fvg_detected") or structure.get("order_block_detected") or structure.get("liquidity_sweep")) else 75.0
-    trend_module = 90.0 if indicators.get("trend") != "Neutral" else 65.0
-    flow_module = 88.0 if indicators.get("rvol", 1.0) > 1.15 else 70.0
-    macro_module = 92.0 if (macro_weight_bull > 12.0 or macro_weight_bear > 12.0) else 75.0
-    vol_module = 85.0 if indicators.get("rvol", 1.0) > 1.25 else 70.0
+    smc_module = 90.0 if (structure.get("fvg_detected") or structure.get("order_block_detected") or structure.get("liquidity_sweep")) else 60.0
+    trend_module = 92.0 if indicators.get("trend") != "Neutral" else 55.0
+    flow_module = 88.0 if indicators.get("rvol", 1.0) > 1.15 else 55.0
+    macro_module = 90.0 if (macro_weight_bull > 12.0 or macro_weight_bear > 12.0) else 55.0
+    vol_module = 85.0 if indicators.get("rvol", 1.0) > 1.25 else 60.0
 
+    # Real module-driven calibration with ZERO fake constant padding
     if 'BTC' in sym_upper or 'ETH' in sym_upper or 'SOL' in sym_upper:
-        weighted_raw = (smc_module * 0.15) + (trend_module * 0.15) + (flow_module * 0.20) + (macro_module * 0.20) + (vol_module * 0.10) + (88.0 * 0.10) + (92.0 * 0.10)
+        weighted_raw = (smc_module * 0.25) + (trend_module * 0.25) + (flow_module * 0.20) + (macro_module * 0.15) + (vol_module * 0.15)
     elif 'EUR' in sym_upper or 'GBP' in sym_upper or 'JPY' in sym_upper:
-        weighted_raw = (smc_module * 0.15) + (trend_module * 0.12) + (flow_module * 0.10) + (macro_module * 0.18) + (vol_module * 0.10) + (90.0 * 0.20) + (92.0 * 0.15)
+        weighted_raw = (smc_module * 0.20) + (trend_module * 0.25) + (flow_module * 0.15) + (macro_module * 0.25) + (vol_module * 0.15)
     else:
-        weighted_raw = (smc_module * 0.15) + (trend_module * 0.20) + (flow_module * 0.15) + (macro_module * 0.20) + (vol_module * 0.15) + (90.0 * 0.15)
+        weighted_raw = (smc_module * 0.20) + (trend_module * 0.30) + (flow_module * 0.20) + (macro_module * 0.15) + (vol_module * 0.15)
 
     # Step 4: Direction Agreement Factor (0.90 to 1.05)
     matching_modules = 8.0 if (indicators.get("trend") != "Neutral" and rvol > 1.1) else 6.5
@@ -724,30 +781,32 @@ async def get_prediction(
     total_bull_score = trend_score_bull + struct_score_bull + smc_score_bull + macro_weight_bull + liq_weight_bull + vol_weight_bull + cor_weight_bull + pat_weight_bull
     total_bear_score = trend_score_bear + struct_score_bear + smc_score_bear + macro_weight_bear + liq_weight_bear + vol_weight_bear + cor_weight_bear + pat_weight_bear
 
-    if total_bull_score >= total_bear_score:
+    score_diff = abs(total_bull_score - total_bear_score)
+    if score_diff < 4.0 or (total_bull_score == 0 and total_bear_score == 0):
+        rule_direction = "WAIT"
+    elif total_bull_score > total_bear_score:
         rule_direction = "BUY"
     else:
         rule_direction = "SELL"
 
     # Step 10: Master AI Mathematical Confidence & Calibration
-    raw_confidence = (weighted_raw * agreement_factor * regime_factor) - risk_penalty
-    
-    if rule_direction == "BUY" and mtf["alignment_score"] > 0.5: raw_confidence += 5
-    elif rule_direction == "SELL" and mtf["alignment_score"] < 0.5: raw_confidence += 5
-    if session_engine.get("overlap"): raw_confidence += 5
-    
-    raw_confidence = raw_confidence * (0.8 + 0.4 * win_rate)
-    
-    confidence = float(round(min(0.96, max(0.35, raw_confidence / 100.0)), 2))
-    if confidence < 0.55:
-        rule_direction = "WAIT"
+    if rule_direction == "WAIT":
+        confidence = 0.45
+    else:
+        raw_confidence = (weighted_raw * agreement_factor * regime_factor) - risk_penalty
+        
+        if rule_direction == "BUY" and mtf.get("alignment_score", 0.5) > 0.5: raw_confidence += 4
+        elif rule_direction == "SELL" and mtf.get("alignment_score", 0.5) < 0.5: raw_confidence += 4
+        if session_engine.get("overlap"): raw_confidence += 3
+        
+        raw_confidence = raw_confidence * (0.8 + 0.4 * win_rate)
+        
+        confidence = float(round(min(0.95, max(0.35, raw_confidence / 100.0)), 2))
+        if confidence < 0.55:
+            rule_direction = "WAIT"
 
     direction = rule_direction
-    
     entry = current_price
-    stop_loss = entry * (0.99 if direction == "BUY" else 1.01)
-    tp1 = entry * (1.02 if direction == "BUY" else 0.98)
-    tp2 = entry * (1.05 if direction == "BUY" else 0.95)
 
     detected_signals = []
     if indicators.get("trend") != "Neutral":
@@ -804,7 +863,6 @@ async def get_prediction(
     else:
         macro_context = "Equities index pricing is driven by mega-cap corporate earnings growth, Federal Reserve rate cycle expectations, and credit liquidity breadth."
         correlation_analysis = "Correlates directly with US 100 momentum, VIX volatility compression below 16.0, and corporate high-yield bond spreads."
-    tradingview_idea = f"TradeMind Institutional {rule_direction} setup for {symbol}: Entry near {current_price:.2f}, targeting TP1 ({current_price * (1.02 if rule_direction == 'BUY' else 0.98):.2f}) with structural invalidation below {current_price * (0.99 if rule_direction == 'BUY' else 1.01):.2f}."
 
     tech_score = 0.5
     if indicators.get("trend") == "Bullish" and rule_direction == "BUY": tech_score += 0.2
@@ -814,10 +872,10 @@ async def get_prediction(
 
     category_scores = {
         "technical": min(1.0, round(tech_score, 2)),
-        "fundamental": round(macro_weight_bull / 20.0 if rule_direction == "BUY" else macro_weight_bear / 20.0, 2),
-        "sentiment": round(macro_weight_bull / 20.0 if rule_direction == "BUY" else macro_weight_bear / 20.0, 2),
-        "correlation": min(1.0, round(cor_weight_bull / 10.0 if rule_direction == "BUY" else cor_weight_bear / 10.0, 2)),
-        "volume": min(1.0, round(indicators.get("rvol", 1.0) / 2.0, 2)),
+        "fundamental": round((macro_weight_bull if rule_direction == "BUY" else macro_weight_bear) / 15.0, 2) if (macro_weight_bull > 0 or macro_weight_bear > 0) else 0.5,
+        "sentiment": round((macro_weight_bull if rule_direction == "BUY" else macro_weight_bear) / 15.0, 2) if (macro_weight_bull > 0 or macro_weight_bear > 0) else 0.5,
+        "correlation": min(1.0, round((cor_weight_bull if rule_direction == "BUY" else cor_weight_bear) / 8.0, 2)) if (cor_weight_bull > 0 or cor_weight_bear > 0) else 0.5,
+        "volume": min(1.0, round(rvol / 2.0, 2)),
         "on_chain": None
     }
 
@@ -900,7 +958,7 @@ async def get_prediction(
             session_str = f"Current Market Session Context: {req.session}" if req.session else "Current Market Session Context: Active global session"
             timeframe_desc = "SCALPING Setup (Tight stop-losses, rapid target execution, high leverage support, immediate momentum reversals)" if timeframe in ['1m', '3m', '5m', '15m', '30m'] else "SWING/DAY TRADE Setup (Medium-term trend following, pattern breakout confirmation, wider invalidation boundaries)"
 
-            prompt = f"""You are TradeMind AI, a professional trading signal analyst used by retail traders.
+            prompt = f"""You are TradeMind, a professional trading signal analyst used by institutional and retail traders.
 Perform an in-depth market analysis for {symbol} on the {timeframe} timeframe ({timeframe_desc}).
 
 {session_str}
@@ -1113,7 +1171,7 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
 
     # Asset & timeframe calibrated stop distance
     if is_gold:
-        sl_dist = min(max(atr_val * 1.25, 3.50 if is_scalping else 8.00), 8.50 if is_scalping else 25.00)
+        sl_dist = min(max(atr_val * 1.35, 5.00 if is_scalping else 12.00), 14.00 if is_scalping else 32.00)
     elif is_us30:
         sl_dist = min(max(atr_val * 1.25, 35.0 if is_scalping else 75.0), 85.0 if is_scalping else 190.0)
     elif is_nas100:
@@ -1144,8 +1202,10 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         tp1 = 0.0
         tp2 = 0.0
 
-    if 'tradingview_idea' not in dir() or not tradingview_idea:
-        tradingview_idea = f"PRO 7-Step Institutional {rule_direction} trade setup for {symbol}. Retest Entry: {entry:.2f}, TP1: {tp1:.2f} (1:1.5 R:R), TP2: {tp2:.2f} (1:2.6 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
+    if rule_direction == "WAIT":
+        tradingview_idea = f"TradeMind Institutional Analysis: {symbol} in neutral consolidation on {timeframe}. Awaiting high-conviction institutional breakout."
+    else:
+        tradingview_idea = f"TradeMind Institutional {rule_direction} setup for {symbol}. Entry: {entry:.2f}, TP1: {tp1:.2f} (1:1.5 R:R), TP2: {tp2:.2f} (1:2.6 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
 
     regime_detection = {
         "regime": regime_name,
@@ -1270,7 +1330,7 @@ async def chat_copilot(
     # ── Real Gemini Chat (new SDK) ───────────────────────────────────
     if gemini_client:
         try:
-            system_instruction = f"""You are TradeMind AI Copilot, a professional institutional-grade trading assistant.
+            system_instruction = f"""You are TradeMind Copilot, a professional institutional-grade trading assistant.
 You have access to the user's live portfolio context:
 {portfolio_summary}
 

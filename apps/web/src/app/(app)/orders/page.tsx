@@ -363,7 +363,7 @@ export default function OrdersPage() {
                 <Sparkles size={16} className="text-purple-400" />
                 Place Custom Order
               </h3>
-              <p className="text-[10px] text-slate-400 mb-6">Create a manual entry that will bypass automated AI routing triggers.</p>
+              <p className="text-[10px] text-slate-400 mb-6">Create a manual entry that will bypass automated execution routing triggers.</p>
 
               <form onSubmit={handlePlaceOrder} className="space-y-4 text-xs">
                 {/* Side Selection */}

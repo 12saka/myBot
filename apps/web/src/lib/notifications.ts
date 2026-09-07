@@ -82,7 +82,7 @@ export function sendDeviceNotification(title: string, options?: {
   if (Notification.permission === 'granted') {
     try {
       new Notification(title, {
-        body: options?.body || 'TradeMind AI Signal Generated',
+        body: options?.body || 'TradeMind Signal Generated',
         icon: options?.icon || '/icons/icon-192x192.png',
         badge: options?.badge || '/icons/icon-192x192.png',
         tag: options?.tag || 'trademind-signal',

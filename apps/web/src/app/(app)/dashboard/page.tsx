@@ -48,7 +48,7 @@ export default function DashboardPage() {
     passedCount: 0,
     passRate: 0,
     totalXp: 0,
-    skillsMastery: { "Market Structure": 80, "Technical Analysis": 85, "Risk Management": 90 },
+    skillsMastery: {},
     recentAttempts: []
   });
   const [featuredQuiz, setFeaturedQuiz] = useState<any>(null);
@@ -143,7 +143,7 @@ export default function DashboardPage() {
       {/* Header */}
       <motion.div variants={ITEM}>
         <PageHeader
-          title="AI Command Center"
+          title="Command Center"
           subtitle="Real-time multi-agent market observation. All automated risk limits are active."
           icon={BrainCircuit}
         >
@@ -179,16 +179,16 @@ export default function DashboardPage() {
           icon={TrendingUp} iconColor="#34d399" accentColor="rgba(16,185,129,0.5)" glowColor="green"
         />
         <StatCard
-          label="Active AI Signals"
+          label="Active Signals"
           value={signals.length.toString()}
-          subValue={`Mode: ${aiMode}`}
+          subValue={`Strategy: ${aiMode}`}
           icon={Zap} iconColor="#fbbf24" accentColor="rgba(245,158,11,0.5)" glowColor="amber"
         />
         <StatCard
           label="Risk Score"
           value={stats.totalTrades > 0 ? (parseFloat(stats.winRate) > 50 ? 'Low' : 'Moderate') : 'N/A'}
           subValue={stats.totalTrades > 0 ? `${stats.totalTrades} trades, ${stats.winRate} win rate` : 'No trades yet'}
-          change={{ value: stats.totalTrades > 0 ? `AI accuracy: ${stats.aiAccuracy}` : 'Start trading to see stats', positive: parseFloat(stats.winRate) > 50 }}
+          change={{ value: stats.totalTrades > 0 ? `Model accuracy: ${stats.aiAccuracy}` : 'Start trading to see stats', positive: parseFloat(stats.winRate) > 50 }}
           icon={Shield} iconColor="#34d399" accentColor="rgba(16,185,129,0.5)" glowColor="green"
         />
       </motion.div>
@@ -351,7 +351,7 @@ export default function DashboardPage() {
 
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
           <div className="flex w-full justify-between items-center">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">AI Confidence Index</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Signal Confidence Index</span>
             <Badge variant={aiConfidenceVariant} size="xs">{aiConfidenceLabel}</Badge>
           </div>
           <ProgressRing value={aiConfidenceValue} color="#818cf8" size={130} strokeWidth={10}>
@@ -360,7 +360,7 @@ export default function DashboardPage() {
               <div className="text-[10px] text-slate-500">Signal Model</div>
             </div>
           </ProgressRing>
-          <span className="text-[11px] text-slate-500 text-center">Neural convergence weight</span>
+          <span className="text-[11px] text-slate-500 text-center">Quantitative convergence weight</span>
         </div>
 
         <div className="glass-card rounded-2xl p-6 flex flex-col items-center gap-3">
@@ -493,12 +493,12 @@ export default function DashboardPage() {
         </motion.div>
       </div>
 
-      {/* AI Signals */}
+      {/* Signals */}
       <motion.div variants={ITEM} className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="font-display font-bold text-white flex items-center gap-2 text-xl">
             <Zap size={18} className="text-purple-400" />
-            Top AI Opportunities Today
+            Top Market Opportunities Today
           </h2>
           <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 text-xs">
             {(['all', 'crypto', 'stocks', 'forex'] as const).map((tab) => (

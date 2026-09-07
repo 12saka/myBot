@@ -1,7 +1,7 @@
 {
-  "name": "TradeMind AI",
+  "name": "TradeMind",
   "short_name": "TradeMind",
-  "description": "Institutional-Grade AI Signals & Market Portfolio Management",
+  "description": "Institutional-Grade Quantitative Signals & Market Portfolio Management",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#030712",
