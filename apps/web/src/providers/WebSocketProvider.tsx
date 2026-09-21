@@ -171,7 +171,8 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       });
     });
 
-    socket.on('notification', (data: { title: string; message: string }) => {
+    socket.on('notification', (data: { id?: string; title: string; message: string }) => {
+      const toastKey = data.id ? `notif-${data.id}` : `notif-${data.title}-${data.message}`;
       toast(
         (t) => (
           <div className="flex flex-col gap-1">
@@ -180,6 +181,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           </div>
         ),
         {
+          id: toastKey,
           duration: 4000,
           position: 'top-right',
           style: {

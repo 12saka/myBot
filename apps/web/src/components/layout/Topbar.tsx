@@ -143,7 +143,9 @@ export function Topbar() {
           if (previousIds.size > 0) {
             const newUnread = list.filter(n => !n.isRead && !previousIds.has(n.id));
             newUnread.forEach(notif => {
+              const toastKey = notif.id ? `notif-${notif.id}` : `notif-${notif.title}-${notif.message}`;
               toast(notif.message || notif.title, {
+                id: toastKey,
                 icon: '⚡',
                 className: '!max-w-[90vw] md:!max-w-md',
                 style: {

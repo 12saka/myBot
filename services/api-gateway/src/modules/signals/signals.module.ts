@@ -2375,18 +2375,18 @@ export class SignalsController implements OnModuleInit {
 
     // Targets & Dynamic Risk-to-Reward Ratio (Timeframe Scaled & Adaptive Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const minPct = isScalp ? 0.0045 : 0.0080; // 0.45% - 0.80% minimum risk room
-    const maxPct = isScalp ? 0.0120 : 0.0250; // 1.20% - 2.50% max risk room
-    const slDist = Math.min(Math.max(atr * 1.25, effectiveEntry * minPct), effectiveEntry * maxPct);
+    const minPct = isScalp ? 0.0035 : 0.0065; // 0.35% - 0.65% tight structure risk room
+    const maxPct = isScalp ? 0.0075 : 0.0120; // 0.75% - 1.20% max risk room
+    const slDist = Math.min(Math.max(atr * 0.9, effectiveEntry * minPct), effectiveEntry * maxPct);
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingSlice = candles.slice(-lookback);
+    const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
@@ -2675,16 +2675,16 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 1.25, isScalp ? 22 : 45), isScalp ? 55 : 120);
+    const slDist = Math.min(Math.max(atr * 0.9, isScalp ? 18 : 35), isScalp ? 35 : 75);
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingSlice = candles.slice(-lookback);
+    const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
@@ -2973,16 +2973,16 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based for US30)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 1.25, isScalp ? 35 : 75), isScalp ? 85 : 190);
+    const slDist = Math.min(Math.max(atr * 0.9, isScalp ? 28 : 55), isScalp ? 55 : 110);
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingSlice = candles.slice(-lookback);
+    const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
@@ -3255,18 +3255,18 @@ export class SignalsController implements OnModuleInit {
     // Calculate Targets & Risk/Reward (Institutional Volatility & Structure-Based FX Protection)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = isJpy 
-      ? Math.min(Math.max(atr * 1.25, isScalp ? 0.25 : 0.45), isScalp ? 0.45 : 0.85)
-      : Math.min(Math.max(atr * 1.25, isScalp ? 0.0022 : 0.0038), isScalp ? 0.0045 : 0.0075); // Minimum 22-38 pips buffer for EUR/USD
+      ? Math.min(Math.max(atr * 0.85, isScalp ? 0.12 : 0.22), isScalp ? 0.25 : 0.45)
+      : Math.min(Math.max(atr * 0.85, isScalp ? 0.0008 : 0.0015), isScalp ? 0.0018 : 0.0030); // 8-15 pips tight institutional buffer
 
     // Institutional Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingLows = candles.slice(-fxLookback).map(c => Number(c.low));
-    const swingHighs = candles.slice(-fxLookback).map(c => Number(c.high));
+    const swingLows = candles.slice(-Math.min(fxLookback, isScalp ? 8 : 16)).map(c => Number(c.low));
+    const swingHighs = candles.slice(-Math.min(fxLookback, isScalp ? 8 : 16)).map(c => Number(c.high));
     const lowestLow = Math.min(...swingLows);
     const highestHigh = Math.max(...swingHighs);
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
@@ -3495,16 +3495,16 @@ export class SignalsController implements OnModuleInit {
     const effectiveEntry = precisionOrder.entryPrice;
 
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const minPct = isScalp ? 0.004 : 0.008; // 0.4% - 0.8% minimum risk room
-    const maxPct = isScalp ? 0.012 : 0.025; // 1.2% - 2.5% max risk room
-    const slDist = Math.min(Math.max(atr * 1.25, effectiveEntry * minPct), effectiveEntry * maxPct);
+    const minPct = isScalp ? 0.0035 : 0.0065; // 0.35% - 0.65% tight structure risk room
+    const maxPct = isScalp ? 0.0075 : 0.0150; // 0.75% - 1.50% max risk room
+    const slDist = Math.min(Math.max(atr * 0.9, effectiveEntry * minPct), effectiveEntry * maxPct);
 
     const lowestLow = Math.min(...recentLows);
     const highestHigh = Math.max(...recentHighs);
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
@@ -3736,15 +3736,15 @@ export class SignalsController implements OnModuleInit {
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const isSpx = symbol.toUpperCase().includes('SPX');
     const slDist = isSpx 
-      ? Math.min(Math.max(atr * 1.25, isScalp ? 6.5 : 14.0), isScalp ? 18.0 : 38.0)
-      : Math.min(Math.max(atr * 1.25, isScalp ? 20.0 : 45.0), isScalp ? 60.0 : 130.0);
+      ? Math.min(Math.max(atr * 0.9, isScalp ? 4.5 : 8.5), isScalp ? 9.5 : 18.0)
+      : Math.min(Math.max(atr * 0.9, isScalp ? 15.0 : 30.0), isScalp ? 32.0 : 70.0);
 
     const lowestLow = Math.min(...recentLows);
     const highestHigh = Math.max(...recentHighs);
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
@@ -4043,19 +4043,19 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based USDJPY Targets)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 1.25, isScalp ? 0.25 : 0.45), isScalp ? 0.45 : 0.85);
+    const slDist = Math.min(Math.max(atr * 0.85, isScalp ? 0.12 : 0.22), isScalp ? 0.25 : 0.45);
 
     const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision);
     const effectiveEntry = precisionOrder.entryPrice;
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingSlice = candles.slice(-lookback);
+    const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 16));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
@@ -4390,21 +4390,21 @@ export class SignalsController implements OnModuleInit {
     const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
     const effectiveEntry = precisionOrder.entryPrice;
 
-    // 9. Exact Targets: Widened Structural SL for Gold ($5.00 min scalp, $12.00 min swing)
+    // 9. Exact Targets: Tight Structural SL for Gold ($3.50 - $6.50 scalp, $6.00 - $12.00 swing)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(
-      Math.max(atr * 1.35, isScalp ? 5.00 : 12.00),
-      isScalp ? 14.00 : 32.00
+      Math.max(atr * 0.9, isScalp ? 3.50 : 6.50),
+      isScalp ? 6.50 : 12.00
     );
 
-    // Structure Invalidation SL (Adaptive Session Swing Window with ATR buffer)
-    const swingSlice = candles.slice(-lookback);
+    // Structure Invalidation SL (Adaptive Session Swing Window with tight ATR buffer)
+    const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 16));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(effectiveEntry - (slDist * 1.4), Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.45)))
-      : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
@@ -4676,7 +4676,7 @@ export class SignalsController implements OnModuleInit {
     const slPips = isForex ? (sig.symbol.includes('JPY') ? slDist * 100 : slDist * 10000) : slDist;
 
     // Evaluate structural failure dimensions
-    const isShallowSL = isForex ? slPips < 20 : slDist < (entry * 0.005);
+    const isShallowSL = isForex ? slPips < 5 : slDist < (entry * 0.001);
     const hadNews = Array.isArray(reasoning.indicators) && reasoning.indicators.some((i: string) => i.toLowerCase().includes('news') || i.toLowerCase().includes('cpi'));
     const htfAligned = !String(reasoning.htfBias || '').toLowerCase().includes('counter');
 

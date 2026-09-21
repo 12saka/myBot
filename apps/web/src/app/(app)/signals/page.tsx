@@ -173,52 +173,141 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         />
       </div>
 
-      {/* Price Grid (Clear, unclipped micro-cards) */}
-      <div className={cn("grid gap-2 border-y border-white/5 py-3", signal.tp3 ? "grid-cols-3 sm:grid-cols-5" : "grid-cols-2 sm:grid-cols-4")}>
-        {[
-          { 
-            label: 'Entry', 
-            val: signal.entry, 
-            color: 'text-slate-200' 
-          },
-          { 
-            label: 'Stop Loss', 
-            val: signal.stopLoss, 
-            color: 'text-red-400'   
-          },
-          { 
-            label: 'Target 1', 
-            val: signal.tp1, 
-            color: 'text-emerald-400' 
-          },
-          { 
-            label: 'Target 2', 
-            val: signal.tp2, 
-            color: 'text-emerald-300' 
-          },
-          ...(signal.tp3 ? [{
-            label: 'Target 3',
-            val: signal.tp3,
-            color: 'text-cyan-400'
-          }] : [])
-        ].map(({ label, val, color }) => {
+      {/* Price Grid (Institutional 2-Tier Architecture: Order Bounds + Profit Targets) */}
+      <div className="space-y-2 border-y border-white/5 py-3">
+        {(() => {
           const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
           const isJpy = signal.symbol.includes('JPY');
+          const isGold = signal.symbol.includes('XAU') || signal.symbol.includes('GOLD');
+          const isIndex = ['US30', 'US100', 'SPX500', 'DAX40'].some(idx => signal.symbol.includes(idx));
           const maxDecimals = isForex ? (isJpy ? 3 : 4) : 2;
-          const formatted = typeof val === 'number' && !isNaN(val) 
-            ? val.toLocaleString('en-US', { minimumFractionDigits: isForex ? (isJpy ? 3 : 4) : 2, maximumFractionDigits: maxDecimals }) 
-            : '0.00';
           const prefix = isForex ? '' : '$';
           
+          const fmt = (v: number | undefined) => {
+            if (typeof v !== 'number' || isNaN(v)) return '0.00';
+            return v.toLocaleString('en-US', { minimumFractionDigits: isForex ? (isJpy ? 3 : 4) : 2, maximumFractionDigits: maxDecimals });
+          };
+
+          const slDiff = Math.abs(signal.entry - signal.stopLoss);
+          const tp1Diff = Math.abs(signal.tp1 - signal.entry);
+          const tp2Diff = Math.abs(signal.tp2 - signal.entry);
+          const tp3Diff = signal.tp3 ? Math.abs(signal.tp3 - signal.entry) : 0;
+
+          let slDiffText = '';
+          let tp1GainText = '';
+          let tp2GainText = '';
+          let tp3GainText = '';
+
+          if (isForex) {
+            const slPips = isJpy ? (slDiff * 100).toFixed(1) : (slDiff * 10000).toFixed(1);
+            const tp1Pips = isJpy ? (tp1Diff * 100).toFixed(1) : (tp1Diff * 10000).toFixed(1);
+            const tp2Pips = isJpy ? (tp2Diff * 100).toFixed(1) : (tp2Diff * 10000).toFixed(1);
+            const tp3Pips = isJpy ? (tp3Diff * 100).toFixed(1) : (tp3Diff * 10000).toFixed(1);
+            slDiffText = `-${slPips} pips`;
+            tp1GainText = `+${tp1Pips} pips`;
+            tp2GainText = `+${tp2Pips} pips`;
+            tp3GainText = `+${tp3Pips} pips`;
+          } else if (isGold) {
+            slDiffText = `-$${slDiff.toFixed(2)}`;
+            tp1GainText = `+$${tp1Diff.toFixed(2)}`;
+            tp2GainText = `+$${tp2Diff.toFixed(2)}`;
+            tp3GainText = `+$${tp3Diff.toFixed(2)}`;
+          } else if (isIndex) {
+            slDiffText = `-${slDiff.toFixed(1)} pts`;
+            tp1GainText = `+${tp1Diff.toFixed(1)} pts`;
+            tp2GainText = `+${tp2Diff.toFixed(1)} pts`;
+            tp3GainText = `+${tp3Diff.toFixed(1)} pts`;
+          } else {
+            const slPct = ((slDiff / (signal.entry || 1)) * 100).toFixed(2);
+            const tp1Pct = ((tp1Diff / (signal.entry || 1)) * 100).toFixed(2);
+            const tp2Pct = ((tp2Diff / (signal.entry || 1)) * 100).toFixed(2);
+            const tp3Pct = ((tp3Diff / (signal.entry || 1)) * 100).toFixed(2);
+            slDiffText = `-${slPct}%`;
+            tp1GainText = `+${tp1Pct}%`;
+            tp2GainText = `+${tp2Pct}%`;
+            tp3GainText = `+${tp3Pct}%`;
+          }
+
+          const entryType = signal.aiReasoning?.entry_type || 'MARKET_NOW';
+          const isLimit = entryType === 'BUY_LIMIT' || entryType === 'SELL_LIMIT' || entryType === 'LIMIT';
+
           return (
-            <div key={label} className="p-2 rounded-xl bg-slate-900/90 border border-white/10 flex flex-col justify-center min-w-0">
-              <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-mono font-bold mb-0.5">{label}</span>
-              <span className={cn('font-mono font-extrabold text-xs sm:text-sm tracking-tight block whitespace-nowrap overflow-x-auto scrollbar-none', color)}>
-                {prefix}{formatted}
-              </span>
-            </div>
+            <>
+              {/* Tier 1: Primary Order Boundaries (Entry & Stop Loss) */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2.5 rounded-xl bg-slate-900/90 border border-white/10 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-300 inline-block" />
+                      Entry Price
+                    </span>
+                    <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-white/5 text-slate-300">
+                      {isLimit ? entryType.replace('_', ' ') : 'MARKET'}
+                    </span>
+                  </div>
+                  <span className="font-mono font-black text-sm sm:text-base text-white tracking-tight leading-tight">
+                    {prefix}{fmt(signal.entry)}
+                  </span>
+                  <span className="text-[9px] font-mono text-slate-500 mt-0.5">Execution Base</span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-red-950/20 border border-red-500/25 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-red-400 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
+                      Stop Loss
+                    </span>
+                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-red-500/20 text-red-300">
+                      {slDiffText}
+                    </span>
+                  </div>
+                  <span className="font-mono font-black text-sm sm:text-base text-red-400 tracking-tight leading-tight">
+                    {prefix}{fmt(signal.stopLoss)}
+                  </span>
+                  <span className="text-[9px] font-mono text-red-400/80 mt-0.5">Invalidation Point</span>
+                </div>
+              </div>
+
+              {/* Tier 2: Take Profit Targets (Clear, 2 or 3 Columns) */}
+              <div className={cn("grid gap-2", signal.tp3 ? "grid-cols-3" : "grid-cols-2")}>
+                <div className="p-2 rounded-xl bg-emerald-950/20 border border-emerald-500/25 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[9px] font-mono font-bold uppercase text-emerald-400">Target 1 (TP1)</span>
+                    <span className="text-[8px] font-mono font-bold text-emerald-300">{tp1GainText}</span>
+                  </div>
+                  <span className="font-mono font-bold text-xs sm:text-sm text-emerald-400 tracking-tight">
+                    {prefix}{fmt(signal.tp1)}
+                  </span>
+                  <span className="text-[8px] font-mono text-emerald-400/70">Main Profit Lock</span>
+                </div>
+
+                <div className="p-2 rounded-xl bg-emerald-950/20 border border-emerald-500/25 flex flex-col justify-between">
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-[9px] font-mono font-bold uppercase text-emerald-300">Target 2 (TP2)</span>
+                    <span className="text-[8px] font-mono font-bold text-emerald-300">{tp2GainText}</span>
+                  </div>
+                  <span className="font-mono font-bold text-xs sm:text-sm text-emerald-300 tracking-tight">
+                    {prefix}{fmt(signal.tp2)}
+                  </span>
+                  <span className="text-[8px] font-mono text-emerald-300/70">Runner Target</span>
+                </div>
+
+                {signal.tp3 && (
+                  <div className="p-2 rounded-xl bg-cyan-950/20 border border-cyan-500/25 flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-[9px] font-mono font-bold uppercase text-cyan-400">Target 3 (TP3)</span>
+                      <span className="text-[8px] font-mono font-bold text-cyan-300">{tp3GainText}</span>
+                    </div>
+                    <span className="font-mono font-bold text-xs sm:text-sm text-cyan-400 tracking-tight">
+                      {prefix}{fmt(signal.tp3)}
+                    </span>
+                    <span className="text-[8px] font-mono text-cyan-400/70">Macro Extended</span>
+                  </div>
+                )}
+              </div>
+            </>
           );
-        })}
+        })()}
       </div>
 
       {/* Execution Directive & Risk Sizing */}
@@ -237,35 +326,48 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         const isCrypto = signal.type === 'crypto' || ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => signal.symbol.includes(c));
         
         const slDiff = Math.abs(signal.entry - signal.stopLoss);
+        const tp1Diff = Math.abs(signal.tp1 - signal.entry);
         let riskLabel = '';
+        let rewardLabel = '';
+
         if (isForex) {
           const pips = isJpy ? (slDiff * 100).toFixed(1) : (slDiff * 10000).toFixed(1);
+          const tpPips = isJpy ? (tp1Diff * 100).toFixed(1) : (tp1Diff * 10000).toFixed(1);
           riskLabel = `${pips} pips (~$${(Number(pips) * 0.1).toFixed(2)} / 0.01 lot)`;
+          rewardLabel = `+${tpPips} pips (~$${(Number(tpPips) * 0.1).toFixed(2)})`;
         } else if (isGold) {
           riskLabel = `$${slDiff.toFixed(2)} (~$${slDiff.toFixed(2)} / 0.01 lot)`;
+          rewardLabel = `+$${tp1Diff.toFixed(2)} (~$${tp1Diff.toFixed(2)})`;
         } else if (isIndex) {
           riskLabel = `${slDiff.toFixed(1)} pts (~$${(slDiff * 0.05).toFixed(2)} / 0.05 lot)`;
+          rewardLabel = `+${tp1Diff.toFixed(1)} pts (~$${(tp1Diff * 0.05).toFixed(2)})`;
         } else if (isCrypto) {
           const pct = ((slDiff / (signal.entry || 1)) * 100).toFixed(2);
+          const tpPct = ((tp1Diff / (signal.entry || 1)) * 100).toFixed(2);
           riskLabel = `${pct}% ($${slDiff.toFixed(1)})`;
+          rewardLabel = `+${tpPct}% (+$${tp1Diff.toFixed(1)})`;
         } else {
           riskLabel = `$${slDiff.toFixed(2)}`;
+          rewardLabel = `+$${tp1Diff.toFixed(2)}`;
         }
 
         return (
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/60 border border-white/5 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full shrink-0 bg-purple-400 inline-block" />
-              <span className="text-slate-300 font-medium text-[11px] leading-snug">
+          <div className="space-y-2 p-3 rounded-xl bg-slate-900/70 border border-white/5 text-xs">
+            <div className="flex items-start gap-2">
+              <span className="w-2 h-2 rounded-full shrink-0 bg-purple-400 mt-1 inline-block" />
+              <p className="text-slate-300 font-medium text-[11px] leading-relaxed">
                 {condition}
-              </span>
+              </p>
             </div>
-            <div className="flex items-center gap-2 text-[10px] font-mono shrink-0">
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono pt-1.5 border-t border-white/5">
               <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-bold">
                 0.01 Micro Approved
               </span>
-              <span className="px-2 py-0.5 rounded bg-white/5 border border-white/5 text-amber-400 font-semibold">
+              <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 font-bold">
                 Risk: {riskLabel}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-bold">
+                Gain: {rewardLabel}
               </span>
             </div>
           </div>
@@ -297,20 +399,21 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 pt-1">
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex-1 btn-ghost py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+          className="btn-ghost py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer text-slate-300"
         >
-          Analysis
+          <span>Analysis</span>
           <ChevronDown size={12} className={cn('transition-transform', expanded && 'rotate-180')} />
         </button>
         <button
           onClick={() => onViewChart(signal)}
-          className="btn-ghost py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer text-purple-400 border border-purple-500/10 hover:border-purple-500/30"
-          title="View Chart"
+          className="btn-ghost py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer text-purple-300 border border-purple-500/20 hover:bg-purple-500/10"
+          title="Open TradingView Chart"
         >
-          <Eye size={12} /> Chart
+          <Eye size={13} />
+          <span className="hidden sm:inline">Chart</span>
         </button>
         <button
           onClick={() => {
@@ -319,19 +422,20 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             const dec = isForex ? (isJpy ? 3 : 4) : 2;
             const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toFixed(2)}`) : '0.00';
             navigator.clipboard.writeText(`Symbol: ${signal.symbol} | ${signal.direction} | Entry: ${fmt(signal.entry)} | SL: ${fmt(signal.stopLoss)} | TP1: ${fmt(signal.tp1)} | TP2: ${fmt(signal.tp2)}`);
-            toast.success(`Copied levels for ${signal.symbol}!`);
+            toast.success(`Copied trade levels for ${signal.symbol}!`);
           }}
-          className="btn-ghost py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer text-slate-300 border border-white/10 hover:border-white/20"
+          className="btn-ghost py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer text-slate-300 border border-white/10 hover:bg-white/10"
           title="Copy trade levels to clipboard for MT4/MT5"
         >
-          <Copy size={12} />
-          <span>Copy</span>
+          <Copy size={13} />
+          <span className="hidden sm:inline">Copy</span>
         </button>
         <button
           onClick={() => setIsTradeOpen(true)}
-          className="flex-1 btn-primary py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+          className="flex-1 btn-primary py-2 px-3.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-purple-500/20 whitespace-nowrap min-w-0"
         >
-          <Zap size={12} /> Execute
+          <Zap size={13} className="shrink-0 fill-current" />
+          <span>Execute</span>
         </button>
       </div>
 
@@ -572,6 +676,7 @@ export default function SignalsPage() {
   const { signals, setSignals, autonomousActive, autoGenerate, setAutoGenerate } = useAIStore();
   const { watchlist, tickers } = useMarketStore();
   const [activeTab, setActiveTab] = useState<'all'|'crypto'|'stocks'|'indices'|'forex'|'commodities'>('all');
+  const [selectedStyle, setSelectedStyle] = useState<'all'|'scalp'|'day'|'swing'>('all');
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1m'|'3m'|'5m'|'15m'|'30m'|'1h'>('1h');
   
   // Generation & refresh states
@@ -659,7 +764,22 @@ export default function SignalsPage() {
     return () => clearInterval(interval);
   }, [tickers]);
 
-  const filtered = activeTab === 'all' ? signals : signals.filter(s => s.type === activeTab);
+  const filtered = signals.filter(s => {
+    if (activeTab !== 'all' && s.type !== activeTab) return false;
+    if (selectedStyle !== 'all') {
+      const tf = (s.aiReasoning?.timeframe || '').toLowerCase();
+      const dur = (s.duration || '').toLowerCase();
+      const strat = (s.strategy || '').toLowerCase();
+      const isScalp = ['1m', '3m', '5m', '15m', '30m'].some(t => tf.includes(t)) || dur.includes('scalp') || dur.includes('minute') || strat.includes('scalp');
+      const isDay = ['1h', '2h'].some(t => tf.includes(t)) || dur.includes('day') || dur.includes('hour');
+      const isSwing = ['4h', '1d', 'daily', 'swing'].some(t => tf.includes(t)) || dur.includes('swing');
+
+      if (selectedStyle === 'scalp' && !isScalp) return false;
+      if (selectedStyle === 'day' && !isDay) return false;
+      if (selectedStyle === 'swing' && !isSwing) return false;
+    }
+    return true;
+  });
   const buySignals  = signals.filter(s => s.direction === 'BUY');
   const sellSignals = signals.filter(s => s.direction === 'SELL');
   const avgConf     = signals.length > 0 ? Math.round(signals.reduce((a, s) => a + s.confidence, 0) / signals.length) : 0;
@@ -762,9 +882,10 @@ export default function SignalsPage() {
 
   const handleGenerateSignalSilent = async (symbol: string) => {
     try {
+      const targetInterval = selectedStyle === 'scalp' ? '5m' : selectedStyle === 'day' ? '1h' : selectedStyle === 'swing' ? '4h' : '15m';
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
-        body: JSON.stringify({ symbol, interval: selectedTimeframe })
+        body: JSON.stringify({ symbol, interval: targetInterval })
       });
       const newSignal = mapSignal(rawSignal);
       if (newSignal.direction === 'WAIT') {
@@ -838,7 +959,7 @@ export default function SignalsPage() {
               </button>
             </div>
           </div>
-        ), { duration: 6000 });
+        ), { id: `signal-toast-${newSignal.symbol}`, duration: 6000 });
       }
     } catch (err) {
       console.warn('Silent signal generate failed:', err);
@@ -847,19 +968,22 @@ export default function SignalsPage() {
 
   const handleGenerateSignal = async (symbol: string) => {
     setGeneratingSymbol(symbol);
-    const toastId = toast.loading(`Institutional engine running 1W Macro + 1D Flow + 4H Structure + 1H Timing Top-Down Analysis for ${symbol}...`);
+    const targetInterval = selectedStyle === 'scalp' ? '5m' : selectedStyle === 'day' ? '1h' : selectedStyle === 'swing' ? '4h' : '15m';
+    const styleLabel = selectedStyle === 'scalp' ? '⚡ 5m Scalp' : selectedStyle === 'day' ? '📊 1h Day Trade' : selectedStyle === 'swing' ? '📈 4h Swing' : '1W Macro + 1D Flow + 4H Structure + 1H Timing';
+    const toastId = toast.loading(`Institutional engine running ${styleLabel} Multi-Timeframe Analysis for ${symbol}...`);
     try {
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
-        body: JSON.stringify({ symbol, interval: '15m' })
+        body: JSON.stringify({ symbol, interval: targetInterval })
       });
       const newSignal = mapSignal(rawSignal);
+      toast.dismiss(toastId);
       if (newSignal.direction === 'WAIT') {
         const hasActiveForSymbol = signals.some(s => s.symbol === newSignal.symbol && s.direction !== 'WAIT');
         if (!hasActiveForSymbol) {
           setSignals([newSignal, ...signals.filter(s => s.symbol !== newSignal.symbol)]);
         }
-        toast(`No clean setup for ${symbol}: ${newSignal.reasoning || 'market in consolidation / counter-trend filtered.'}`, { id: toastId });
+        toast(`No clean setup for ${symbol}: ${newSignal.reasoning || 'market in consolidation / counter-trend filtered.'}`, { id: `wait-toast-${symbol}` });
         return;
       }
       const exists = signals.some(s => s.symbol === newSignal.symbol && s.direction === newSignal.direction);
@@ -898,6 +1022,7 @@ export default function SignalsPage() {
 
       // Display dynamic custom visual notification alert toast
       if (!exists) {
+        toast.dismiss(toastId);
         toast.custom((t) => (
           <div
             className={cn(
@@ -914,7 +1039,7 @@ export default function SignalsPage() {
                 </span>
                 <span className="text-[10px] font-bold tracking-wider uppercase text-purple-300">Live Signal Dispatched</span>
               </div>
-              <span className="text-[9px] text-slate-400 font-mono">15m Top-Down</span>
+              <span className="text-[9px] text-slate-400 font-mono">{targetInterval} Top-Down</span>
             </div>
             
             <div className="flex items-center justify-between gap-3">
@@ -939,7 +1064,7 @@ export default function SignalsPage() {
               <span>R:R: <strong className="text-purple-300">{newSignal.riskReward}</strong></span>
             </div>
           </div>
-        ), { duration: 5000, position: 'top-right' });
+        ), { id: `signal-toast-${newSignal.symbol}`, duration: 5000, position: 'top-right' });
       }
     } catch (err: any) {
       toast.error(err.message || `Failed to generate signal for ${symbol}.`, { id: toastId });
@@ -950,7 +1075,8 @@ export default function SignalsPage() {
 
   const handleGenerateAll = async () => {
     setIsBatchGenerating(true);
-    const toastId = toast.loading('Running Top-Down MTF Scan across major markets (4H -> 1H -> 15m)...');
+    const targetInterval = selectedStyle === 'scalp' ? '5m' : selectedStyle === 'day' ? '1h' : selectedStyle === 'swing' ? '4h' : '15m';
+    const toastId = toast.loading(`Running Top-Down MTF Scan across major markets (${targetInterval})...`);
     const keySymbols = ['BTC/USD', 'ETH/USD', 'US30', 'US100', 'XAU/USD', 'EUR/USD', 'USD/JPY'];
     let count = 0;
     try {
@@ -958,7 +1084,7 @@ export default function SignalsPage() {
         try {
           const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
             method: 'POST',
-            body: JSON.stringify({ symbol: sym, interval: '15m' })
+            body: JSON.stringify({ symbol: sym, interval: targetInterval })
           });
           const newSignal = mapSignal(rawSignal);
           if (newSignal.direction !== 'WAIT') {
@@ -1261,8 +1387,9 @@ export default function SignalsPage() {
         </div>
       </div>
 
-      {/* Tab Filter */}
-      <div className="flex items-center justify-between">
+      {/* Tab Filter & Strategy Style Selector */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Category Tabs */}
         <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 text-xs overflow-x-auto max-w-full">
           {(['all', 'crypto', 'stocks', 'indices', 'forex', 'commodities'] as const).map(tab => (
             <button
@@ -1274,6 +1401,29 @@ export default function SignalsPage() {
               )}
             >
               {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Timeframe & Trading Style Controls */}
+        <div className="flex items-center gap-1.5 bg-white/5 border border-white/5 rounded-xl p-1 text-xs overflow-x-auto self-start sm:self-auto">
+          {[
+            { id: 'all', label: 'All Styles' },
+            { id: 'scalp', label: '⚡ Scalp (1m - 15m)' },
+            { id: 'day', label: '📊 Day Trade (1h)' },
+            { id: 'swing', label: '📈 Swing (4h)' },
+          ].map(style => (
+            <button
+              key={style.id}
+              onClick={() => setSelectedStyle(style.id as any)}
+              className={cn(
+                'px-2.5 py-1.5 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap text-[11px] flex items-center gap-1',
+                selectedStyle === style.id
+                  ? 'bg-purple-500/25 text-purple-200 border border-purple-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+              )}
+            >
+              {style.label}
             </button>
           ))}
         </div>
