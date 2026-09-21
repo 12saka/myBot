@@ -41,7 +41,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           ? 'bg-purple-500/15 text-slate-100 border border-purple-500/20 rounded-tr-sm'
           : 'glass-card text-slate-200 rounded-tl-sm'
       )}>
-        {message.content.split('\n').map((line, i) => (
+        {(message.content || '').split('\n').map((line, i) => (
           <p key={i} className={line === '' ? 'h-2' : ''}>
             {line.startsWith('**') && line.endsWith('**')
               ? <strong className="text-white">{line.slice(2, -2)}</strong>

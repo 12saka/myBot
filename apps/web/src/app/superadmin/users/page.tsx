@@ -6,7 +6,7 @@ import { apiFetch } from '@/lib/api';
 import { AdminPageBanner } from '@/components/admin/AdminPageBanner';
 import {
   Users, Search, Shield, UserCheck, Edit2, Trash2, DollarSign, ExternalLink,
-  ShieldCheck, UserX, AlertCircle, RefreshCw, Lock, Key, CreditCard,
+  ShieldCheck, UserX, AlertCircle, RefreshCw, Key, CreditCard,
   GraduationCap, Zap, Bell, FileText, CheckCircle2, Award, Activity,
   Sparkles, Phone, Globe, Smartphone, Send, ArrowUpRight, ArrowDownLeft,
   X, Check, AlertTriangle
@@ -562,7 +562,7 @@ export default function SuperadminUsersPage() {
                   { id: 'ACADEMY', label: 'Academy & XP', icon: GraduationCap },
                   { id: 'TRADING', label: 'MT5 & Signals', icon: Zap },
                   { id: 'NOTIFICATIONS', label: 'Notifications Log', icon: Bell },
-                  { id: 'SECURITY', label: 'Security & 2FA', icon: Lock },
+                  { id: 'SECURITY', label: 'Security & 2FA', icon: ShieldCheck },
                   { id: 'AUDIT', label: 'Audit Trail', icon: FileText },
                 ].map((tab) => {
                   const Icon = tab.icon;

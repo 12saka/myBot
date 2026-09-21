@@ -60,14 +60,11 @@ if GEMINI_API_KEY:
 else:
     print("[AI-Service] WARNING: GEMINI_API_KEY is not set. Running in Sandbox Mock mode.")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_FALLBACK_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-flash-latest",
-    "gemini-1.5-pro"
+    "gemini-3.6-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
 ]
 
 API_KEY_NAME = "X-AI-API-Key"

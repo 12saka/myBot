@@ -35,7 +35,7 @@ export function AdminTopbar({ onOpenMobile }: AdminTopbarProps) {
   };
 
   return (
-    <header className="h-16 border-b border-white/10 bg-slate-950/80 backdrop-blur-2xl px-4 md:px-6 flex items-center justify-between sticky top-0 z-30 shadow-lg shadow-black/40">
+    <header className="h-16 border-b border-white/10 bg-slate-950/80 backdrop-blur-2xl px-4 md:px-6 flex items-center justify-between shrink-0 sticky top-0 z-30 shadow-lg shadow-black/40">
       {/* Left section: Mobile menu & Breadcrumb */}
       <div className="flex items-center gap-3 md:gap-4">
         <button

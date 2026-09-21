@@ -27,6 +27,46 @@ export class SignalsController implements OnModuleInit {
     } catch (e: any) {
       console.warn(`[SignalsController] Raw SQL schema migration notice: ${e.message}`);
     }
+
+    // Auto-bootstrap active signals for core watchlist on startup
+    setTimeout(() => {
+      this.refreshCoreWatchlistSignals().catch(err => {
+        console.warn(`[SignalsController] Initial watchlist signal bootstrap notice: ${err.message}`);
+      });
+    }, 4000);
+  }
+
+  // Maintain fresh signals for core assets every 5 minutes
+  @Interval(300000)
+  async maintainCoreSignals() {
+    await this.refreshCoreWatchlistSignals();
+  }
+
+  public async refreshCoreWatchlistSignals(): Promise<void> {
+    const coreSymbols = ['GOLD', 'BTC/USD', 'US100', 'US30', 'EUR/USD'];
+    for (const sym of coreSymbols) {
+      try {
+        const existing = await this.prisma.signal.findFirst({
+          where: {
+            symbol: sym,
+            expiresAt: { gt: new Date() },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        const ageMs = existing ? (Date.now() - new Date(existing.createdAt).getTime()) : Infinity;
+        if (!existing || ageMs > 2 * 3600 * 1000) {
+          console.log(`[SignalsController] Proactively generating authentic top-down institutional signal for ${sym}...`);
+          let sig = await this.generateSignalRequest(sym, '15m', true);
+          if (sig && sig.direction === 'WAIT') {
+            console.log(`[SignalsController] 15m timeframe for ${sym} in micro-consolidation. Evaluating 1h timeframe...`);
+            sig = await this.generateSignalRequest(sym, '1h', true);
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[SignalsController] Watchlist auto-generation notice for ${sym}: ${err.message}`);
+      }
+    }
   }
 
   private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500): Promise<Response> {
@@ -59,7 +99,7 @@ export class SignalsController implements OnModuleInit {
   async getSignals() {
     try {
       // 1. Fetch unexpired signals from database
-      const activeSignals = await this.prisma.signal.findMany({
+      let activeSignals = await this.prisma.signal.findMany({
         where: {
           expiresAt: {
             gt: new Date(),
@@ -67,6 +107,19 @@ export class SignalsController implements OnModuleInit {
         },
         orderBy: { createdAt: 'desc' },
       });
+
+      // If active signals are depleted (< 4), proactively replenish core watchlist
+      if (activeSignals.length < 4) {
+        await this.refreshCoreWatchlistSignals();
+        activeSignals = await this.prisma.signal.findMany({
+          where: {
+            expiresAt: {
+              gt: new Date(),
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+      }
 
       if (activeSignals.length > 0) {
         return activeSignals;
@@ -698,12 +751,12 @@ export class SignalsController implements OnModuleInit {
   private getYahooTicker(symbol: string): string {
     const u = (symbol || '').toUpperCase().trim();
     const mappings: Record<string, string> = {
-      'US30': 'YM=F',
-      'DOW': 'YM=F',
-      'US100': 'NQ=F',
-      'NAS': 'NQ=F',
-      'SPX500': 'ES=F',
-      'SP500': 'ES=F',
+      'US30': '^DJI',
+      'DOW': '^DJI',
+      'US100': '^NDX',
+      'NAS': '^NDX',
+      'SPX500': '^GSPC',
+      'SP500': '^GSPC',
       'DAX40': '^GDAXI',
       'GOLD': 'GC=F',
       'XAU/USD': 'GC=F',
@@ -759,18 +812,23 @@ export class SignalsController implements OnModuleInit {
       take: 200,
     });
     
-    // 2. If we have at least 50 candles and they are fresh (under 25 seconds for scalping), return them
+    // 2. If we have cached candles and they are fresh, return them
     const now = new Date();
     let isFresh = false;
-    if (candles.length >= 50) {
+    const minCandleCount = (interval === '1wk' || interval === '1d') ? 15 : 50;
+    if (candles.length >= minCandleCount) {
       const lastCandle = candles[candles.length - 1];
       const diffMs = now.getTime() - lastCandle.timestamp.getTime();
       // Strict freshness: guaranteed under 25 seconds for 15m and scalping
-      let maxAgeMs = 90 * 1000; // 90 seconds for 1h+
+      let maxAgeMs = 90 * 1000; // 90 seconds for 1h
       if (interval === '1m' || interval === '3m' || interval === '5m' || interval === '15m') {
         maxAgeMs = 25 * 1000; // Under 25 seconds for 15m scalping
       } else if (interval === '30m') {
         maxAgeMs = 45 * 1000; // 45 seconds for 30m
+      } else if (interval === '1d') {
+        maxAgeMs = 4 * 3600 * 1000; // 4 hours for daily macro candles
+      } else if (interval === '1wk') {
+        maxAgeMs = 12 * 3600 * 1000; // 12 hours for weekly macro candles
       }
       
       if (diffMs < maxAgeMs) {
@@ -781,12 +839,31 @@ export class SignalsController implements OnModuleInit {
     if (isFresh) {
       // Sync the latest candle with sub-3-second live spot price
       try {
-        const liveMarket = await this.prisma.marketData.findUnique({
-          where: { symbol: normSym }
-        });
-        if (liveMarket && liveMarket.bidPrice > 0 && candles.length > 0) {
+        let livePrice = 0;
+        const isGoldAsset = normSym === 'GOLD' || normSym.includes('XAU');
+        if (isGoldAsset) {
+          try {
+            const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 1500);
+            if (spotRes.ok) {
+              const spotData = await spotRes.json();
+              if (spotData && Number(spotData.price) > 1000) {
+                livePrice = Number(spotData.price);
+              }
+            }
+          } catch (e) {}
+        }
+
+        if (livePrice <= 0) {
+          const liveMarket = await this.prisma.marketData.findUnique({
+            where: { symbol: normSym }
+          });
+          if (liveMarket && liveMarket.bidPrice > 0) {
+            livePrice = Number(liveMarket.bidPrice);
+          }
+        }
+
+        if (livePrice > 0 && candles.length > 0) {
           const lastIdx = candles.length - 1;
-          const livePrice = Number(liveMarket.bidPrice);
           candles[lastIdx].close = livePrice;
           if (livePrice > Number(candles[lastIdx].high)) candles[lastIdx].high = livePrice;
           if (livePrice < Number(candles[lastIdx].low)) candles[lastIdx].low = livePrice;
@@ -808,6 +885,8 @@ export class SignalsController implements OnModuleInit {
         try {
           let tdInterval = interval;
           if (interval === '1h') tdInterval = '1h';
+          else if (interval === '1d') tdInterval = '1day';
+          else if (interval === '1wk') tdInterval = '1week';
           const response = await this.fetchWithTimeout(
             `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${tdInterval}&outputsize=100&apikey=${twelveDataKey}`,
             {},
@@ -853,11 +932,16 @@ export class SignalsController implements OnModuleInit {
         try {
           let yahooInterval = interval;
           if (interval === '1h') yahooInterval = '60m';
+          else if (interval === '1d') yahooInterval = '1d';
+          else if (interval === '1wk') yahooInterval = '1wk';
+
           let range = '2d';
           if (interval === '1m') range = '1d';
           else if (interval === '3m' || interval === '5m') range = '2d';
           else if (interval === '15m' || interval === '30m') range = '5d';
           else if (interval === '1h') range = '7d';
+          else if (interval === '1d') range = '1mo';
+          else if (interval === '1wk') range = '6mo';
 
           const res = await this.fetchWithTimeout(
             `https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=${yahooInterval}&range=${range}`,
@@ -880,6 +964,23 @@ export class SignalsController implements OnModuleInit {
                 where: { symbol: cleanSymbol, interval }
               });
 
+              // Check real-time spot XAU/USD to eliminate COMEX basis/futures contango offset
+              let spotPrice = 0;
+              try {
+                const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 2000);
+                if (spotRes.ok) {
+                  const spotData = await spotRes.json();
+                  if (spotData && Number(spotData.price) > 1000) {
+                    spotPrice = Number(spotData.price);
+                  }
+                }
+              } catch (e) {}
+
+              // Calculate basis offset between spot and COMEX futures
+              const validCloses = closes.filter((c: any) => c !== null);
+              const lastComexClose = validCloses.length > 0 ? parseFloat(validCloses[validCloses.length - 1]) : 0;
+              const basisOffset = (spotPrice > 1000 && lastComexClose > 1000) ? (spotPrice - lastComexClose) : 0;
+
               const newCandles = [];
               for (let i = 0; i < timestamps.length; i++) {
                 if (opens[i] === null || closes[i] === null) continue;
@@ -888,17 +989,18 @@ export class SignalsController implements OnModuleInit {
                     symbol: cleanSymbol,
                     interval,
                     timestamp: new Date(timestamps[i] * 1000),
-                    open: parseFloat(opens[i]),
-                    high: parseFloat(highs[i]),
-                    low: parseFloat(lows[i]),
-                    close: parseFloat(closes[i]),
+                    open: parseFloat((parseFloat(opens[i]) + basisOffset).toFixed(2)),
+                    high: parseFloat((parseFloat(highs[i]) + basisOffset).toFixed(2)),
+                    low: parseFloat((parseFloat(lows[i]) + basisOffset).toFixed(2)),
+                    close: parseFloat((parseFloat(closes[i]) + basisOffset).toFixed(2)),
                     volume: parseFloat(volumes[i] || 0),
                   }
                 });
                 newCandles.push(candle);
               }
               fetched = true;
-              console.log(`[SignalsController] Real COMEX Gold (GC=F) candlesticks fetched from Yahoo Finance for ${cleanSymbol} (last close: $${closes.filter((c: any) => c !== null).slice(-1)[0]}).`);
+              const finalClose = newCandles.length > 0 ? newCandles[newCandles.length - 1].close : 0;
+              console.log(`[SignalsController] Real Spot Gold calibrated candlesticks stored for ${cleanSymbol} (spot close: $${finalClose}, basis offset: ${basisOffset.toFixed(2)}).`);
               return newCandles;
             }
           }
@@ -957,6 +1059,8 @@ export class SignalsController implements OnModuleInit {
     if (isCrypto && !isGold) {
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
+      else if (interval === '1d') binanceInterval = '1d';
+      else if (interval === '1wk') binanceInterval = '1w';
       try {
         const binanceSym = `${baseSymbol}USDT`;
         const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
@@ -1005,6 +1109,8 @@ export class SignalsController implements OnModuleInit {
           const tdSym = this.getTwelveDataSymbol(cleanSymbol);
           let tdInterval = interval;
           if (interval === '1h') tdInterval = '1h';
+          else if (interval === '1d') tdInterval = '1day';
+          else if (interval === '1wk') tdInterval = '1week';
           
           const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=100&apikey=${twelveDataKey}`);
           if (response.ok) {
@@ -1049,14 +1155,18 @@ export class SignalsController implements OnModuleInit {
         const yahooTicker = this.getYahooTicker(cleanSymbol);
         let yahooInterval = interval;
         if (interval === '1h') yahooInterval = '60m';
+        else if (interval === '1d') yahooInterval = '1d';
+        else if (interval === '1wk') yahooInterval = '1wk';
         
         let range = '2d';
         if (interval === '1m') range = '1d';
         else if (interval === '3m' || interval === '5m') range = '2d';
         else if (interval === '15m' || interval === '30m') range = '5d';
         else if (interval === '1h') range = '7d';
+        else if (interval === '1d') range = '1mo';
+        else if (interval === '1wk') range = '6mo';
         
-        const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${yahooTicker}?interval=${yahooInterval}&range=${range}`);
+        const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=${yahooInterval}&range=${range}`);
         if (res.ok) {
           const data = await res.json();
           const chartData = data?.chart?.result?.[0];
@@ -1130,15 +1240,15 @@ export class SignalsController implements OnModuleInit {
           } catch (goldErr) {}
         }
 
-        // 3. Yahoo / Stooq fallback for Indices & Commodities
+        // 3. Yahoo chart v8 fallback for Indices & Commodities
         if (liveSpotPrice <= 0) {
           const yahooTicker = this.getYahooTicker(cleanSymbol);
-          const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooTicker)}`, {}, 3000);
+          const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1m&range=1d`, {}, 3000);
           if (res.ok) {
-            const qData = await res.json();
-            const q = qData?.quoteResponse?.result?.[0];
-            if (q) {
-              liveSpotPrice = parseFloat(q.regularMarketPrice || q.postMarketPrice || q.preMarketPrice || 0);
+            const cData = await res.json();
+            const meta = cData?.chart?.result?.[0]?.meta;
+            if (meta && meta.regularMarketPrice > 0) {
+              liveSpotPrice = parseFloat(meta.regularMarketPrice);
             }
           }
         }
@@ -1464,14 +1574,20 @@ export class SignalsController implements OnModuleInit {
 
   /**
    * Top-Down Multi-Timeframe (MTF) Institutional Bias Analyzer.
-   * Performs 4H Macro Analysis -> 1H Intermediate Confirmation -> Produces authoritative HTF Direction.
+   * Performs 1-Week (1W) Macro Trend -> 1-Day (1D) Institutional Flow -> 4H Structure -> 1H Timing -> Produces Authoritative Confluence Direction.
    */
   private async analyzeHTFBias(symbol: string): Promise<{
+    bias1w: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    bias1d: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     bias4h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     bias1h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     htfDirection: 'BUY' | 'SELL' | 'NEUTRAL';
     htfConfidence: number;
     htfContext: string;
+    macroRegime: string;
+    sma20_1w: number;
+    ema20_1d: number;
+    ema50_1d: number;
     ema200_4h: number;
     ema50_4h: number;
     ema20_4h: number;
@@ -1481,20 +1597,70 @@ export class SignalsController implements OnModuleInit {
     rsi_4h: number;
     rsi_1h: number;
   }> {
+    let candles1w: any[] = [];
+    let candles1d: any[] = [];
     let candles1h: any[] = [];
+
     try {
-      candles1h = await this.getOrFetchCandles(symbol, '1h');
+      [candles1w, candles1d, candles1h] = await Promise.all([
+        this.getOrFetchCandles(symbol, '1wk').catch(() => []),
+        this.getOrFetchCandles(symbol, '1d').catch(() => []),
+        this.getOrFetchCandles(symbol, '1h').catch(() => []),
+      ]);
     } catch (e) {
-      candles1h = [];
+      // Fallback
     }
 
-    if (candles1h.length < 15) {
+    // 1. Analyze 1-Week (1W) Macro Horizon (20-week SMA baseline)
+    let bias1w: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    let sma20_1w = 0;
+    if (candles1w && candles1w.length >= 5) {
+      const closes1w = candles1w.map(c => Number(c.close)).filter(v => !isNaN(v) && v > 0);
+      if (closes1w.length >= 5) {
+        sma20_1w = this.calcSMA(closes1w, Math.min(20, closes1w.length));
+        const last1w = closes1w[closes1w.length - 1];
+        if (last1w > sma20_1w * 1.003) {
+          bias1w = 'BULLISH';
+        } else if (last1w < sma20_1w * 0.997) {
+          bias1w = 'BEARISH';
+        }
+      }
+    }
+
+    // 2. Analyze 1-Day (1D) Intermediate Swing Trend (EMA-20 vs EMA-50 stack)
+    let bias1d: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    let ema20_1d = 0;
+    let ema50_1d = 0;
+    if (candles1d && candles1d.length >= 5) {
+      const closes1d = candles1d.map(c => Number(c.close)).filter(v => !isNaN(v) && v > 0);
+      if (closes1d.length >= 5) {
+        ema20_1d = this.calcEMA(closes1d, Math.min(20, closes1d.length));
+        ema50_1d = this.calcEMA(closes1d, Math.min(50, closes1d.length));
+        const last1d = closes1d[closes1d.length - 1];
+        if (ema20_1d >= ema50_1d && last1d >= ema20_1d * 0.998) {
+          bias1d = 'BULLISH';
+        } else if (ema20_1d <= ema50_1d && last1d <= ema20_1d * 1.002) {
+          bias1d = 'BEARISH';
+        }
+      }
+    }
+
+    // 3. Analyze 1H Candles & Synthesize 4H
+    if (!candles1h || candles1h.length < 15) {
+      // If 1H is minimal, derive directly from 1W and 1D
+      const dir = (bias1w === 'BULLISH' && bias1d === 'BULLISH') ? 'BUY' : (bias1w === 'BEARISH' && bias1d === 'BEARISH') ? 'SELL' : 'NEUTRAL';
       return {
-        bias4h: 'NEUTRAL',
-        bias1h: 'NEUTRAL',
-        htfDirection: 'NEUTRAL',
-        htfConfidence: 50,
-        htfContext: 'Consolidating market: standard multi-layer rules active',
+        bias1w,
+        bias1d,
+        bias4h: bias1d,
+        bias1h: bias1d,
+        htfDirection: dir,
+        htfConfidence: dir === 'NEUTRAL' ? 50 : 80,
+        htfContext: `Macro Top-Down Bias: 1W: ${bias1w} | 1D: ${bias1d} | 4H: ${bias1d} | 1H: ${bias1d}. Confluence: ${dir}.`,
+        macroRegime: dir === 'BUY' ? 'Bullish Multi-Timeframe Expansion' : dir === 'SELL' ? 'Bearish Multi-Timeframe Markdown' : 'Consolidation Equilibrium',
+        sma20_1w,
+        ema20_1d,
+        ema50_1d,
         ema200_4h: 0,
         ema50_4h: 0,
         ema20_4h: 0,
@@ -1506,7 +1672,6 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
-    // 1. Analyze 1H Candles
     const closes1h = candles1h.map(c => Number(c.close));
     const ema20_1h = this.calcEMA(closes1h, 20);
     const ema50_1h = this.calcEMA(closes1h, 50);
@@ -1521,7 +1686,7 @@ export class SignalsController implements OnModuleInit {
       bias1h = 'BEARISH';
     }
 
-    // 2. Synthesize 4H Candles from 1H Candles (aligned 4-hour blocks)
+    // 4. Synthesize 4H Candles from 1H Candles (aligned 4-hour blocks)
     const candles4h: any[] = [];
     const fullBlocks = Math.floor(candles1h.length / 4) * 4;
     const startIndex = candles1h.length - fullBlocks; // Align from the newest candles backwards
@@ -1553,38 +1718,68 @@ export class SignalsController implements OnModuleInit {
       bias4h = 'BEARISH';
     }
 
-    // 3. Confluence Direction
+    // If 1W or 1D were neutral or unpopulated, harmonize with 4H
+    if (bias1w === 'NEUTRAL') bias1w = bias4h !== 'NEUTRAL' ? bias4h : bias1h;
+    if (bias1d === 'NEUTRAL') bias1d = bias4h !== 'NEUTRAL' ? bias4h : bias1h;
+
+    // 5. Multi-Timeframe Confluence Matrix (1W -> 1D -> 4H -> 1H)
+    let bullScore = 0;
+    let bearScore = 0;
+
+    // 1-Week: Macro Trend (25 pts)
+    if (bias1w === 'BULLISH') bullScore += 25;
+    else if (bias1w === 'BEARISH') bearScore += 25;
+
+    // 1-Day: Intermediate Institutional Flow (30 pts)
+    if (bias1d === 'BULLISH') bullScore += 30;
+    else if (bias1d === 'BEARISH') bearScore += 30;
+
+    // 4-Hour: Market Structure & Order Blocks (25 pts)
+    if (bias4h === 'BULLISH') bullScore += 25;
+    else if (bias4h === 'BEARISH') bearScore += 25;
+
+    // 1-Hour: Execution Wave & Momentum (20 pts)
+    if (bias1h === 'BULLISH') bullScore += 20;
+    else if (bias1h === 'BEARISH') bearScore += 20;
+
     let htfDirection: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
     let htfConfidence = 50;
 
-    if (bias4h === 'BULLISH' && bias1h === 'BULLISH') {
+    if (bullScore >= 55 && bullScore > bearScore + 15) {
       htfDirection = 'BUY';
-      htfConfidence = 92;
+      htfConfidence = Math.min(96, Math.round(55 + (bullScore / 100) * 40));
+    } else if (bearScore >= 55 && bearScore > bullScore + 15) {
+      htfDirection = 'SELL';
+      htfConfidence = Math.min(96, Math.round(55 + (bearScore / 100) * 40));
+    } else if (bias4h === 'BULLISH' && bias1h === 'BULLISH') {
+      htfDirection = 'BUY';
+      htfConfidence = 75;
     } else if (bias4h === 'BEARISH' && bias1h === 'BEARISH') {
       htfDirection = 'SELL';
-      htfConfidence = 92;
-    } else if (bias4h === 'BULLISH' && bias1h !== 'BEARISH') {
-      htfDirection = 'BUY';
-      htfConfidence = 78;
-    } else if (bias4h === 'BEARISH' && bias1h !== 'BULLISH') {
-      htfDirection = 'SELL';
-      htfConfidence = 78;
-    } else if (bias1h === 'BULLISH' && bias4h === 'NEUTRAL') {
-      htfDirection = 'BUY';
-      htfConfidence = 72;
-    } else if (bias1h === 'BEARISH' && bias4h === 'NEUTRAL') {
-      htfDirection = 'SELL';
-      htfConfidence = 72;
+      htfConfidence = 75;
     }
 
-    const htfContext = `4H Institutional Macro Bias: ${bias4h} (EMA-20: ${ema20_4h.toFixed(2)}, RSI: ${rsi_4h.toFixed(1)}) | 1H Structure: ${bias1h} (EMA-20: ${ema20_1h.toFixed(2)}, RSI: ${rsi_1h.toFixed(1)}). Top-Down Confluence: ${htfDirection} (${htfConfidence}% Conviction).`;
+    // Macro Regime
+    let macroRegime = 'Consolidation / Range-Bound Equilibrium';
+    if (bullScore >= 75) macroRegime = 'Strong Institutional Expansion (Weekly + Daily + 4H Bullish)';
+    else if (bullScore >= 50) macroRegime = 'Institutional Markup / Accumulation';
+    else if (bearScore >= 75) macroRegime = 'Severe Distribution / Markdown (Weekly + Daily + 4H Bearish)';
+    else if (bearScore >= 50) macroRegime = 'Institutional Liquidity Sweep / Distribution';
+
+    const htfContext = `Macro Top-Down Bias: 1W: ${bias1w} | 1D: ${bias1d} | 4H: ${bias4h} | 1H: ${bias1h} -> Confluence: ${htfDirection} (${htfConfidence}% Conviction). Regime: ${macroRegime}.`;
 
     return {
+      bias1w,
+      bias1d,
       bias4h,
       bias1h,
       htfDirection,
       htfConfidence,
       htfContext,
+      macroRegime,
+      sma20_1w,
+      ema20_1d,
+      ema50_1d,
       ema200_4h,
       ema50_4h,
       ema20_4h,
@@ -1692,12 +1887,12 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
-    // Gate 7: Higher-Timeframe (HTF) Counter-Trend Lock (4H + 1H Protection)
+    // Gate 7: Higher-Timeframe (HTF) Counter-Trend Lock (1W + 1D + 4H + 1H Protection)
     if (htfBias && htfBias.htfDirection && htfBias.htfDirection !== 'NEUTRAL') {
       if (direction !== htfBias.htfDirection && direction !== 'WAIT') {
         return {
           direction: 'WAIT',
-          invalidationReason: `${symbol} ${direction} signal blocked: 4H+1H institutional flow is strictly ${htfBias.htfDirection} (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H). Counter-trend entries prohibited to protect capital.`,
+          invalidationReason: `${symbol} ${direction} signal blocked: Macro 1W+1D+4H+1H institutional flow is strictly ${htfBias.htfDirection} (1W: ${htfBias.bias1w || 'NEUTRAL'} | 1D: ${htfBias.bias1d || 'NEUTRAL'} | 4H: ${htfBias.bias4h} | 1H: ${htfBias.bias1h}). Counter-trend entries prohibited to protect capital.`,
           evidence: { bullishScore, bearishScore, rsi, htfBias, gate: 'HTF_COUNTER_TREND_FILTER' }
         };
       }
@@ -2022,10 +2217,10 @@ export class SignalsController implements OnModuleInit {
     // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 20;
-      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 20;
-      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.12% Neutral Deadband (16 Points)
@@ -2128,9 +2323,11 @@ export class SignalsController implements OnModuleInit {
       bearishScore += 15;
       reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms sustained selling momentum`);
     } else if (rsi >= 72) {
+      bearishScore += 6;
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of long liquidation unwind`);
     } else if (rsi <= 28) {
-      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short squeeze hazard`);
+      bullishScore += 6;
+      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short squeeze reversal opportunity`);
     }
 
     // Layer 8: Session Window Timing
@@ -2192,9 +2389,9 @@ export class SignalsController implements OnModuleInit {
       : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
@@ -2320,10 +2517,10 @@ export class SignalsController implements OnModuleInit {
     // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 20;
-      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 20;
-      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
@@ -2426,9 +2623,11 @@ export class SignalsController implements OnModuleInit {
       bearishScore += 15;
       reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
     } else if (rsi >= 72) {
+      bearishScore += 6;
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of intraday pullback`);
     } else if (rsi <= 28) {
-      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
+      bullishScore += 6;
+      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — oversold bounce opportunity`);
     }
 
     // Layer 8: Session Timing
@@ -2488,9 +2687,9 @@ export class SignalsController implements OnModuleInit {
       : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
@@ -2616,10 +2815,10 @@ export class SignalsController implements OnModuleInit {
     // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 20;
-      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 20;
-      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
@@ -2722,9 +2921,11 @@ export class SignalsController implements OnModuleInit {
       bearishScore += 15;
       reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
     } else if (rsi >= 72) {
+      bearishScore += 6;
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of short-term pullback`);
     } else if (rsi <= 28) {
-      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
+      bullishScore += 6;
+      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — oversold bounce opportunity`);
     }
 
     // Layer 8: Session Timing
@@ -2784,9 +2985,9 @@ export class SignalsController implements OnModuleInit {
       : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
     const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
     const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
@@ -2906,10 +3107,10 @@ export class SignalsController implements OnModuleInit {
     // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 20;
-      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 20;
-      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: EMA Trend Structure with 0.05% Neutral Deadband (16 Points)
@@ -3012,9 +3213,11 @@ export class SignalsController implements OnModuleInit {
       bearishScore += 15;
       reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms institutional selling momentum`);
     } else if (rsi >= 70) {
+      bearishScore += 6;
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — pullback risk`);
     } else if (rsi <= 28) {
-      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short-term squeeze`);
+      bullishScore += 6;
+      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short-term squeeze reversal opportunity`);
     }
 
     // Layer 8: Prime Session Timing
@@ -3166,10 +3369,10 @@ export class SignalsController implements OnModuleInit {
 
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 20;
-      reasonsFor.push(`4H + 1H Equities Institutional Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Equities Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 20;
-      reasonsAgainst.push(`4H + 1H Equities Institutional Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Equities Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.12% Neutral Deadband (16 Points)
@@ -3259,6 +3462,12 @@ export class SignalsController implements OnModuleInit {
     } else if (rsi < 48 && rsi > 28) {
       bearishScore += 15;
       reasonsAgainst.push(`RSI momentum accelerating bearish (${rsi.toFixed(1)})`);
+    } else if (rsi >= 72) {
+      bearishScore += 6;
+      reasonsAgainst.push(`RSI overbought (${rsi.toFixed(1)}) — mean-reversion risk`);
+    } else if (rsi <= 28) {
+      bullishScore += 6;
+      reasonsFor.push(`RSI oversold (${rsi.toFixed(1)}) — short squeeze bounce opportunity`);
     }
 
     // Direction determination with tie handling
@@ -3411,10 +3620,10 @@ export class SignalsController implements OnModuleInit {
 
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 20;
-      reasonsFor.push(`4H + 1H Index Confluence: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Index Confluence: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 20;
-      reasonsAgainst.push(`4H + 1H Index Confluence: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Index Confluence: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
@@ -3490,6 +3699,8 @@ export class SignalsController implements OnModuleInit {
 
     if (rsi > 52 && rsi < 72) bullishScore += 15;
     else if (rsi < 48 && rsi > 28) bearishScore += 15;
+    else if (rsi >= 72) bearishScore += 6;
+    else if (rsi <= 28) bullishScore += 6;
 
     // Layer 8: Session Timing
     if (isDisplacement && lastClose !== lastOpen) {
@@ -3667,10 +3878,10 @@ export class SignalsController implements OnModuleInit {
     // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 20;
-      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 20;
-      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: Yield Spread & EMA Trend Structure with 0.05% Neutral Deadband (16 Points)
@@ -3785,9 +3996,11 @@ export class SignalsController implements OnModuleInit {
       bearishScore += 15;
       reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish USDJPY momentum`);
     } else if (rsi >= 72) {
+      bearishScore += 6;
       reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of MoF jawboning pullbacks`);
     } else if (rsi <= 28) {
-      reasonsAgainst.push(`RSI-14 oversold at ${rsi.toFixed(1)} — risk of short squeezes`);
+      bullishScore += 6;
+      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short squeeze reversal opportunity`);
     }
 
     // Layer 8: Session Timing
@@ -3976,10 +4189,10 @@ export class SignalsController implements OnModuleInit {
     // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (18 Points)
     if (htfBias && htfBias.htfDirection === 'BUY') {
       bullishScore += 18;
-      reasonsFor.push(`4H + 1H Institutional Trend Lock: BULLISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     } else if (htfBias && htfBias.htfDirection === 'SELL') {
       bearishScore += 18;
-      reasonsAgainst.push(`4H + 1H Institutional Trend Lock: BEARISH (${htfBias.bias4h} 4H / ${htfBias.bias1h} 1H)`);
+      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
     }
 
     // Layer 1: Market Regime Alignment (12 Points)
@@ -4194,9 +4407,9 @@ export class SignalsController implements OnModuleInit {
       : Math.min(effectiveEntry + (slDist * 1.4), Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.45)));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.6) : effectiveEntry - (effectiveSlDist * 2.6);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.8) : effectiveEntry - (effectiveSlDist * 3.8);
+    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
+    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
+    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
     const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / Math.abs(effectiveEntry - stopLoss)).toFixed(1));
 
@@ -4242,6 +4455,13 @@ export class SignalsController implements OnModuleInit {
       aiValidation,
       evidence: computedEvidence
     };
+  }
+
+  private calcSMA(vals: number[], period: number): number {
+    if (!vals || vals.length === 0) return 0;
+    const p = Math.min(period, vals.length);
+    const slice = vals.slice(-p);
+    return slice.reduce((a, b) => a + b, 0) / p;
   }
 
   private calcEMA(vals: number[], period: number): number {

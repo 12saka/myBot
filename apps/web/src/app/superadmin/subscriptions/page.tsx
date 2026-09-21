@@ -190,8 +190,8 @@ export default function SuperadminSubscriptionsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-white/5">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto w-full rounded-xl border border-white/5">
+          <table className="w-full text-left text-xs min-w-[700px]">
             <thead className="bg-slate-950/80 text-slate-400 font-mono uppercase text-[10px]">
               <tr>
                 <th className="p-3">User</th>

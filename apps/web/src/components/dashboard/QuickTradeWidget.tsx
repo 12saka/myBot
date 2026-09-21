@@ -6,6 +6,7 @@ import { X, TrendingUp, TrendingDown, RefreshCw, Zap, ShieldAlert, Cpu } from 'l
 import { toast } from 'react-hot-toast';
 import { useMarketStore } from '@/store/useMarketStore';
 import { Badge } from '@/components/ui/Badge';
+import { apiFetch } from '@/lib/api';
 
 interface QuickTradeWidgetProps {
   isOpen: boolean;
@@ -106,24 +107,16 @@ export function QuickTradeWidget({
         payload.takeProfit = tradeMode === 'AI' && aiSignal ? aiSignal.tp1 : undefined;
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-      const response = await fetch(`${apiUrl}/api/v2/portfolio/order`, {
+      const data = await apiFetch<any>('/api/v2/portfolio/order', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to execute trade.');
-      }
+      const execPrice = Number(data?.executionPrice ?? payload.price ?? 0);
+      const cost = Number(data?.totalCost ?? execPrice * Number(quantity));
 
       toast.success(
-        `Order Filled: ${data.direction} ${quantity} ${symbol} @ $${data.executionPrice.toLocaleString()} (Total: $${data.totalCost.toLocaleString()})`
+        `Order Placed: ${data?.direction || payload.direction || direction} ${quantity} ${symbol} @ $${execPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })} (Total: $${cost.toLocaleString(undefined, { minimumFractionDigits: 2 })})`
       );
 
       setQuantity('');
@@ -131,7 +124,7 @@ export function QuickTradeWidget({
       if (onOrderSuccess) onOrderSuccess();
       onClose();
     } catch (err: any) {
-      toast.error(err.message || 'Network connection refused.');
+      toast.error(err.message || 'Failed to execute trade.');
     } finally {
       setIsSubmitting(false);
     }
@@ -222,19 +215,19 @@ export function QuickTradeWidget({
                     <div className="space-y-1.5 pt-2 border-t border-white/5 text-[10px] text-slate-400">
                       <div className="flex justify-between">
                         <span>Entry Price (EP)</span>
-                        <span className="font-mono font-bold text-white">${aiSignal.entry.toLocaleString()}</span>
+                        <span className="font-mono font-bold text-white">${(aiSignal.entry ?? 0).toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between">
                         <span>Stop Loss (SL)</span>
-                        <span className="font-mono font-bold text-red-400">${aiSignal.stopLoss.toLocaleString()}</span>
+                        <span className="font-mono font-bold text-red-400">${(aiSignal.stopLoss ?? 0).toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between">
                         <span>Take Profit 1 (TP1)</span>
-                        <span className="font-mono font-bold text-emerald-400">${aiSignal.tp1.toLocaleString()}</span>
+                        <span className="font-mono font-bold text-emerald-400">${(aiSignal.tp1 ?? 0).toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between">
                         <span>Take Profit 2 (TP2)</span>
-                        <span className="font-mono font-bold text-teal-300">${aiSignal.tp2.toLocaleString()}</span>
+                        <span className="font-mono font-bold text-teal-300">${(aiSignal.tp2 ?? 0).toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between border-t border-white/5 pt-1.5">
                         <span>Signal Confluence</span>

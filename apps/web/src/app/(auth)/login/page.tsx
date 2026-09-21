@@ -5,11 +5,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ShieldCheck, Lock, Mail, ChevronRight, ArrowLeft,
-  Eye, EyeOff, Key, Sparkles, AlertCircle, AlertTriangle, MessageCircle
+  ShieldCheck, Mail, ChevronRight, ArrowLeft,
+  Eye, EyeOff, Key, Sparkles, AlertCircle, AlertTriangle, MessageCircle, Loader2
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { apiFetch } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -126,17 +127,20 @@ export default function LoginPage() {
           Back to landing page
         </Link>
 
-        <div className="glass-card rounded-3xl p-8 border border-white/8 bg-slate-950/40 backdrop-blur-2xl">
-          <div className="text-center mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/25 flex items-center justify-center mx-auto mb-4">
-              <Lock className="text-purple-400" size={20} />
+        <div className="glass-card rounded-3xl p-8 border border-purple-500/20 bg-slate-950/70 backdrop-blur-2xl shadow-2xl shadow-purple-950/40 relative overflow-hidden">
+          {/* Ambient card top glow */}
+          <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-64 h-32 bg-purple-500/15 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="text-center mb-6 relative z-10">
+            <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/25 flex items-center justify-center mx-auto mb-4 shadow-inner shadow-purple-500/20">
+              <ShieldCheck className="text-purple-400" size={22} />
             </div>
-            <h2 className="text-2xl font-display font-bold text-white">Enter the Ecosystem</h2>
-            <p className="text-xs text-slate-400 mt-2">Access TradeMind autonomous trading center</p>
+            <h2 className="text-2xl font-display font-bold text-white tracking-tight">Institutional Terminal</h2>
+            <p className="text-xs text-slate-400 mt-2 font-medium">Authenticate to TradeMind autonomous trading systems</p>
           </div>
 
           {suspendedMsg && (
-            <div className="p-4 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs space-y-3 mb-6">
+            <div className="p-4 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs space-y-3 mb-6 relative z-10">
               <div className="flex items-center gap-2 font-bold text-red-200">
                 <AlertTriangle size={16} className="text-red-400 shrink-0" />
                 <span>Account Suspended by Admin</span>
@@ -146,7 +150,7 @@ export default function LoginPage() {
                 href="https://wa.me/254780566096?text=Hello%20TradeMind%20Admin%2C%20my%20account%20has%20been%20suspended.%20Please%20assist."
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-all shadow-md cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[11px] transition-all shadow-md cursor-pointer"
               >
                 <MessageCircle size={14} />
                 <span>Chat Admin on WhatsApp (+254780566096 / 0780566096)</span>
@@ -154,7 +158,7 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-5 text-xs">
+          <form onSubmit={handleLogin} className="space-y-5 text-xs relative z-10">
             <AnimatePresence mode="wait">
               {!is2FA ? (
                 <motion.div
@@ -165,7 +169,7 @@ export default function LoginPage() {
                   className="space-y-4"
                 >
                   <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">Email Address</label>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">Email Address</label>
                     <div className="relative">
                       <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                       <input
@@ -173,7 +177,7 @@ export default function LoginPage() {
                         value={email}
                         onChange={e => setEmail(e.target.value)}
                         placeholder="your@email.com"
-                        className="w-full input-glass rounded-xl pl-9 pr-4 py-3"
+                        className="w-full input-glass rounded-xl pl-9 pr-4 py-3 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/80 transition-all duration-200"
                         required
                       />
                     </div>
@@ -181,8 +185,8 @@ export default function LoginPage() {
 
                   <div>
                     <div className="flex justify-between items-center mb-2">
-                      <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider">Password</label>
-                      <Link href="/forgot-password" className="text-[10px] text-purple-400 hover:underline">Forgot password?</Link>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Password</label>
+                      <Link href="/forgot-password" className="text-[10px] text-purple-400 hover:text-purple-300 hover:underline transition-colors">Forgot password?</Link>
                     </div>
                     <div className="relative">
                       <Key size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -191,13 +195,13 @@ export default function LoginPage() {
                         value={password}
                         onChange={e => setPassword(e.target.value)}
                         placeholder="••••••••••••"
-                        className="w-full input-glass rounded-xl pl-9 pr-10 py-3"
+                        className="w-full input-glass rounded-xl pl-9 pr-10 py-3 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/80 transition-all duration-200"
                         required
                       />
                       <button
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors cursor-pointer"
                       >
                         {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                       </button>
@@ -212,22 +216,22 @@ export default function LoginPage() {
                   exit={{ opacity: 0, x: -10 }}
                   className="space-y-4"
                 >
-                  <div className="p-3.5 rounded-xl border border-purple-500/10 bg-purple-500/5 text-purple-300 flex items-start gap-2.5">
-                    <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                  <div className="p-3.5 rounded-xl border border-purple-500/20 bg-purple-500/10 text-purple-200 flex items-start gap-2.5">
+                    <AlertCircle size={16} className="flex-shrink-0 mt-0.5 text-purple-400" />
                     <span>
                       2-Factor Authentication enabled. Enter the 6-digit code sent to your email to authorize entry.
                       {devOtp && <strong className="block mt-2 font-mono text-white">Dev OTP: {devOtp}</strong>}
                     </span>
                   </div>
                   <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">Verification Code</label>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">Verification Code</label>
                     <input
                       type="text"
                       maxLength={6}
                       value={code2fa}
                       onChange={e => setCode2fa(e.target.value.replace(/\D/g, ''))}
                       placeholder="000000"
-                      className="w-full input-glass rounded-xl px-4 py-3 text-center text-lg font-bold letter-spacing-lg"
+                      className="w-full input-glass rounded-xl px-4 py-3 text-center text-lg font-bold font-mono tracking-widest text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/80 transition-all duration-200"
                       required
                     />
                   </div>
@@ -235,14 +239,30 @@ export default function LoginPage() {
               )}
             </AnimatePresence>
 
-            <button
+            <motion.button
               type="submit"
               disabled={isSubmitting}
-              className="w-full btn-primary py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all text-xs"
+              whileHover={!isSubmitting ? { scale: 1.01 } : {}}
+              whileTap={!isSubmitting ? { scale: 0.97 } : {}}
+              className={cn(
+                "w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all text-xs cursor-pointer select-none relative overflow-hidden shadow-lg",
+                isSubmitting
+                  ? "bg-purple-600/60 text-purple-200 cursor-wait shadow-purple-900/30"
+                  : "bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-600/30 hover:shadow-purple-600/50 active:scale-[0.98] active:ring-2 active:ring-purple-400"
+              )}
             >
-              {isSubmitting ? 'Authenticating...' : is2FA ? 'Verify 2FA & Enter' : 'Secure Login'}
-              {!isSubmitting && <ChevronRight size={14} />}
-            </button>
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={16} className="animate-spin text-purple-200 shrink-0" />
+                  <span className="font-mono tracking-wide">Authenticating Institutional Access...</span>
+                </>
+              ) : (
+                <>
+                  <span>{is2FA ? 'Verify 2FA & Access Terminal' : 'Authenticate Institutional Account'}</span>
+                  <ChevronRight size={15} className="transition-transform group-hover:translate-x-0.5 shrink-0" />
+                </>
+              )}
+            </motion.button>
           </form>
 
           <div className="mt-6 border-t border-white/5 pt-4 text-center">

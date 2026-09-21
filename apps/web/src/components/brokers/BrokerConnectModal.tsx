@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Check, ShieldCheck, Server, KeyRound, User,
   Globe, AlertCircle, ArrowRight, RefreshCw, CheckCircle2,
-  Lock, Zap, Layers, Sparkles
+  Zap, Layers, Sparkles
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { toast } from 'react-hot-toast';
@@ -473,7 +473,7 @@ export function BrokerConnectModal({ isOpen, onClose, onSuccess }: BrokerConnect
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                      <Lock size={14} className="text-purple-400" />
+                      <KeyRound size={14} className="text-purple-400" />
                       <span>Trading / Investor Password</span>
                     </label>
                     <input

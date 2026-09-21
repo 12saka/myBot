@@ -211,8 +211,8 @@ export default function SuperadminKycPage() {
 
       {/* Main High-Density Table */}
       <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden shadow-xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left text-xs min-w-[800px]">
             <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-mono uppercase text-[10px] tracking-wider">
               <tr>
                 <th className="p-4">User & Contact</th>

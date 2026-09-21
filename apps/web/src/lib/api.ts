@@ -255,7 +255,7 @@ export function mapSignal(item: any): AISignal {
     centralBankBuying: reasoning.central_bank_buying || reasoning.centralBankBuying || {},
     geopoliticalRisk: reasoning.geopolitical_risk || reasoning.geopoliticalRisk || {},
     signalGrade,
-    evidence: item.evidence || reasoning.evidence || null,
+    evidence: item.evidence || reasoning.evidence || {},
   };
 }
 
@@ -374,7 +374,7 @@ export function mapPositionsToPortfolio(user: any, rawPositions: any[], tickers:
   let totalPnl = 0;
 
   const positions: Position[] = rawPositions.map((pos) => {
-    const cleanSym = String(pos.symbol).replace('/USD', '').toUpperCase();
+    const cleanSym = String(pos?.symbol || '').replace('/USD', '').toUpperCase();
     const matchTicker = tickers.find((ticker) => {
       const tickerSymbol = ticker.symbol.toUpperCase();
       return tickerSymbol === cleanSym || tickerSymbol === `${cleanSym}/USD` || tickerSymbol.replace('/USD', '') === cleanSym;

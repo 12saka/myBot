@@ -20,7 +20,7 @@ const NAV_GROUPS = [
     label: 'Core',
     items: [
       { href: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
-      { href: '/terminal',   label: 'MT5 Terminal', icon: Monitor          },
+      { href: '/terminal',   label: 'Terminal',     icon: Monitor          },
       { href: '/markets',    label: 'Markets',      icon: TrendingUp       },
       { href: '/signals',    label: 'Signals',      icon: Zap              },
       { href: '/portfolio',  label: 'Portfolio',    icon: Briefcase        },
@@ -38,7 +38,7 @@ const NAV_GROUPS = [
     items: [
       { href: '/copilot',    label: 'Copilot',      icon: Bot              },
       { href: '/automation', label: 'Automation',   icon: Cpu              },
-      { href: '/news',       label: 'Market News',  icon: Newspaper        },
+      { href: '/news',       label: 'News',         icon: Newspaper        },
       { href: '/academy',    label: 'Academy',      icon: BookOpen         },
     ],
   },
@@ -238,7 +238,9 @@ export function Sidebar() {
                   <div className="text-xs font-semibold text-slate-200 whitespace-nowrap min-h-[16px]">
                     {profile.firstName ? `${profile.firstName} ${profile.lastName}` : <span className="h-3.5 w-20 bg-white/5 animate-pulse rounded block" />}
                   </div>
-                  <div className="text-[10px] text-slate-500">Premium Account</div>
+                  <div className="text-[10px] text-slate-500 capitalize">
+                    {profile.role ? profile.role.toLowerCase().replace('_', ' ') : 'Standard Account'}
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>

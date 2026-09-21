@@ -195,8 +195,8 @@ export default function SuperadminAcademyAnalyticsPage() {
         </div>
 
         {/* Health Table */}
-        <div className="overflow-x-auto rounded-xl border border-white/5">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto w-full rounded-xl border border-white/5">
+          <table className="w-full text-left text-xs min-w-[650px]">
             <thead className="bg-slate-950/80 text-slate-400 font-mono uppercase text-[10px]">
               <tr>
                 <th className="p-3">Learner</th>
@@ -232,7 +232,7 @@ export default function SuperadminAcademyAnalyticsPage() {
                             : 'bg-red-500/10 text-red-400 border-red-500/20'
                         }`}
                       >
-                        {s.healthStatus === 'HEALTHY' ? '🟢 Healthy' : s.healthStatus === 'AT_RISK' ? '🟡 At Risk' : '🔴 Inactive'}
+                        {s.healthStatus === 'HEALTHY' ? '● Healthy' : s.healthStatus === 'AT_RISK' ? '● At Risk' : '● Inactive'}
                       </span>
                     </td>
                     <td className="p-3 font-mono text-center font-bold text-white">{s.quizCount}</td>
@@ -274,7 +274,7 @@ export default function SuperadminAcademyAnalyticsPage() {
                   >
                     <span className="text-[9px] block text-slate-400 truncate">Lesson {les.orderIndex}</span>
                     <span className="font-bold text-xs block">{les.completionRatePct}% retention</span>
-                    {les.isDropOffPoint && <span className="text-[8px] text-red-400 block font-bold">⚠️ DROP-OFF POINT</span>}
+                    {les.isDropOffPoint && <span className="text-[8px] text-red-400 block font-bold uppercase tracking-wider">DROP-OFF POINT</span>}
                   </div>
                 ))}
               </div>

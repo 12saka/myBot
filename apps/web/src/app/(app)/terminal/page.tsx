@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
   Sliders, Shield, DollarSign, Wallet, Activity,
   Search, X, CheckCircle2, AlertTriangle, Play,
-  Zap, ExternalLink, Key, Layers, Clock, Lock
+  Zap, ExternalLink, Key, Layers, Clock
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { toast } from 'react-hot-toast';
@@ -263,7 +263,7 @@ export default function TerminalPage() {
   );
 
   return (
-    <div className="flex flex-col h-[calc(100vh-90px)] space-y-3">
+    <div className="flex flex-col min-h-[calc(100vh-120px)] lg:h-[calc(100vh-90px)] space-y-3 pb-8 md:pb-0">
       {/* 1. Top MT5 Account Status Ribbon */}
       <div className="glass-card p-3 rounded-2xl border border-white/10 flex flex-wrap items-center justify-between gap-4 shrink-0 bg-slate-950/70">
         {/* Left: Active Broker Selector */}

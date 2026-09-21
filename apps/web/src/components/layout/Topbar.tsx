@@ -293,22 +293,23 @@ export function Topbar() {
           <div className="relative">
             <button
               onClick={() => setSearchOpen(true)}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl btn-ghost text-xs text-slate-400 hover:text-slate-200 min-w-[200px] border border-white/5"
+              className="flex items-center gap-2 p-2 sm:px-3 sm:py-2 rounded-xl btn-ghost text-xs text-slate-400 hover:text-slate-200 border border-white/5 sm:min-w-[180px] md:min-w-[220px]"
+              title="Search markets and signals (⌘K)"
             >
-              <Search size={14} />
-              <span>Search markets, signals…</span>
-              <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-white/5 font-mono">⌘K</kbd>
+              <Search size={16} className="text-slate-400 shrink-0" />
+              <span className="hidden sm:inline">Search markets, signals…</span>
+              <kbd className="hidden sm:inline ml-auto text-[10px] px-1.5 py-0.5 rounded bg-white/5 font-mono">⌘K</kbd>
             </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Instructor Studio Button */}
           {(profile.role === 'INSTRUCTOR' || profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
             <Link href="/instructor/dashboard">
-              <button className="px-3 py-1.5 rounded-xl bg-teal-600/30 hover:bg-teal-600/50 border border-teal-500/50 text-teal-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-teal-500/10 transition-all cursor-pointer">
-                <GraduationCap size={14} className="text-teal-400" />
-                <span className="hidden xs:inline">Instructor Studio</span>
+              <button className="p-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-teal-600/30 hover:bg-teal-600/50 border border-teal-500/50 text-teal-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-teal-500/10 transition-all cursor-pointer">
+                <GraduationCap size={15} className="text-teal-400 shrink-0" />
+                <span className="hidden sm:inline">Studio</span>
               </button>
             </Link>
           )}
@@ -316,31 +317,32 @@ export function Topbar() {
           {/* Admin Back Link Button for Superadmins */}
           {(profile.role === 'SUPER_ADMIN' || profile.role === 'ADMIN') && (
             <Link href="/superadmin/dashboard">
-              <button className="px-3 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/50 text-purple-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-purple-500/10 transition-all cursor-pointer">
-                <ShieldAlert size={14} className="text-purple-400" />
-                <span className="hidden xs:inline">Admin Panel</span>
+              <button className="p-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/50 text-purple-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-purple-500/10 transition-all cursor-pointer">
+                <ShieldAlert size={15} className="text-purple-400 shrink-0" />
+                <span className="hidden sm:inline">Admin</span>
               </button>
             </Link>
           )}
 
           {/* Engine Status Badge */}
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
+          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500" />
             </span>
-            <span className="text-xs font-semibold text-purple-300">Live Engine Active</span>
+            <span className="text-xs font-semibold text-purple-300">Engine Active</span>
           </div>
 
-          {/* WhatsApp Admin Support Button */}
+          {/* WhatsApp Support Button - visible on mobile as icon, desktop as labeled button */}
           <a
-            href="https://wa.me/254780566096?text=Hello%20TradeMind%20Admin%2C%20I%20need%20assistance"
+            href="https://wa.me/254780566096?text=Hello%20TradeMind%20Support%2C%20I%20need%20assistance"
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-bold transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
+            title="WhatsApp Support"
+            className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-semibold transition-all shadow-md shadow-emerald-500/10 cursor-pointer"
           >
-            <MessageCircle size={14} className="text-emerald-400" />
-            <span className="hidden md:inline">WhatsApp Admin (0780566096)</span>
+            <MessageCircle size={16} className="text-emerald-400 shrink-0" />
+            <span className="hidden md:inline">WhatsApp Support</span>
           </a>
 
           {/* Notifications Bell */}
@@ -357,7 +359,7 @@ export function Topbar() {
 
             {/* Notifications Dropdown */}
             {dropdownOpen && (
-              <div className="absolute right-0 mt-2 w-80 glass-panel rounded-2xl border border-white/10 shadow-2xl p-4 z-50 space-y-3">
+              <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-sm glass-panel rounded-2xl border border-white/10 shadow-2xl p-4 z-50 space-y-3">
                 <div className="flex items-center justify-between border-b border-white/5 pb-2">
                   <span className="text-[10px] font-bold text-white uppercase tracking-wider">Recent Notifications</span>
                   {unreadCount > 0 && (

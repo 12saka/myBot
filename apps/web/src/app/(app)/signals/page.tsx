@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, BrainCircuit, TrendingUp, TrendingDown,
-  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles, AlertTriangle, Trophy, Target, Bell, BellRing
+  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles, AlertTriangle, Trophy, Target, Bell, BellRing, Copy
 } from 'lucide-react';
 import { useAIStore, AISignal } from '@/store/useAIStore';
 import { useMarketStore } from '@/store/useMarketStore';
@@ -124,12 +124,13 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               const isB = letter.startsWith('B');
               return (
                 <span className={cn(
-                  "px-2 py-0.5 rounded text-[11px] font-black font-mono flex items-center gap-1 border shadow-sm",
+                  "px-2 py-0.5 rounded text-[11px] font-black font-mono flex items-center gap-1.5 border shadow-sm",
                   isA ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10" :
                   isB ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-cyan-500/10" :
                   "bg-amber-500/20 text-amber-300 border-amber-500/40"
                 )}>
-                  {isA ? '🔒 🏆 LOCKED' : isB ? '🔒 📊 LOCKED' : '🔒 ⚠️ LOCKED'} {letter} ({rawGrade.replace(/^(A\+|A|B\+|B|C)\s*/, '') || 'Institutional'})
+                  <span className="w-1.5 h-1.5 rounded-full bg-current inline-block shrink-0" />
+                  Grade {letter} • {rawGrade.replace(/^(A\+|A|B\+|B|C)\s*/, '').replace(/\(.*\)/, '').trim() || 'Institutional'}
                 </span>
               );
             })()}
@@ -138,15 +139,16 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               const isLimit = entryType === 'BUY_LIMIT' || entryType === 'SELL_LIMIT' || entryType === 'LIMIT';
               return (
                 <span className={cn(
-                  "px-2 py-0.5 rounded text-[10px] font-mono font-bold border",
+                  "px-2 py-0.5 rounded text-[10px] font-mono font-bold border flex items-center gap-1.5",
                   isLimit ? "bg-blue-500/20 text-blue-300 border-blue-500/40" : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
                 )}>
-                  {isLimit ? `🎯 ${entryType.replace('_', ' ')} Retest` : '⚡ Direct Market NOW'}
+                  <span className="w-1.5 h-1.5 rounded-full bg-current inline-block shrink-0" />
+                  {isLimit ? entryType.replace('_', ' ') : 'Market Execution'}
                 </span>
               );
             })()}
             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-              ⏱️ {signal.aiReasoning?.timeframe || '15m'}
+              TF: {signal.aiReasoning?.timeframe || '15m'}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -156,7 +158,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             </span>
             {signal.direction === 'WAIT' && (
               <span className="text-[10px] text-amber-300 font-mono font-bold flex items-center gap-1 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/40 animate-pulse">
-                ⏳ Auto-Dismissing in {waitCountdown}s...
+                Auto-Dismissing in {waitCountdown}s...
               </span>
             )}
           </div>
@@ -219,44 +221,15 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         })}
       </div>
 
-      {/* Precision Institutional Entry Directive Banner */}
+      {/* Execution Directive & Risk Sizing */}
       {(() => {
         const entryType = signal.aiReasoning?.entry_type || 'MARKET_NOW';
         const isLimit = entryType === 'BUY_LIMIT' || entryType === 'SELL_LIMIT' || entryType === 'LIMIT';
         const entryZone = signal.aiReasoning?.entry_zone;
         const condition = signal.aiReasoning?.entry_condition || (isLimit 
-          ? `Wait for price pullback to [${entryZone || signal.entry}]. Place ${entryType.replace('_', ' ')}.` 
-          : `Execute directly at Market ($${signal.entry}). Confluence confirmed.`);
+          ? `Pullback to ${entryZone || signal.entry}. Place ${entryType.replace('_', ' ')}.` 
+          : `Execute directly at market price. Confluence confirmed.`);
 
-        return (
-          <div className={cn(
-            "p-3 rounded-xl border flex flex-col gap-1.5 transition-all text-xs",
-            isLimit 
-              ? "bg-blue-950/30 border-blue-500/30 text-blue-200" 
-              : "bg-emerald-950/20 border-emerald-500/20 text-emerald-200"
-          )}>
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <span>{isLimit ? '🎯' : '⚡'}</span>
-                <span className="font-mono font-bold text-[11px] uppercase tracking-wider">
-                  {isLimit ? `Institutional ${entryType.replace('_', ' ')} Order Directive` : 'Instant Market Execution'}
-                </span>
-              </div>
-              {entryZone && (
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 border border-white/10 text-white">
-                  Zone: <strong>{entryZone}</strong>
-                </span>
-              )}
-            </div>
-            <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
-              {condition}
-            </p>
-          </div>
-        );
-      })()}
-
-      {/* Small Account & Intraday Risk Management Banner */}
-      {(() => {
         const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
         const isJpy = signal.symbol.includes('JPY');
         const isGold = signal.symbol.includes('XAU') || signal.symbol.includes('GOLD');
@@ -267,37 +240,32 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
         let riskLabel = '';
         if (isForex) {
           const pips = isJpy ? (slDiff * 100).toFixed(1) : (slDiff * 10000).toFixed(1);
-          riskLabel = `Risk: ${pips} pips (~$${(Number(pips) * 0.1).toFixed(2)} on 0.01 lot)`;
+          riskLabel = `${pips} pips (~$${(Number(pips) * 0.1).toFixed(2)} / 0.01 lot)`;
         } else if (isGold) {
-          riskLabel = `Risk: $${slDiff.toFixed(2)} (~$${slDiff.toFixed(2)} on 0.01 lot)`;
+          riskLabel = `$${slDiff.toFixed(2)} (~$${slDiff.toFixed(2)} / 0.01 lot)`;
         } else if (isIndex) {
-          riskLabel = `Risk: ${slDiff.toFixed(1)} pts (~$${(slDiff * 0.05).toFixed(2)} on 0.05 lot)`;
+          riskLabel = `${slDiff.toFixed(1)} pts (~$${(slDiff * 0.05).toFixed(2)} / 0.05 lot)`;
         } else if (isCrypto) {
           const pct = ((slDiff / (signal.entry || 1)) * 100).toFixed(2);
-          riskLabel = `Risk: ${pct}% ($${slDiff.toFixed(1)})`;
+          riskLabel = `${pct}% ($${slDiff.toFixed(1)})`;
         } else {
-          riskLabel = `Risk: $${slDiff.toFixed(2)}`;
+          riskLabel = `$${slDiff.toFixed(2)}`;
         }
 
         return (
-          <div className="bg-gradient-to-r from-emerald-950/40 to-slate-900/60 border border-emerald-500/20 p-2.5 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/60 border border-white/5 text-xs">
             <div className="flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <span className="text-[11px] font-bold text-emerald-400">
-                {isIndex
-                  ? '⚠️ Index Scalp ($25+ Margin - Suitable for >$50 Accounts)'
-                  : '🟢 Micro Account Approved (0.01 Micro-Lot)'}
+              <span className="w-2 h-2 rounded-full shrink-0 bg-purple-400 inline-block" />
+              <span className="text-slate-300 font-medium text-[11px] leading-snug">
+                {condition}
               </span>
             </div>
-            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-300">
-              <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                Lot: <strong className="text-emerald-400">0.01 Micro</strong>
+            <div className="flex items-center gap-2 text-[10px] font-mono shrink-0">
+              <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-bold">
+                0.01 Micro Approved
               </span>
-              <span className="bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                <strong className="text-amber-400">{riskLabel}</strong>
+              <span className="px-2 py-0.5 rounded bg-white/5 border border-white/5 text-amber-400 font-semibold">
+                Risk: {riskLabel}
               </span>
             </div>
           </div>
@@ -329,12 +297,12 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex-1 btn-ghost py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
         >
-          Strategy Reasoning
+          Analysis
           <ChevronDown size={12} className={cn('transition-transform', expanded && 'rotate-180')} />
         </button>
         <button
@@ -345,51 +313,26 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
           <Eye size={12} /> Chart
         </button>
         <button
+          onClick={() => {
+            const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
+            const isJpy = signal.symbol.includes('JPY');
+            const dec = isForex ? (isJpy ? 3 : 4) : 2;
+            const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toFixed(2)}`) : '0.00';
+            navigator.clipboard.writeText(`Symbol: ${signal.symbol} | ${signal.direction} | Entry: ${fmt(signal.entry)} | SL: ${fmt(signal.stopLoss)} | TP1: ${fmt(signal.tp1)} | TP2: ${fmt(signal.tp2)}`);
+            toast.success(`Copied levels for ${signal.symbol}!`);
+          }}
+          className="btn-ghost py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer text-slate-300 border border-white/10 hover:border-white/20"
+          title="Copy trade levels to clipboard for MT4/MT5"
+        >
+          <Copy size={12} />
+          <span>Copy</span>
+        </button>
+        <button
           onClick={() => setIsTradeOpen(true)}
           className="flex-1 btn-primary py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
         >
           <Zap size={12} /> Execute
         </button>
-      </div>
-
-      {/* Actionable Next Steps & Insights Guidance Banner */}
-      <div className="bg-slate-900/80 p-3 rounded-xl border border-purple-500/20 text-xs text-slate-300 flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <span className="font-bold uppercase text-[10px] tracking-wider text-purple-400 flex items-center gap-1">
-            💡 Pro Trader Actionable Insights
-          </span>
-          <span className="text-[10px] text-slate-400 font-mono">15m Scalp Protocol</span>
-        </div>
-        <div className="text-[11px] text-slate-200 font-medium leading-relaxed">
-          {(() => {
-            const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
-            const isJpy = signal.symbol.includes('JPY');
-            const dec = isForex ? (isJpy ? 3 : 4) : 2;
-            const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) : '0.00';
-            
-            return isBuy 
-              ? `Enter Buy at ${fmt(signal.entry)}. Set Invalidation SL at ${fmt(signal.stopLoss)}. Secure TP1 at ${fmt(signal.tp1)} (trail SL to breakeven), let remainder run to TP2 (${fmt(signal.tp2)}).` 
-              : `Enter Sell at ${fmt(signal.entry)}. Set Invalidation SL at ${fmt(signal.stopLoss)}. Secure TP1 at ${fmt(signal.tp1)} (trail SL to breakeven), let remainder run to TP2 (${fmt(signal.tp2)}).`;
-          })()}
-        </div>
-        <div className="flex gap-2 mt-1">
-          <button
-            onClick={() => {
-              const isForex = signal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'].some(fx => signal.symbol.includes(fx) || signal.symbol.replace('/', '') === fx.replace('/', ''));
-              const isJpy = signal.symbol.includes('JPY');
-              const dec = isForex ? (isJpy ? 3 : 4) : 2;
-              const fmt = (v: any) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toFixed(2)}`) : '0.00';
-              navigator.clipboard.writeText(`Symbol: ${signal.symbol} | ${signal.direction} | Entry: ${fmt(signal.entry)} | SL: ${fmt(signal.stopLoss)} | TP1: ${fmt(signal.tp1)} | TP2: ${fmt(signal.tp2)}`);
-              toast.success(`Copied trade parameters for ${signal.symbol} to clipboard! Paste into MT4/MT5.`, {
-                icon: '📋',
-                duration: 5000
-              });
-            }}
-            className="text-[10px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
-          >
-            📋 Copy MT4/MT5 Levels
-          </button>
-        </div>
       </div>
 
       {/* Expanded Analysis */}
@@ -404,7 +347,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             {/* TradingView Idea Banner */}
             {signal.tradingviewIdea && (
               <div className="bg-purple-500/10 border border-purple-500/20 p-3 rounded-lg text-purple-200 text-xs font-medium leading-relaxed">
-                <span className="font-bold text-purple-400 block mb-1 uppercase tracking-wider text-[10px]">🎯 PRO TradingView Setup Rationale</span>
+                <span className="font-bold text-purple-400 block mb-1 uppercase tracking-wider text-[10px]">Institutional Setup Rationale</span>
                 {signal.tradingviewIdea}
               </div>
             )}
@@ -417,14 +360,14 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             {signal.aiReasoning?.reasons_for && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border-b border-white/5 pb-2.5">
                 <div className="bg-emerald-950/20 border border-emerald-500/20 p-2.5 rounded-lg">
-                  <span className="font-bold text-emerald-400 block mb-1 uppercase tracking-wider text-[10px]">🟢 Reasons Supporting Trade (+Score)</span>
+                  <span className="font-bold text-emerald-400 block mb-1 uppercase tracking-wider text-[10px]">Key Confluence Factors (+Score)</span>
                   <ul className="list-disc pl-3.5 space-y-0.5 text-[10px] text-emerald-200">
                     {signal.aiReasoning.reasons_for.map((r: string, idx: number) => <li key={idx}>{r}</li>)}
                   </ul>
                 </div>
                 {signal.aiReasoning?.reasons_against?.length > 0 && (
                   <div className="bg-amber-950/20 border border-amber-500/20 p-2.5 rounded-lg">
-                    <span className="font-bold text-amber-400 block mb-1 uppercase tracking-wider text-[10px]">⚠️ Risk Flags / Headwinds</span>
+                    <span className="font-bold text-amber-400 block mb-1 uppercase tracking-wider text-[10px]">Risk Assessment & Invalidation Factors</span>
                     <ul className="list-disc pl-3.5 space-y-0.5 text-[10px] text-amber-200">
                       {signal.aiReasoning.reasons_against.map((r: string, idx: number) => <li key={idx}>{r}</li>)}
                     </ul>
@@ -434,9 +377,9 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             )}
 
             {[
-              { label: '📈 Technical Analysis & Confluence', items: signal.technicals, color: 'text-emerald-400' },
-              { label: '🏛️ Fundamental & News Backdrop',  items: signal.fundamentals, color: 'text-blue-400' },
-              { label: '💬 Market Structure & SMC Liquidity',  items: signal.sentiment,    color: 'text-purple-400' },
+              { label: 'Technical Analysis & Confluence', items: signal.technicals, color: 'text-emerald-400' },
+              { label: 'Fundamental & Macro Backdrop',  items: signal.fundamentals, color: 'text-blue-400' },
+              { label: 'Market Structure & Liquidity',  items: signal.sentiment,    color: 'text-purple-400' },
             ].map(({ label, items, color }) => (
               <div key={label}>
                 <div className={cn('text-[9px] font-bold uppercase tracking-wider mb-1', color)}>{label}</div>
@@ -450,7 +393,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             {signal.evidence && typeof signal.evidence === 'object' && Object.keys(signal.evidence).length > 0 && (
               <div className="border-t border-white/5 pt-2.5 space-y-2">
                 <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">
-                  📊 Quantitative Indicators & Confluence Weights
+                  Quantitative Indicators & Confluence Weights
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
                   {signal.evidence.ema20 && (
@@ -488,7 +431,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               <div className="border-t border-white/5 pt-2.5 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-                    🌐 Intermarket Drivers & Market Regime
+                    Intermarket Drivers & Market Regime
                   </div>
                   {signal.evidence.goldSource && (
                     <span className={cn(
@@ -497,7 +440,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
                         ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
                         : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
                     )}>
-                      {String(signal.evidence.goldSource).includes('PROXY') ? '⚠️ PAXG Proxy' : '🟢 Real COMEX/Spot'}
+                      {String(signal.evidence.goldSource).includes('PROXY') ? 'PAXG Proxy' : 'Real COMEX/Spot'}
                     </span>
                   )}
                 </div>
@@ -547,13 +490,13 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             {signal.indicatorVerdicts && Object.keys(signal.indicatorVerdicts).length > 0 && (
               <div className="border-t border-white/5 pt-2.5">
                 <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider mb-2">
-                  ⚡ Technical Structure Verdicts
+                  Technical Structure Verdicts
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px]">
                   {Object.entries(signal.indicatorVerdicts).map(([key, verdict]) => (
                     <div key={key} className="bg-slate-900/60 p-2 rounded border border-white/5 text-slate-300">
                       <span className="font-bold uppercase text-slate-400 block mb-0.5">{key}</span>
-                      {String(verdict)}
+                      {verdict ? String(verdict) : 'NEUTRAL'}
                     </div>
                   ))}
                 </div>
@@ -565,7 +508,7 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
               <div className="border-t border-rose-500/20 pt-3 mt-2 bg-rose-950/20 p-3 rounded-xl border border-rose-500/30 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
-                    🔬 Post-Trade Forensic Autopsy
+                    Post-Trade Forensic Autopsy
                   </span>
                   <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
                     {signal.aiReasoning.tradeAutopsy.checklist?.lossCategory || 'Loss Audit'}
@@ -584,17 +527,10 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
                   <div>Macro Aligned: <strong className="text-emerald-400">YES</strong></div>
                 </div>
                 <div className="text-[10px] text-purple-300 bg-purple-950/40 p-2 rounded border border-purple-500/30">
-                  💡 <strong>Actionable Takeaway</strong>: {signal.aiReasoning.tradeAutopsy.actionableTakeaway}
+                  <strong>Actionable Takeaway</strong>: {signal.aiReasoning.tradeAutopsy.actionableTakeaway}
                 </div>
               </div>
             )}
-
-            <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider border-t border-white/5 pt-2 mt-2">
-              🧠 Real-Time Quantitative Engine Architecture
-            </div>
-            <div className="text-[10px] text-slate-400 leading-normal bg-white/2 p-2.5 rounded-lg border border-white/5">
-              <span><strong>23-Factor Institutional Confluence Pipeline</strong>: Evaluates market regime, 4H/1H MTF trend locks, liquidity sweeps, FVG imbalances, macro correlation, and invalidation stop buffers.</span>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -700,12 +636,11 @@ export default function SignalsPage() {
 
         if (hitTP) {
           playSignalChime('TP_HIT');
-          sendDeviceNotification(`🎯 Take Profit Hit: ${sig.symbol}!`, {
+          sendDeviceNotification(`Take Profit Hit: ${sig.symbol}!`, {
             body: `${sig.direction} target achieved at ${sig.tp1} (+${sig.riskReward} R:R). Generating next fresh signal...`,
           });
-          toast.success(`🎉 TARGET HIT on ${sig.symbol} at ${sig.tp1}! Closed in full profit (+${sig.riskReward}). Generating replacement signal...`, {
+          toast.success(`TARGET HIT on ${sig.symbol} at ${sig.tp1}! Closed in full profit (+${sig.riskReward}). Generating replacement signal...`, {
             duration: 6000,
-            icon: '🎯',
           });
 
           // Dismiss the hit signal from active view while preserving database history
@@ -841,7 +776,7 @@ export default function SignalsPage() {
 
       // Trigger Acoustic Chime & Native OS Device Push Alert
       playSignalChime('NEW_SIGNAL');
-      sendDeviceNotification(`⚡ New Signal: ${newSignal.direction} ${newSignal.symbol}`, {
+      sendDeviceNotification(`New Signal: ${newSignal.direction} ${newSignal.symbol}`, {
         body: `Entry: ${newSignal.entry} | Target: ${newSignal.tp1} | R:R: ${newSignal.riskReward}`,
       });
 
@@ -912,7 +847,7 @@ export default function SignalsPage() {
 
   const handleGenerateSignal = async (symbol: string) => {
     setGeneratingSymbol(symbol);
-    const toastId = toast.loading(`Institutional engine running 4H Macro + 1H Flow + 15m Entry Top-Down Analysis for ${symbol}...`);
+    const toastId = toast.loading(`Institutional engine running 1W Macro + 1D Flow + 4H Structure + 1H Timing Top-Down Analysis for ${symbol}...`);
     try {
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
@@ -932,7 +867,7 @@ export default function SignalsPage() {
       
       // Trigger Acoustic Chime & Native OS Device Push Alert
       playSignalChime('NEW_SIGNAL');
-      sendDeviceNotification(`⚡ Generated Signal: ${newSignal.direction} ${newSignal.symbol}`, {
+      sendDeviceNotification(`Generated Signal: ${newSignal.direction} ${newSignal.symbol}`, {
         body: `Entry: ${newSignal.entry} | Target: ${newSignal.tp1} | R:R: ${newSignal.riskReward}`,
       });
       
@@ -1100,7 +1035,7 @@ export default function SignalsPage() {
 
       <PageHeader
         title="Signal Intelligence"
-        subtitle="Ensemble predictions generated from multi-temporal price sequence vectors and technical crossovers."
+        subtitle="Real-time algorithmic trading signals and high-probability market setups."
         icon={Zap}
       >
         <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
@@ -1203,7 +1138,7 @@ export default function SignalsPage() {
                   isLondon || isNY ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40" :
                   "bg-amber-500/20 text-amber-300 border border-amber-500/40"
                 )}>
-                  {isOverlap ? "🔥 LONDON/NY OVERLAP" : isLondon ? "🟢 LONDON OPEN" : isNY ? "🟢 NEW YORK OPEN" : "🌙 ASIAN GLOBEX"}
+                  {isOverlap ? "LONDON/NY OVERLAP" : isLondon ? "LONDON OPEN" : isNY ? "NEW YORK OPEN" : "ASIAN GLOBEX"}
                 </span>
               );
             })()}
@@ -1257,17 +1192,6 @@ export default function SignalsPage() {
         </div>
       </div>
 
-      {/* Risk Disclaimer Banner */}
-      <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
-        <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-        <div>
-          <p className="text-xs font-bold text-amber-300">Trading Risk Disclaimer</p>
-          <p className="text-[11px] text-amber-200/80 mt-0.5 leading-relaxed">
-            Signals are probabilistic tools based on technical analysis — not financial advice. No signal is 100% guaranteed.
-            Always use stop losses and risk only capital you can afford to lose. Past performance does not guarantee future results.
-          </p>
-        </div>
-      </div>
 
       {/* Performance Stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -1458,23 +1382,32 @@ export default function SignalsPage() {
 
               {/* Mobile Swipe helper notice */}
               <div className="md:hidden text-[9px] text-slate-500 font-bold text-center py-1 bg-white/2 border-b border-white/5 flex items-center justify-center gap-1">
-                <span>💡 Touch the margins or swipe outside the chart frame to scroll details</span>
+                <span>Touch margins or swipe outside chart frame to scroll details</span>
               </div>
 
               {/* Target Price Labels Overlay */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 backdrop-blur-md border-y border-white/5 px-6 py-3.5 flex-shrink-0">
-                {[
-                  { label: 'Entry Price', value: selectedChartSignal.entry.toLocaleString(), color: 'border-purple-500/20 text-purple-300 bg-purple-500/5' },
-                  { label: 'Stop Loss (Invalidation)', value: selectedChartSignal.stopLoss.toLocaleString(), color: 'border-red-500/20 text-red-400 bg-red-500/5' },
-                  { label: 'Take Profit 1', value: selectedChartSignal.tp1.toLocaleString(), color: 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' },
-                  { label: 'Take Profit 2', value: selectedChartSignal.tp2.toLocaleString(), color: 'border-teal-500/20 text-teal-300 bg-teal-500/5' },
-                ].map(({ label, value, color }) => (
-                  <div key={label} className={cn("p-2 rounded-xl border flex flex-col gap-0.5", color)}>
-                    <span className="text-[9px] uppercase tracking-wider font-semibold opacity-75">{label}</span>
-                    <span className="text-sm font-bold">${value}</span>
+              {(() => {
+                const isForex = selectedChartSignal.type === 'forex' || ['EUR/USD', 'GBP/USD', 'USD/JPY'].some(f => selectedChartSignal.symbol.includes(f));
+                const isJpy = selectedChartSignal.symbol.includes('JPY');
+                const dec = isForex ? (isJpy ? 3 : 4) : 2;
+                const fmt = (v?: number) => typeof v === 'number' && !isNaN(v) ? (isForex ? v.toFixed(dec) : `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) : '—';
+
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/60 backdrop-blur-md border-y border-white/5 px-6 py-3.5 flex-shrink-0">
+                    {[
+                      { label: 'Entry Price', value: fmt(selectedChartSignal.entry), color: 'border-purple-500/20 text-purple-300 bg-purple-500/5' },
+                      { label: 'Stop Loss (Invalidation)', value: fmt(selectedChartSignal.stopLoss), color: 'border-red-500/20 text-red-400 bg-red-500/5' },
+                      { label: 'Take Profit 1', value: fmt(selectedChartSignal.tp1), color: 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' },
+                      { label: 'Take Profit 2', value: fmt(selectedChartSignal.tp2), color: 'border-teal-500/20 text-teal-300 bg-teal-500/5' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className={cn("p-2 rounded-xl border flex flex-col gap-0.5", color)}>
+                        <span className="text-[9px] uppercase tracking-wider font-semibold opacity-75">{label}</span>
+                        <span className="text-sm font-bold">{value}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                );
+              })()}
 
               {/* Detailed Multi-Factor AI Analysis Breakdown */}
               {(() => {
@@ -1592,14 +1525,16 @@ export default function SignalsPage() {
                     {/* Per-Indicator Verdicts */}
                     {selectedChartSignal.aiReasoning?.indicator_verdicts && Object.keys(selectedChartSignal.aiReasoning.indicator_verdicts).length > 0 && (
                       <div>
-                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">📊 Indicator-by-Indicator Analysis</h4>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Indicator-by-Indicator Analysis</h4>
                         <div className="grid grid-cols-1 gap-2">
                           {Object.entries(selectedChartSignal.aiReasoning.indicator_verdicts).map(([key, verdict]) => {
-                            const icons: Record<string, string> = { ema: '📈', rsi: '⚡', macd: '🔄', bollinger: '📉', vwap: '🏦', atr: '📏', adx: '💪' };
                             const labels: Record<string, string> = { ema: 'EMA Alignment', rsi: 'RSI Momentum', macd: 'MACD Crossover', bollinger: 'Bollinger Bands', vwap: 'VWAP Analysis', atr: 'ATR Volatility', adx: 'ADX Trend Strength' };
                             return (
                               <div key={key} className="p-3 rounded-xl bg-white/2 border border-white/5 text-xs text-slate-300 leading-relaxed">
-                                <div className="font-bold text-white mb-1">{icons[key] || '📌'} {labels[key] || key.toUpperCase()}</div>
+                                <div className="font-bold text-white mb-1 flex items-center gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block shrink-0" />
+                                  <span>{labels[key] || key.toUpperCase()}</span>
+                                </div>
                                 <p className="text-slate-400">{verdict as string}</p>
                               </div>
                             );
@@ -1611,7 +1546,7 @@ export default function SignalsPage() {
                     {/* Market Structure Analysis */}
                     {selectedChartSignal.aiReasoning?.market_structure_analysis && (
                       <div>
-                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">🏗️ Market Structure Analysis</h4>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Market Structure Analysis</h4>
                         <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 text-xs text-blue-300 leading-relaxed">
                           <p>{selectedChartSignal.aiReasoning.market_structure_analysis}</p>
                         </div>
@@ -1621,7 +1556,7 @@ export default function SignalsPage() {
                     {/* TradingView Trade Idea */}
                     {selectedChartSignal.aiReasoning?.tradingview_idea && (
                       <div>
-                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">💡 Trade Idea Summary</h4>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Trade Idea Summary</h4>
                         <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/10 text-xs text-amber-200 leading-relaxed">
                           <p className="font-medium">{selectedChartSignal.aiReasoning.tradingview_idea}</p>
                         </div>
@@ -1631,14 +1566,14 @@ export default function SignalsPage() {
                     {/* Institutional Analysis Upgrade Display */}
                     {(selectedChartSignal.aiReasoning?.macro_context || selectedChartSignal.aiReasoning?.correlation_analysis || selectedChartSignal.aiReasoning?.category_scores) && (
                       <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">🏛️ Institutional Analysis Layers</h4>
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Institutional Analysis Layers</h4>
                         
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {/* Macroeconomic & News sentiment */}
                           {selectedChartSignal.aiReasoning?.macro_context && (
                             <div className="p-4 rounded-xl bg-indigo-500/5 border border-indigo-500/10 text-xs leading-relaxed space-y-2">
                               <div className="font-bold text-indigo-300 flex items-center gap-1.5">
-                                <span>🌍 Macroeconomic & Fundamental Driver</span>
+                                <span>Macroeconomic & Fundamental Driver</span>
                               </div>
                               <p className="text-slate-400">{selectedChartSignal.aiReasoning.macro_context}</p>
                             </div>
@@ -1648,7 +1583,7 @@ export default function SignalsPage() {
                           {selectedChartSignal.aiReasoning?.correlation_analysis && (
                             <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 text-xs leading-relaxed space-y-2">
                               <div className="font-bold text-emerald-300 flex items-center gap-1.5">
-                                <span>🔗 Cross-Asset Correlation Analysis</span>
+                                <span>Cross-Asset Correlation Analysis</span>
                               </div>
                               <p className="text-slate-400">{selectedChartSignal.aiReasoning.correlation_analysis}</p>
                             </div>
@@ -1658,7 +1593,7 @@ export default function SignalsPage() {
                         {/* Category Scores breakdown */}
                         {selectedChartSignal.aiReasoning?.category_scores && (
                           <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 space-y-3">
-                            <div className="text-xs font-bold text-purple-300">📊 Multi-Factor Weighted Scoring Model</div>
+                            <div className="text-xs font-bold text-purple-300">Multi-Factor Weighted Scoring Model</div>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                               {[
                                 { name: 'Technical (30%)', val: selectedChartSignal.aiReasoning.category_scores.technical },
@@ -1705,11 +1640,11 @@ export default function SignalsPage() {
                       <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">🧠 Market Analysis & Outlook</h4>
                       <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 text-xs text-purple-300 leading-relaxed space-y-3">
                         <div className="flex flex-wrap gap-3 text-[10px] border-b border-white/5 pb-3 mb-2">
-                          <span className="bg-purple-500/10 border border-purple-500/20 rounded-lg px-2 py-0.5 font-bold">Strategy: {selectedChartSignal.strategy}</span>
-                          <span className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-2 py-0.5 font-bold">Confidence: {selectedChartSignal.confidence}%</span>
-                          <span className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-2 py-0.5 font-bold">Win Prob: {selectedChartSignal.probability}</span>
-                          <span className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-0.5 font-bold">Duration: {selectedChartSignal.duration}</span>
-                          <span className="bg-fuchsia-500/10 border border-fuchsia-500/20 rounded-lg px-2 py-0.5 font-bold">R:R {selectedChartSignal.riskReward}</span>
+                          <span className="bg-purple-500/10 border border-purple-500/20 rounded-lg px-2 py-0.5 font-bold">Strategy: {selectedChartSignal.strategy || 'Quantitative Model'}</span>
+                          <span className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-2 py-0.5 font-bold">Confidence: {selectedChartSignal.confidence ?? 0}%</span>
+                          <span className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-2 py-0.5 font-bold">Win Prob: {selectedChartSignal.probability || 'N/A'}</span>
+                          <span className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-0.5 font-bold">Duration: {selectedChartSignal.duration || '2-8 hours'}</span>
+                          <span className="bg-fuchsia-500/10 border border-fuchsia-500/20 rounded-lg px-2 py-0.5 font-bold">R:R {selectedChartSignal.riskReward || '1:2.0'}</span>
                         </div>
                         {selectedChartSignal.reasoning && (
                           <p className="text-slate-300 whitespace-pre-line leading-relaxed">

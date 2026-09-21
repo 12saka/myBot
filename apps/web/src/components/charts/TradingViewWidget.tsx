@@ -14,7 +14,7 @@ interface TradingViewWidgetProps {
   tp2?: number;
 }
 
-export function TradingViewWidget({ symbol, containerId = `tv_chart_${symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')}`, height = '100%', entryPrice, stopLoss, tp1, tp2 }: TradingViewWidgetProps) {
+export function TradingViewWidget({ symbol = 'BTC/USD', containerId = `tv_chart_${(symbol || 'BTC').toUpperCase().replace(/[^A-Z0-9]/g, '')}`, height = '100%', entryPrice, stopLoss, tp1, tp2 }: TradingViewWidgetProps) {
   const onLoadScriptRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -45,7 +45,7 @@ export function TradingViewWidget({ symbol, containerId = `tv_chart_${symbol.toU
       const containerElement = document.getElementById(containerId);
       if (containerElement && 'TradingView' in window) {
         let tvSymbol = '';
-        const cleanSymbol = symbol.toUpperCase().replace('/USD', '').trim();
+        const cleanSymbol = (symbol || 'BTC').toUpperCase().replace('/USD', '').trim();
         
         if (cleanSymbol === 'BTC') tvSymbol = 'BINANCE:BTCUSDT';
         else if (cleanSymbol === 'ETH') tvSymbol = 'BINANCE:ETHUSDT';
@@ -97,7 +97,7 @@ export function TradingViewWidget({ symbol, containerId = `tv_chart_${symbol.toU
     const containerElement = document.getElementById(containerId);
     // reuse the tvSymbol mapping logic
     let tvSym = '';
-    const cs = symbol.toUpperCase().replace('/USD', '').trim();
+    const cs = (symbol || 'BTC').toUpperCase().replace('/USD', '').trim();
     if (cs === 'BTC') tvSym = 'BINANCE:BTCUSDT';
     else if (cs === 'ETH') tvSym = 'BINANCE:ETHUSDT';
     else if (cs === 'SOL') tvSym = 'BINANCE:SOLUSDT';

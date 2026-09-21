@@ -11,7 +11,7 @@ import {
 } from 'framer-motion';
 import {
   Zap, TrendingUp, Shield, BrainCircuit, BarChart3, Globe,
-  ArrowRight, CheckCircle, ChevronRight, Activity, Cpu, Lock,
+  ArrowRight, CheckCircle, ChevronRight, Activity, Cpu, ShieldCheck,
   Rocket, Star, Play, Users, Bot, GraduationCap, LineChart,
   Clock, Headphones, ChevronDown, Plus, Minus, Twitter,
   Github, Linkedin, Mail, Menu, X, TrendingDown, Eye,
@@ -170,16 +170,16 @@ const WHY_FEATURES = [
 ];
 
 const MARKET_TYPES = [
-  { label: 'Crypto',      count: '2,400+', color: BRAND.purple, icon: '₿' },
-  { label: 'Forex',       count: '180+',   color: BRAND.cyan,   icon: '€' },
-  { label: 'Stocks',      count: '7,000+', color: BRAND.green,  icon: '📈' },
-  { label: 'Commodities', count: '80+',    color: BRAND.amber,  icon: '🥇' },
-  { label: 'Indices',     count: '60+',    color: '#a855f7',    icon: '📊' },
-  { label: 'ETFs',        count: '300+',   color: '#f43f5e',    icon: '💹' },
+  { label: 'Crypto',      count: '2,400+', color: BRAND.purple, icon: 'BTC' },
+  { label: 'Forex',       count: '180+',   color: BRAND.cyan,   icon: 'FX' },
+  { label: 'Stocks',      count: '7,000+', color: BRAND.green,  icon: 'EQ' },
+  { label: 'Commodities', count: '80+',    color: BRAND.amber,  icon: 'XAU' },
+  { label: 'Indices',     count: '60+',    color: '#a855f7',    icon: 'IDX' },
+  { label: 'ETFs',        count: '300+',   color: '#f43f5e',    icon: 'ETF' },
 ];
 
 const SECURITY_FEATURES = [
-  { icon: Lock,     title: '2FA & Biometrics',      desc: 'Two-factor authentication and biometric verification for all access.' },
+  { icon: ShieldCheck, title: '2FA & Biometrics',    desc: 'Two-factor authentication and biometric verification for all access.' },
   { icon: Shield,   title: 'AES-256 Encryption',    desc: 'Military-grade encryption for all data in transit and at rest.' },
   { icon: Eye,      title: 'AI Fraud Detection',     desc: 'Real-time behavioral AI monitors for suspicious activity 24/7.' },
   { icon: Award,    title: 'SOC 2 Type II Certified', desc: 'Independent annual audits verify our security controls and practices.' },
@@ -270,36 +270,36 @@ const JOURNEY_STEPS = [
 
 const TESTIMONIALS = [
   {
-    name: 'James Kariuki',
-    role: 'Hedge Fund Manager, Nairobi',
-    avatar: 'JK',
+    name: 'Timothy Serem',
+    role: 'Quant Strategist & Prop Trader, Nairobi / Eldoret',
+    avatar: 'TS',
     rating: 5,
     color: BRAND.purple,
-    text: 'TradeMind outperformed our previous quant systems by 23% in the first quarter. The multi-factor architecture processes signals we simply couldn\'t compute manually.',
+    text: "TradeMind's top-down multi-timeframe engine (1W to 15m) caught the Gold and US100 liquidity sweeps with surgical precision. Direct MT5 bridging tied with SMC order blocks has automated our prop desk execution seamlessly.",
+  },
+  {
+    name: 'Eldohub Community',
+    role: 'Tech Innovation Hub & Developer Network, Eldoret',
+    avatar: 'EH',
+    rating: 5,
+    color: BRAND.cyan,
+    text: 'Our active trading and fintech community relies on TradeMind for real-time interbank pricing telemetry and AI copilot analysis. The 1:2+ risk:reward enforcement eliminates emotional overtrading entirely.',
+  },
+  {
+    name: 'Alex Kiprop',
+    role: 'Lead Forex & Index Specialist, TradeMind Academy',
+    avatar: 'AK',
+    rating: 5,
+    color: BRAND.green,
+    text: 'Moving the strategy engines from a 4H baseline to a full Weekly-to-Daily institutional bias matrix provides unmatched clarity. The automated Limit order zone calculations prevent slippage on high-volatility sessions.',
   },
   {
     name: 'Sarah Mitchell',
-    role: 'Independent Trader, London',
+    role: 'Multi-Asset Prop Desk Trader, London / Remote',
     avatar: 'SM',
     rating: 5,
-    color: BRAND.cyan,
-    text: 'The Copilot is like having a Wall Street analyst available 24/7. I\'ve learned more in 3 months here than in 3 years of solo trading. Absolutely transformative.',
-  },
-  {
-    name: 'David Chen',
-    role: 'Portfolio Director, Singapore',
-    avatar: 'DC',
-    rating: 5,
-    color: BRAND.green,
-    text: 'Risk management capabilities are exceptional. The AML integration and immutable audit logs were exactly what our compliance team required for institutional use.',
-  },
-  {
-    name: 'Amara Osei',
-    role: 'Crypto Trader, Accra',
-    avatar: 'AO',
-    rating: 5,
     color: BRAND.amber,
-    text: 'Started with the Starter plan. Within two months, the market signals consistently beat market averages. Now on Pro and the automated strategies run smoothly.',
+    text: "The universal Quality Gate is what makes TradeMind truly institutional. If weekly macro trend or daily momentum conflicts with the entry, it rejects the setup and protects our trading capital.",
   },
 ];
 
@@ -543,11 +543,11 @@ export default function LandingPage() {
           {/* CTA */}
           <div className="hidden md:flex items-center gap-3">
             <Link href="/login"
-              className="text-sm text-slate-400 hover:text-white transition-colors px-4 py-2 rounded-xl border border-white/10 hover:border-white/25 hover:bg-white/5">
-              Sign In
+              className="text-sm font-semibold text-slate-300 hover:text-white transition-all duration-150 px-4 py-2 rounded-xl border border-white/10 hover:border-purple-500/40 hover:bg-purple-500/10 active:scale-95 active:bg-purple-500/25 active:border-purple-500/60 shadow-sm cursor-pointer inline-flex items-center gap-1.5">
+              <span>Sign In</span>
             </Link>
             <Link href="/register"
-              className="text-sm font-bold px-5 py-2.5 rounded-xl text-white transition-all duration-300 hover:scale-105 hover:shadow-2xl inline-flex items-center gap-2"
+              className="text-sm font-bold px-5 py-2.5 rounded-xl text-white transition-all duration-300 hover:scale-105 active:scale-95 hover:shadow-2xl inline-flex items-center gap-2 cursor-pointer"
               style={{
                 background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.purpleL})`,
                 boxShadow: `0 0 20px ${BRAND.purple}50`,
@@ -581,11 +581,14 @@ export default function LandingPage() {
                   </a>
                 ))}
                 <div className="pt-3 flex flex-col gap-2 border-t border-white/8">
-                  <Link href="/login" className="py-2.5 px-4 rounded-xl border border-white/15 text-center text-sm font-semibold text-slate-300">Sign In</Link>
+                  <Link href="/login" className="py-2.5 px-4 rounded-xl border border-white/15 text-center text-sm font-semibold text-slate-300 hover:text-white hover:bg-purple-500/10 active:scale-95 active:bg-purple-500/25 active:border-purple-500/60 transition-all duration-150 cursor-pointer">
+                    Sign In
+                  </Link>
                   <Link href="/register"
-                    className="py-2.5 px-4 rounded-xl text-center text-sm font-bold text-white"
+                    className="py-2.5 px-4 rounded-xl text-center text-sm font-bold text-white active:scale-95 transition-all duration-150 flex items-center justify-center gap-2"
                     style={{ background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.purpleL})` }}>
-                    🚀 Get Started
+                    <Rocket size={15} />
+                    <span>Get Started</span>
                   </Link>
                 </div>
               </div>
@@ -1359,7 +1362,7 @@ export default function LandingPage() {
                       : { background: 'rgba(255,255,255,0.06)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.12)' }
                     }
                   >
-                    Get Started {highlight ? '🚀' : '→'}
+                    Get Started →
                   </Link>
                 </div>
               </FadeIn>

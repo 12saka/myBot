@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ShieldCheck, Lock, Plus, ArrowUpRight, ArrowDownLeft, RefreshCw,
+  ShieldCheck, Plus, ArrowUpRight, ArrowDownLeft, RefreshCw,
   TrendingUp, DollarSign, Activity, CheckCircle2, AlertTriangle, X,
   Sliders, ShieldAlert, Cpu, Eye, Check, Key, Search, ChevronRight,
   Server, Zap, FileText, Ban, Power, Wallet as WalletIcon
@@ -392,15 +392,15 @@ export default function SecureWalletPage() {
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-400">Balance</span>
-                  <span className="font-mono font-bold text-white">${acc.balance?.toFixed(2)}</span>
+                  <span className="font-mono font-bold text-white">${(acc.balance ?? 0).toFixed(2)}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-400">Equity</span>
-                  <span className="font-mono font-bold text-purple-300">${acc.equity?.toFixed(2)}</span>
+                  <span className="font-mono font-bold text-purple-300">${(acc.equity ?? 0).toFixed(2)}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-400">Free Margin</span>
-                  <span className="font-mono font-bold text-emerald-400">${acc.freeMargin?.toFixed(2)}</span>
+                  <span className="font-mono font-bold text-emerald-400">${(acc.freeMargin ?? 0).toFixed(2)}</span>
                 </div>
               </div>
 
@@ -468,10 +468,10 @@ export default function SecureWalletPage() {
             >
               <div className="flex items-center justify-between border-b border-white/5 pb-4">
                 <div className="flex items-center gap-2">
-                  <Lock size={20} className="text-purple-400" />
+                  <ShieldCheck size={20} className="text-emerald-400" />
                   <div>
                     <h3 className="font-display font-bold text-white text-lg">Connect Trading Account</h3>
-                    <p className="text-xs text-slate-400">Encrypted financial-control vault for TradeMind</p>
+                    <p className="text-xs text-slate-400">Institutional financial-control vault for TradeMind</p>
                   </div>
                 </div>
                 <button onClick={() => setIsConnectOpen(false)} className="p-1 rounded-lg bg-white/5 text-slate-400 hover:text-white">
@@ -636,7 +636,7 @@ export default function SecureWalletPage() {
                     disabled={isConnecting}
                     className="flex-1 btn-primary py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-purple-500/20"
                   >
-                    {isConnecting ? <RefreshCw size={14} className="animate-spin" /> : <Lock size={14} />}
+                    {isConnecting ? <RefreshCw size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
                     <span>Securely Connect</span>
                   </button>
                 </div>
@@ -699,20 +699,20 @@ export default function SecureWalletPage() {
                   <div className="grid grid-cols-3 gap-3">
                     <div className="p-3 rounded-xl bg-white/2 border border-white/5">
                       <span className="text-[10px] text-slate-500 uppercase font-bold">Balance</span>
-                      <div className="font-mono font-bold text-white text-base mt-1">${selectedAccount.balance?.toFixed(2)}</div>
+                      <div className="font-mono font-bold text-white text-base mt-1">${(selectedAccount.balance ?? 0).toFixed(2)}</div>
                     </div>
                     <div className="p-3 rounded-xl bg-white/2 border border-white/5">
                       <span className="text-[10px] text-slate-500 uppercase font-bold">Equity</span>
-                      <div className="font-mono font-bold text-purple-300 text-base mt-1">${selectedAccount.equity?.toFixed(2)}</div>
+                      <div className="font-mono font-bold text-purple-300 text-base mt-1">${(selectedAccount.equity ?? 0).toFixed(2)}</div>
                     </div>
                     <div className="p-3 rounded-xl bg-white/2 border border-white/5">
                       <span className="text-[10px] text-slate-500 uppercase font-bold">Free Margin</span>
-                      <div className="font-mono font-bold text-emerald-400 text-base mt-1">${selectedAccount.freeMargin?.toFixed(2)}</div>
+                      <div className="font-mono font-bold text-emerald-400 text-base mt-1">${(selectedAccount.freeMargin ?? 0).toFixed(2)}</div>
                     </div>
                   </div>
 
                   <div className="p-4 rounded-xl bg-white/2 border border-white/5 space-y-2 text-xs">
-                    <div className="flex justify-between"><span className="text-slate-400">Used Margin</span><span className="font-mono text-white">${selectedAccount.margin?.toFixed(2) || '0.00'}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-400">Used Margin</span><span className="font-mono text-white">${Number(selectedAccount.margin || 0).toFixed(2)}</span></div>
                     <div className="flex justify-between"><span className="text-slate-400">Leverage</span><span className="font-mono text-white">{selectedAccount.leverage || '1:500'}</span></div>
                     <div className="flex justify-between"><span className="text-slate-400">Currency</span><span className="font-mono text-white">{selectedAccount.currency || 'USD'}</span></div>
                     <div className="flex justify-between"><span className="text-slate-400">Connection Status</span><span className="font-semibold text-emerald-400">🟢 Connected</span></div>
@@ -720,11 +720,9 @@ export default function SecureWalletPage() {
                   </div>
 
                   <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 space-y-2">
-                    <span className="text-xs font-bold text-white uppercase tracking-wider block">Recent Activity</span>
-                    <div className="text-[11px] font-mono text-slate-400 space-y-1">
-                      <div className="flex justify-between"><span>13:10 BTCUSD analyzed</span><span className="text-emerald-400">✓ Confluence 88%</span></div>
-                      <div className="flex justify-between"><span>12:55 XAUUSD signal generated</span><span className="text-purple-400">🏆 A+ Setup</span></div>
-                      <div className="flex justify-between"><span>12:30 EURUSD risk check</span><span className="text-slate-300">Passed</span></div>
+                    <span className="text-xs font-bold text-white uppercase tracking-wider block">Account Status</span>
+                    <div className="text-[11px] text-slate-300">
+                      Broker account synchronized. Automated order routing active.
                     </div>
                   </div>
                 </div>
@@ -860,7 +858,7 @@ export default function SecureWalletPage() {
                     <div className="flex items-center justify-between"><span className="text-slate-400">2FA Authentication</span><span className="text-emerald-400 font-bold">🟢 Active</span></div>
                     <div className="flex items-center justify-between"><span className="text-slate-400">TLS AES-256 Connection</span><span className="text-emerald-400 font-bold">🟢 Active</span></div>
                     <div className="flex items-center justify-between"><span className="text-slate-400">Credential Encryption Vault</span><span className="text-emerald-400 font-bold">🟢 Isolated Key</span></div>
-                    <div className="flex items-center justify-between"><span className="text-slate-400">Last Authentication</span><span className="font-mono text-slate-300">14 Aug 2026, 13:05</span></div>
+                    <div className="flex items-center justify-between"><span className="text-slate-400">Last Authentication</span><span className="font-mono text-slate-300">Active Session</span></div>
                   </div>
 
                   <button

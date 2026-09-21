@@ -77,7 +77,8 @@ export default function InstructorStudentsPage() {
 
       {/* Roster Table */}
       <div className="glass-panel rounded-2xl border border-teal-500/20 overflow-hidden bg-slate-900/60">
-        <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto w-full">
+          <table className="w-full text-left text-xs min-w-[700px]">
           <thead className="bg-slate-950/80 text-slate-400 font-mono uppercase text-[10px] border-b border-teal-500/20">
             <tr>
               <th className="p-4">Student</th>
@@ -131,6 +132,7 @@ export default function InstructorStudentsPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

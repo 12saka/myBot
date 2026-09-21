@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Mail, Phone, ShieldCheck, ChevronRight, ArrowLeft,
-  Key, Sparkles, CheckCircle2, Lock, AlertTriangle,
+  Key, Sparkles, CheckCircle2, AlertTriangle,
   RefreshCw, Smartphone, Check, HelpCircle, Eye, EyeOff
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';

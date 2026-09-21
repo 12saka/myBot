@@ -25,11 +25,12 @@ export function InstructorTopbar({ onOpenMobile }: TopbarProps) {
   const role = profile?.role || 'INSTRUCTOR';
 
   return (
-    <header className="h-16 border-b border-teal-500/20 bg-slate-900/60 backdrop-blur-xl px-4 md:px-6 flex items-center justify-between z-30 shrink-0">
+    <header className="h-16 border-b border-teal-500/20 bg-slate-950/80 backdrop-blur-xl px-4 md:px-6 flex items-center justify-between z-30 shrink-0 shadow-lg shadow-black/40">
       <div className="flex items-center gap-3">
         <button
           onClick={onOpenMobile}
-          className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 lg:hidden"
+          className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 md:hidden transition border border-white/10"
+          aria-label="Open navigation menu"
         >
           <Menu className="w-5 h-5" />
         </button>

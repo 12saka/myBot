@@ -222,9 +222,9 @@ export default function MarketsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: 'Total Market Cap', value: summary.totalMarketCap > 0 ? `$${(summary.totalMarketCap / 1e12).toFixed(2)}T` : 'Unavailable', change: summary.source === 'live' ? 'Live' : 'No live cap', positive: summary.source === 'live' },
-          { label: 'BTC Dominance',    value: summary.btcDominance !== null ? `${summary.btcDominance}%` : 'Unavailable',  change: summary.btcDominance !== null ? 'Live' : 'No provider', positive: summary.btcDominance !== null },
+          { label: 'BTC Dominance',    value: summary.btcDominance != null ? `${summary.btcDominance}%` : 'Unavailable',  change: summary.btcDominance != null ? 'Live' : 'No provider', positive: summary.btcDominance != null },
           { label: '24h Volume',        value: summary.totalVolume24h > 0 ? `$${(summary.totalVolume24h / 1e9).toFixed(1)}B` : 'Unavailable', change: summary.totalVolume24h > 0 ? 'Live' : 'No volume', positive: summary.totalVolume24h > 0 },
-          { label: 'Active Markets',    value: `${summary.activeMarkets} Live`, change: summary.activeMarkets > 0 ? 'Live' : 'No feed',   positive: summary.activeMarkets > 0 },
+          { label: 'Active Markets',    value: `${summary.activeMarkets ?? 0} Live`, change: (summary.activeMarkets || 0) > 0 ? 'Live' : 'No feed',   positive: (summary.activeMarkets || 0) > 0 },
         ].map(({ label, value, change, positive }) => (
           <div key={label} className="glass-card rounded-2xl p-4">
             <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-2">{label}</div>
@@ -289,21 +289,21 @@ export default function MarketsPage() {
                       </div>
                     </td>
                     <td className="text-right font-mono font-semibold text-slate-100">
-                      {ticker.type === 'forex' ? (ticker.symbol.includes('JPY') ? ticker.price.toFixed(3) : ticker.price.toFixed(5)) :
-                       ticker.price >= 1000 ? ticker.price.toLocaleString('en-US', { minimumFractionDigits: 2 }) :
-                       ticker.price.toFixed(4)}
+                      {ticker.type === 'forex' ? (ticker.symbol.includes('JPY') ? (ticker.price ?? 0).toFixed(3) : (ticker.price ?? 0).toFixed(5)) :
+                       (ticker.price ?? 0) >= 1000 ? (ticker.price ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 }) :
+                       (ticker.price ?? 0).toFixed(4)}
                     </td>
                     <td className="text-right">
                       <span className={cn(
                         'inline-flex items-center gap-0.5 font-bold text-xs',
-                        ticker.changePct24h >= 0 ? 'text-emerald-400' : 'text-red-400'
+                        (ticker.changePct24h ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
                       )}>
-                        {ticker.changePct24h >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                        {Math.abs(ticker.changePct24h).toFixed(2)}%
+                        {(ticker.changePct24h ?? 0) >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                        {Math.abs(ticker.changePct24h ?? 0).toFixed(2)}%
                       </span>
                     </td>
                     <td className="text-right text-slate-400 text-xs hidden md:table-cell">
-                      {new Intl.NumberFormat('en', { notation:'compact', maximumFractionDigits:2 }).format(ticker.volume24h)}
+                      {new Intl.NumberFormat('en', { notation:'compact', maximumFractionDigits:2 }).format(ticker.volume24h ?? 0)}
                     </td>
                     <td className="text-right text-slate-400 text-xs hidden lg:table-cell">
                       {ticker.marketCap > 0 ? new Intl.NumberFormat('en', { notation:'compact', maximumFractionDigits:2 }).format(ticker.marketCap) : '—'}

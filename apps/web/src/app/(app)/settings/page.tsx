@@ -334,18 +334,12 @@ export default function SettingsPage() {
   const [biometric, setBiometric] = useState(false);
   
   const getInitialApiKeys = (): ApiKey[] => {
-    if (typeof window === 'undefined') return [
-      { id: 'key1', name: 'Alpaca Live Link', key: 'alp_live_••••••••••••••••3a9b', created: '2026-06-28' },
-      { id: 'key2', name: 'Binance Spot Key', key: 'bin_spot_••••••••••••••••e82d', created: '2026-06-25' },
-    ];
+    if (typeof window === 'undefined') return [];
     const saved = localStorage.getItem('trademind_apikeys');
     if (saved) {
       try { return JSON.parse(saved); } catch {}
     }
-    return [
-      { id: 'key1', name: 'Alpaca Live Link', key: 'alp_live_••••••••••••••••3a9b', created: '2026-06-28' },
-      { id: 'key2', name: 'Binance Spot Key', key: 'bin_spot_••••••••••••••••e82d', created: '2026-06-25' },
-    ];
+    return [];
   };
 
   const [apiKeys, setApiKeys] = useState<ApiKey[]>(getInitialApiKeys());
@@ -422,22 +416,12 @@ export default function SettingsPage() {
 
   // --- Activity Logs State & Helper ---
   const getInitialActivityLogs = () => {
-    if (typeof window === 'undefined') return [
-      { act: 'Password changed successfully', time: '18 days ago', dev: 'Chrome (Nairobi, KE)' },
-      { act: 'KYC Document submitted: Bank statement', time: 'Jun 22, 2026', dev: 'iPhone 15 Pro' },
-      { act: 'Connected API integrations: Alpaca Live Link', time: 'Jun 28, 2026', dev: 'MacOS Native' },
-      { act: 'Deposited funds: $5,000 USD via Visa', time: 'Jul 01, 2026', dev: 'Safari (Nairobi, KE)' },
-    ];
+    if (typeof window === 'undefined') return [];
     const saved = localStorage.getItem('trademind_activity_logs');
     if (saved) {
       try { return JSON.parse(saved); } catch {}
     }
-    return [
-      { act: 'Password changed successfully', time: '18 days ago', dev: 'Chrome (Nairobi, KE)' },
-      { act: 'KYC Document submitted: Bank statement', time: 'Jun 22, 2026', dev: 'iPhone 15 Pro' },
-      { act: 'Connected API integrations: Alpaca Live Link', time: 'Jun 28, 2026', dev: 'MacOS Native' },
-      { act: 'Deposited funds: $5,000 USD via Visa', time: 'Jul 01, 2026', dev: 'Safari (Nairobi, KE)' },
-    ];
+    return [];
   };
 
   const [activityLogs, setActivityLogs] = useState(getInitialActivityLogs());
@@ -670,8 +654,8 @@ export default function SettingsPage() {
                 </Badge>
               )}
             </div>
-            <p className="text-xs text-slate-400 font-mono">ID: TM-2026-000124 • Joined Jun 2026</p>
-            <p className="text-xs text-slate-500">Last login: Today, 09:21 AM ({profileData.timezone})</p>
+            <p className="text-xs text-slate-400 font-mono">Status: Verified Trader Account</p>
+            <p className="text-xs text-slate-500">Timezone: {profileData.timezone || 'UTC'}</p>
           </div>
         </div>
 
@@ -1625,39 +1609,8 @@ export default function SettingsPage() {
                           </button>
                         </div>
 
-                        <div className="overflow-x-auto">
-                          <table className="w-full data-table">
-                            <thead>
-                              <tr>
-                                <th className="text-left">Date</th>
-                                <th className="text-left">Details</th>
-                                <th className="text-right">Amount</th>
-                                <th className="text-center">Receipt</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {[
-                                { date: '2026-06-28', label: 'Pro Plan (Annual)', amount: '$480.00' },
-                                { date: '2026-05-28', label: 'Pro Plan (Monthly)', amount: '$49.00' },
-                                { date: '2026-04-28', label: 'Basic Plan (Monthly)', amount: '$20.00' },
-                              ].map((inv) => (
-                                <tr key={inv.date}>
-                                  <td className="text-slate-400 font-mono">{inv.date}</td>
-                                  <td className="text-slate-200 font-bold">{inv.label}</td>
-                                  <td className="text-right text-slate-300 font-semibold">{inv.amount}</td>
-                                  <td className="text-center">
-                                    <button
-                                      type="button"
-                                      onClick={() => toast.success('Invoice download initialized...')}
-                                      className="btn-ghost text-[10px] px-2.5 py-1 rounded-lg border border-white/5 cursor-pointer text-purple-400 hover:text-white"
-                                    >
-                                      PDF
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                        <div className="p-6 text-center text-xs text-slate-500 font-mono">
+                          No past billing invoices found. Active subscriptions and payments will appear here.
                         </div>
                       </motion.div>
                     </div>

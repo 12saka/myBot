@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  User, Mail, Phone, Lock, Sparkles, Shield,
+  User, Mail, Phone, Sparkles, Shield,
   CheckCircle, ArrowLeft, ArrowRight, TrendingUp,
   Award, BrainCircuit, Activity, Eye, EyeOff
 } from 'lucide-react';

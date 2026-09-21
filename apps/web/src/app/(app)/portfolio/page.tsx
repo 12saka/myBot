@@ -106,7 +106,7 @@ export default function PortfolioPage() {
   // Sharpe Ratio Calculation
   const getSharpeRatio = () => {
     if (!performanceHistory || performanceHistory.length < 3) {
-      return "2.14";
+      return "—";
     }
     const returns: number[] = [];
     for (let i = 1; i < performanceHistory.length; i++) {
@@ -116,19 +116,19 @@ export default function PortfolioPage() {
         returns.push((curr - prev) / prev);
       }
     }
-    if (returns.length < 2) return "2.14";
+    if (returns.length < 2) return "—";
     const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
     const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / returns.length;
     const stdDev = Math.sqrt(variance);
-    if (stdDev === 0) return "2.14";
+    if (stdDev === 0) return "—";
     const sharpe = (mean / stdDev) * Math.sqrt(252);
-    return isNaN(sharpe) ? "2.14" : sharpe.toFixed(2);
+    return isNaN(sharpe) ? "—" : sharpe.toFixed(2);
   };
 
   // Max Drawdown Calculation
   const getMaxDrawdown = () => {
     if (!performanceHistory || performanceHistory.length < 2) {
-      return "-4.5%";
+      return "—";
     }
     let peak = -Infinity;
     let maxDrawdown = 0;
@@ -172,7 +172,7 @@ export default function PortfolioPage() {
         />
         <StatCard
           label="Sharpe Ratio" value={getSharpeRatio()}
-          subValue="Real risk-adjusted metric"
+          subValue="Annualized risk-adjusted return"
           icon={Shield} iconColor="#38bdf8" accentColor="rgba(56,189,248,0.5)" glowColor="cyan"
         />
         <StatCard
@@ -340,19 +340,23 @@ export default function PortfolioPage() {
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-8 w-full max-w-2xl">
                             <div>
                               <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Average Entry (EP)</span>
-                              <span className="font-mono font-semibold text-white">${pos.avgPrice.toLocaleString()}</span>
+                              <span className="font-mono font-semibold text-white">${(pos.avgPrice ?? 0).toLocaleString()}</span>
                             </div>
                             <div>
                               <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Stop Loss (SL)</span>
-                              <span className="font-mono font-semibold text-red-400">${(pos.avgPrice * 0.95).toLocaleString()}</span>
+                              <span className="font-mono font-semibold text-red-400">
+                                {(pos as any).stopLoss ? `$${Number((pos as any).stopLoss).toLocaleString()}` : 'None'}
+                              </span>
                             </div>
                             <div>
                               <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Take Profit (TP)</span>
-                              <span className="font-mono font-semibold text-emerald-400">${(pos.avgPrice * 1.10).toLocaleString()}</span>
+                              <span className="font-mono font-semibold text-emerald-400">
+                                {(pos as any).takeProfit ? `$${Number((pos as any).takeProfit).toLocaleString()}` : 'None'}
+                              </span>
                             </div>
                             <div>
-                              <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Risk Reward Ratio</span>
-                              <span className="font-semibold text-slate-300">1:2.0</span>
+                              <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Status</span>
+                              <span className="font-semibold text-slate-300">Active</span>
                             </div>
                           </div>
                           

@@ -86,7 +86,7 @@ export default function AutomationPage() {
       setLoadState('ready');
     } catch (err: any) {
       console.warn('[Automation] Load notice:', err);
-      setErrorMessage(err.message || 'Cannot reach API Gateway at http://localhost:4000');
+      setErrorMessage(err.message || 'Unable to connect to trading automation service. Please try again.');
       setLoadState('error');
     }
   };
@@ -103,7 +103,7 @@ export default function AutomationPage() {
     try {
       const res = await apiFetch<any>(`/api/v2/automation/rules/${rule.id}/toggle`, { method: 'PATCH' });
       setUserRules(prev => prev.map(r => r.id === rule.id ? { ...r, isActive: !r.isActive } : r));
-      toast.success(res.message || 'Rule status updated in DB!', { id: toastId });
+      toast.success(res.message || 'Automation rule updated.', { id: toastId });
     } catch (err: any) {
       toast.error(err.message || 'Failed to toggle rule state.', { id: toastId });
     }
@@ -114,7 +114,7 @@ export default function AutomationPage() {
       return;
     }
     setIsEmergencyStopping(true);
-    const toastId = toast.loading('Engaging Hardware Kill Switch...');
+    const toastId = toast.loading('Activating Emergency Kill Switch...');
     try {
       const res = await apiFetch<any>('/api/v2/automation/emergency-kill-switch', { method: 'POST' });
       toast.success(res.message || 'Emergency Kill Switch engaged!', { id: toastId });
@@ -143,7 +143,7 @@ export default function AutomationPage() {
   const handleSaveRule = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
-    const toastId = toast.loading('Saving automation rule to backend database...');
+    const toastId = toast.loading('Saving automation rule...');
     try {
       const created = await apiFetch<AutomationRule>('/api/v2/automation/rules', {
         method: 'POST',
@@ -157,7 +157,7 @@ export default function AutomationPage() {
         })
       });
       setUserRules(prev => [created, ...prev]);
-      toast.success(`Automation rule "${created.name}" created and saved to DB!`, { id: toastId });
+      toast.success(`Automation rule "${created.name}" activated!`, { id: toastId });
     } catch (err: any) {
       toast.error(err.message || 'Failed to save automation rule.', { id: toastId });
     } finally {
@@ -475,9 +475,9 @@ export default function AutomationPage() {
                         ${Number(order.price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
                       <td className="py-3 font-mono text-[10px] text-slate-400">
-                        <span className="text-rose-400">SL: ${order.stopLoss || 'None'}</span>
+                        <span className="text-rose-400">SL: {order.stopLoss ? `$${order.stopLoss}` : 'None'}</span>
                         <span className="mx-1">•</span>
-                        <span className="text-emerald-400">TP: ${order.takeProfit || 'None'}</span>
+                        <span className="text-emerald-400">TP: {order.takeProfit ? `$${order.takeProfit}` : 'None'}</span>
                       </td>
                       <td className="py-3">
                         <span className={cn(
@@ -495,7 +495,7 @@ export default function AutomationPage() {
                         </span>
                       </td>
                       <td className="py-3 text-[11px] text-slate-400 font-mono">
-                        {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        {order.createdAt ? new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
                       </td>
                     </tr>
                   );

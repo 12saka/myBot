@@ -28,7 +28,7 @@ export default function InstructorDailyUpdatesPage() {
 
   // QOTD Modal State
   const [qotdModal, setQotdModal] = useState(false);
-  const [qotdTitle, setQotdTitle] = useState("Today's Trading Challenge 🧠");
+  const [qotdTitle, setQotdTitle] = useState("Today's Trading Challenge");
   const [qotdText, setQotdText] = useState('');
   const [qotdChartUrl, setQotdChartUrl] = useState('');
   const [qotdOptions, setQotdOptions] = useState<string[]>(['', '', '', '']);
