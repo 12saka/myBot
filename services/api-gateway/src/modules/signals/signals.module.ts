@@ -179,11 +179,39 @@ export class SignalsController implements OnModuleInit {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Request generation of a fresh AI trading signal for a specific market' })
   async generateSignal(@Req() req: any, @Body() dto: { symbol: string; interval?: string; forceFresh?: boolean }) {
+    const symbol = this.normalizeSymbol(dto.symbol);
+
+    // 1. FIRST PRIORITY: Fail-fast market open check.
+    // If the market is closed, immediately return without consuming quota or executing any candle/indicator analysis!
+    const marketCheck = this.isMarketOpen(symbol);
+    if (!marketCheck.isOpen) {
+      console.log(`[SIGNALS GATEWAY] Immediate rejection for ${symbol}: Market Closed (${marketCheck.reason})`);
+      return {
+        id: `closed-${symbol.toLowerCase()}-${Date.now()}`,
+        symbol,
+        direction: 'WAIT',
+        entryPrice: 0,
+        stopLoss: 0,
+        takeProfit1: 0,
+        takeProfit2: 0,
+        riskRewardRatio: 0,
+        winProbability: 0,
+        durationEstimate: 'Market Closed',
+        aiReasoning: {
+          status: 'MARKET_CLOSED',
+          explanation: marketCheck.reason,
+          indicators: ['Market Closed'],
+          timeframe: dto.interval || '15m'
+        },
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 2 * 3600 * 1000)
+      };
+    }
+
     const userId = req.user?.userId;
     if (userId) {
       await this.entitlementService.checkAndConsumeSignal(userId);
     }
-    const symbol = this.normalizeSymbol(dto.symbol);
     return this.generateSignalRequest(symbol, dto.interval || '15m', dto.forceFresh ?? false, userId);
   }
 
@@ -203,30 +231,82 @@ export class SignalsController implements OnModuleInit {
     const cleanSym = symbol.toUpperCase().trim();
     const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => cleanSym.includes(c));
     if (isCrypto) {
-      return { isOpen: true }; // Crypto trades 24/7
+      return { isOpen: true }; // Crypto trades 24/7/365
     }
 
     const now = new Date();
-    const day = now.getUTCDay(); // 0 = Sunday, 6 = Saturday
+    const day = now.getUTCDay(); // 0 = Sunday, 1 = Monday ... 5 = Friday, 6 = Saturday
     const hour = now.getUTCHours();
+    const minute = now.getUTCMinutes();
+    const timeMinutes = hour * 60 + minute;
 
-    // Weekend Market Closure (Friday 22:00 UTC to Sunday 22:00 UTC)
+    // US Stocks (Equities: AAPL, TSLA, NVDA, MSFT, AMZN)
+    const isStock = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'].includes(cleanSym);
+    if (isStock) {
+      if (day === 0 || day === 6) {
+        return {
+          isOpen: false,
+          reason: `US Equities market for ${symbol} is closed for the weekend. Regular trading hours: Mon–Fri 9:30 AM – 4:00 PM EST (13:30 – 20:00 UTC).`
+        };
+      }
+      // 13:30 UTC = 810 mins, 20:00 UTC = 1200 mins
+      if (timeMinutes < 810 || timeMinutes >= 1200) {
+        return {
+          isOpen: false,
+          reason: `US Equities market for ${symbol} is closed. Regular trading session runs 9:30 AM – 4:00 PM EST (13:30 – 20:00 UTC).`
+        };
+      }
+      return { isOpen: true };
+    }
+
+    // Gold & Metals (XAU/USD, GOLD)
+    const isGold = cleanSym.includes('XAU') || cleanSym.includes('GOLD');
+    if (isGold) {
+      if (day === 6) {
+        return {
+          isOpen: false,
+          reason: `Metals market for ${symbol} is closed on Saturdays. Bullion trading reopens Sunday at 23:00 UTC.`
+        };
+      }
+      if (day === 0 && hour < 23) {
+        return {
+          isOpen: false,
+          reason: `Metals market for ${symbol} is closed. Bullion trading reopens Sunday at 23:00 UTC.`
+        };
+      }
+      if (day === 5 && hour >= 22) {
+        return {
+          isOpen: false,
+          reason: `Metals market for ${symbol} closed for the weekend on Friday at 22:00 UTC.`
+        };
+      }
+      // Daily maintenance break: 21:00 - 22:00 UTC (Mon-Thu)
+      if (day >= 1 && day <= 4 && hour === 21) {
+        return {
+          isOpen: false,
+          reason: `Metals market for ${symbol} is in daily settlement halt (21:00 – 22:00 UTC). Trading resumes at 22:00 UTC.`
+        };
+      }
+      return { isOpen: true };
+    }
+
+    // Weekend Market Closure for Forex & Indices (Friday 22:00 UTC to Sunday 22:00 UTC)
     if (day === 6) {
       return {
         isOpen: false,
-        reason: `Market for ${symbol} is closed on Saturdays. Traditional markets reopen Sunday at 22:00 UTC.`
+        reason: `Traditional market for ${symbol} is closed on Saturdays. Markets reopen Sunday at 22:00 UTC.`
       };
     }
     if (day === 0 && hour < 22) {
       return {
         isOpen: false,
-        reason: `Market for ${symbol} is currently closed. Traditional markets reopen Sunday at 22:00 UTC.`
+        reason: `Traditional market for ${symbol} is closed. Global trading reopens Sunday at 22:00 UTC.`
       };
     }
     if (day === 5 && hour >= 22) {
       return {
         isOpen: false,
-        reason: `Market for ${symbol} closed for the weekend at Friday 22:00 UTC.`
+        reason: `Traditional market for ${symbol} closed for the weekend on Friday at 22:00 UTC.`
       };
     }
 
@@ -751,12 +831,12 @@ export class SignalsController implements OnModuleInit {
   private getYahooTicker(symbol: string): string {
     const u = (symbol || '').toUpperCase().trim();
     const mappings: Record<string, string> = {
-      'US30': '^DJI',
-      'DOW': '^DJI',
-      'US100': '^NDX',
-      'NAS': '^NDX',
-      'SPX500': '^GSPC',
-      'SP500': '^GSPC',
+      'US30': 'YM=F',
+      'DOW': 'YM=F',
+      'US100': 'NQ=F',
+      'NAS': 'NQ=F',
+      'SPX500': 'ES=F',
+      'SP500': 'ES=F',
       'DAX40': '^GDAXI',
       'GOLD': 'GC=F',
       'XAU/USD': 'GC=F',
@@ -1429,12 +1509,14 @@ export class SignalsController implements OnModuleInit {
     entryCondition: string;
   } {
     const distFromEma = Math.abs(currentPrice - ema20);
-    const isExtended = distFromEma > (atr * 0.20);
+    // Only flag as extended if price is genuinely stretched > 0.85x ATR away from EMA-20 (exhaustion zone).
+    // Within 0.85x ATR, price is in optimal momentum continuation flow and executes directly at MARKET_NOW.
+    const isExtended = distFromEma > (atr * 0.85);
 
     if (direction === 'BUY') {
       if (isExtended && currentPrice > ema20) {
-        // Price has extended higher — do not chase! Provide a BUY LIMIT on pullback
-        const limitPrice = parseFloat(Math.max(ema20, currentPrice - (atr * 0.30)).toFixed(precision));
+        // Price has extended into exhaustion — provide a BUY LIMIT on pullback to value
+        const limitPrice = parseFloat(Math.max(ema20, currentPrice - (atr * 0.40)).toFixed(precision));
         const lower = (limitPrice - (atr * 0.12)).toFixed(precision);
         const upper = (limitPrice + (atr * 0.12)).toFixed(precision);
         return {
@@ -1455,8 +1537,8 @@ export class SignalsController implements OnModuleInit {
       }
     } else {
       if (isExtended && currentPrice < ema20) {
-        // Price has dumped lower — provide a SELL LIMIT on relief retrace
-        const limitPrice = parseFloat(Math.min(ema20, currentPrice + (atr * 0.30)).toFixed(precision));
+        // Price has dumped into exhaustion — provide a SELL LIMIT on relief retrace to value
+        const limitPrice = parseFloat(Math.min(ema20, currentPrice + (atr * 0.40)).toFixed(precision));
         const lower = (limitPrice - (atr * 0.12)).toFixed(precision);
         const upper = (limitPrice + (atr * 0.12)).toFixed(precision);
         return {
@@ -2675,16 +2757,17 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 0.7, isScalp ? 12 : 25), isScalp ? 25 : 50);
+    // Institutional Calibration: Clear 5-minute wicks and index noise (60-110 pts scalp, 110-220 pts day/swing)
+    const slDist = Math.min(Math.max(atr * 0.85, isScalp ? 60 : 110), isScalp ? 110 : 220);
 
-    // Structure Invalidation SL (Adaptive Session Swing Window)
+    // Structure Invalidation SL (Adaptive Session Swing Window with 0.35x ATR buffer)
     const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
-      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.35))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.35));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
@@ -2973,16 +3056,17 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based for US30)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 0.7, isScalp ? 18 : 38), isScalp ? 38 : 75);
+    // Institutional Calibration: Clear 5-minute wicks and Dow Jones noise (80-160 pts scalp, 160-320 pts day/swing)
+    const slDist = Math.min(Math.max(atr * 0.85, isScalp ? 80 : 160), isScalp ? 160 : 320);
 
-    // Structure Invalidation SL (Adaptive Session Swing Window)
+    // Structure Invalidation SL (Adaptive Session Swing Window with 0.35x ATR buffer)
     const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY' 
-      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
-      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.35))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.35));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
@@ -3736,15 +3820,15 @@ export class SignalsController implements OnModuleInit {
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const isSpx = symbol.toUpperCase().includes('SPX');
     const slDist = isSpx 
-      ? Math.min(Math.max(atr * 0.7, isScalp ? 3.0 : 6.0), isScalp ? 6.5 : 12.0)
-      : Math.min(Math.max(atr * 0.7, isScalp ? 10.0 : 20.0), isScalp ? 22.0 : 45.0);
+      ? Math.min(Math.max(atr * 0.85, isScalp ? 18.0 : 35.0), isScalp ? 35.0 : 70.0)
+      : Math.min(Math.max(atr * 0.85, isScalp ? 25.0 : 45.0), isScalp ? 50.0 : 90.0);
 
     const lowestLow = Math.min(...recentLows);
     const highestHigh = Math.max(...recentHighs);
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
-      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.35))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.35));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 1.5) : effectiveEntry - (effectiveSlDist * 1.5);
@@ -4390,21 +4474,21 @@ export class SignalsController implements OnModuleInit {
     const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
     const effectiveEntry = precisionOrder.entryPrice;
 
-    // 9. Exact Targets: Tight Structural SL for Gold ($3.50 - $6.50 scalp, $6.00 - $12.00 swing)
+    // 9. Exact Targets: Institutional Structural SL for Gold ($6.50 - $12.00 scalp, $14.00 - $25.00 swing)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(
-      Math.max(atr * 0.65, isScalp ? 2.20 : 4.50),
-      isScalp ? 4.50 : 8.50
+      Math.max(atr * 0.85, isScalp ? 6.50 : 14.00),
+      isScalp ? 12.00 : 25.00
     );
 
-    // Structure Invalidation SL (Adaptive Session Swing Window with tight ATR buffer)
+    // Structure Invalidation SL (Adaptive Session Swing Window with 0.35x ATR buffer)
     const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 16));
     const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
     const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
 
     const stopLoss = direction === 'BUY'
-      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.2))
-      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.2));
+      ? Math.max(effectiveEntry - slDist, lowestLow - (atr * 0.35))
+      : Math.min(effectiveEntry + slDist, highestHigh + (atr * 0.35));
 
     const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
     const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);

@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly redis: RedisService,
   ) {}
 
   // Master privilege elevation
@@ -259,7 +261,13 @@ export class AdminService {
     if (!user) throw new NotFoundException('User not found.');
 
     const updateData: any = {};
-    if (payload.role) updateData.role = payload.role;
+    if (payload.role) {
+      const validRoles = ['SUPER_ADMIN', 'ADMIN', 'INSTRUCTOR', 'COMPLIANCE_OFFICER', 'SUPPORT_AGENT', 'TRADER', 'USER', 'INVESTOR', 'GUEST'];
+      if (!validRoles.includes(payload.role)) {
+        throw new BadRequestException(`Invalid role: ${payload.role}. Allowed: ${validRoles.join(', ')}`);
+      }
+      updateData.role = payload.role as any;
+    }
 
     const updatedUser = await this.prisma.user.update({
       where: { id: targetUserId },
@@ -346,6 +354,9 @@ export class AdminService {
         },
       });
     }
+
+    // Immediately revoke all active sessions in Redis so they are terminated in real time
+    await this.redis.revokeAllUserSessions(targetUserId).catch(() => null);
 
     await this.prisma.auditLog.create({
       data: {

@@ -48,19 +48,53 @@ export class MarketsController {
       'USD/JPY': { name: 'US Dollar / Yen',  marketCap: 0, type: 'forex' },
     };
 
-    return list.map(item => {
-      const info = meta[item.symbol] || { name: item.symbol, marketCap: 0, type: 'crypto' as const };
-      const cache = stats[item.symbol];
+    // Canonicalize symbols and deduplicate to eliminate stale non-standard aliases (e.g. legacy 'ETH' at 3250 vs live 'ETH/USD')
+    const canonicalMap = new Map<string, any>();
+    for (const item of list) {
+      let norm = item.symbol.toUpperCase();
+      if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(norm)) norm = `${norm}/USD`;
+      if (norm === 'GOLD') norm = 'XAU/USD';
+
+      const cache = stats[norm] || stats[item.symbol];
       const livePrice = cache && cache.price > 0 ? cache.price : (item.bidPrice > 0 ? item.bidPrice : 0);
+      const ageMs = Date.now() - new Date(item.lastUpdated).getTime();
+      const isLive = ageMs < 180_000 || (cache && cache.price > 0);
+
+      const candidate = {
+        item,
+        symbol: norm,
+        livePrice,
+        cache,
+        isLive,
+        ageMs
+      };
+
+      if (canonicalMap.has(norm)) {
+        const existing = canonicalMap.get(norm);
+        // Prefer live and fresh over stale
+        if (candidate.isLive && !existing.isLive) {
+          canonicalMap.set(norm, candidate);
+        } else if (candidate.isLive === existing.isLive) {
+          // If both live or both stale, prefer exact canonical symbol name ('ETH/USD' over 'ETH')
+          if (item.symbol === norm && existing.item.symbol !== norm) {
+            canonicalMap.set(norm, candidate);
+          } else if (candidate.ageMs < existing.ageMs) {
+            canonicalMap.set(norm, candidate);
+          }
+        }
+      } else {
+        canonicalMap.set(norm, candidate);
+      }
+    }
+
+    return Array.from(canonicalMap.values()).map(({ item, symbol, livePrice, cache, isLive }) => {
+      const info = meta[symbol] || meta[item.symbol] || { name: symbol, marketCap: 0, type: 'crypto' as const };
       const isCrypto = info.type === 'crypto';
       const isForex = info.type === 'forex';
-      const ageMs = Date.now() - new Date(item.lastUpdated).getTime();
-      const isLive = ageMs < 120_000;
-
       const source = isCrypto ? 'binance' : isForex ? 'open-er-api' : isLive ? 'stooq' : 'stale-cache';
 
       return {
-        symbol: item.symbol,
+        symbol,
         name: info.name,
         price: livePrice,
         changePct24h: cache ? (cache.changePct24h ?? 0) : 0,

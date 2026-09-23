@@ -80,7 +80,8 @@ export class MarketsService implements OnModuleInit {
             { symbol: 'XAU/USD', bidPrice: { gt: 15000 } },
             { symbol: 'GOLD', bidPrice: { lt: 1000 } },
             { symbol: 'GOLD', bidPrice: { gt: 15000 } },
-            { bidPrice: 100 }
+            { bidPrice: 100 },
+            { symbol: { in: ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'GOLD'] } }
           ]
         }
       }).catch(() => {});
@@ -109,12 +110,12 @@ export class MarketsService implements OnModuleInit {
 
   public getYahooTicker(symbol: string): string {
     const map: Record<string, string> = {
-      'US30': '^DJI',
-      'DOW': '^DJI',
-      'US100': '^NDX',
-      'NAS': '^NDX',
-      'SPX500': '^GSPC',
-      'SP500': '^GSPC',
+      'US30': 'YM=F',
+      'DOW': 'YM=F',
+      'US100': 'NQ=F',
+      'NAS': 'NQ=F',
+      'SPX500': 'ES=F',
+      'SP500': 'ES=F',
       'DAX40': '^GDAXI',
       'GOLD': 'GC=F',
       'XAU/USD': 'GC=F',

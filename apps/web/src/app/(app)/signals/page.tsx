@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, BrainCircuit, TrendingUp, TrendingDown,
-  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles, AlertTriangle, Trophy, Target, Bell, BellRing, Copy
+  Clock, Shield, Filter, ChevronDown, BarChart3, X, Trash2, Maximize2, Minimize2, Plus, Eye, Loader2, RefreshCw, Sparkles, AlertTriangle, Trophy, Target, Bell, BellRing, Copy, CheckCircle2
 } from 'lucide-react';
 import { useAIStore, AISignal } from '@/store/useAIStore';
 import { useMarketStore } from '@/store/useMarketStore';
@@ -98,7 +98,13 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
       {/* Top indicator bar */}
       <div
         className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl"
-        style={{ background: isBuy ? 'linear-gradient(90deg, #10b981, transparent)' : 'linear-gradient(90deg, #ef4444, transparent)' }}
+        style={{
+          background: (signal.status === 'HIT_TP1' || signal.status === 'HIT_TP2' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP1' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP2')
+            ? 'linear-gradient(90deg, #10b981, #34d399)'
+            : isBuy
+            ? 'linear-gradient(90deg, #10b981, transparent)'
+            : 'linear-gradient(90deg, #ef4444, transparent)'
+        }}
       />
 
       {/* Delete / Dismiss button in top corner */}
@@ -150,6 +156,18 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
               TF: {signal.aiReasoning?.timeframe || '15m'}
             </span>
+            {(signal.status === 'HIT_TP1' || signal.status === 'HIT_TP2' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP1' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP2') && (
+              <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-black bg-emerald-500/25 text-emerald-300 border border-emerald-500/50 flex items-center gap-1.5 shadow-sm shadow-emerald-500/20 animate-pulse">
+                <CheckCircle2 size={12} className="text-emerald-400" />
+                TARGET REACHED (+{signal.riskReward} R:R)
+              </span>
+            )}
+            {(signal.status === 'HIT_SL' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_SL') && (
+              <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-black bg-red-500/25 text-red-300 border border-red-500/50 flex items-center gap-1.5 shadow-sm shadow-red-500/20">
+                <AlertTriangle size={12} className="text-red-400" />
+                STOP LOSS HIT
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] text-slate-500">{signal.strategy}</span>
@@ -251,15 +269,24 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
                   <span className="text-[9px] font-mono text-slate-500 mt-0.5">Execution Base</span>
                 </div>
 
-                <div className="p-2.5 rounded-xl bg-red-950/20 border border-red-500/25 flex flex-col justify-between">
+                <div className={cn(
+                  "p-2.5 rounded-xl border flex flex-col justify-between transition-all",
+                  (signal.status === 'HIT_SL' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_SL')
+                    ? "bg-red-500/20 border-2 border-red-400 shadow-md shadow-red-500/20"
+                    : "bg-red-950/20 border-red-500/25"
+                )}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-red-400 flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
                       Stop Loss
                     </span>
-                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-red-500/20 text-red-300">
-                      {slDiffText}
-                    </span>
+                    {(signal.status === 'HIT_SL' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_SL') ? (
+                      <span className="text-[8px] font-mono font-black text-white bg-red-500 px-1.5 py-0.2 rounded shadow-sm">HIT</span>
+                    ) : (
+                      <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-red-500/20 text-red-300">
+                        {slDiffText}
+                      </span>
+                    )}
                   </div>
                   <span className="font-mono font-black text-sm sm:text-base text-red-400 tracking-tight leading-tight">
                     {prefix}{fmt(signal.stopLoss)}
@@ -270,10 +297,19 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
 
               {/* Tier 2: Take Profit Targets (Clear, 2 or 3 Columns) */}
               <div className={cn("grid gap-2", signal.tp3 ? "grid-cols-3" : "grid-cols-2")}>
-                <div className="p-2 rounded-xl bg-emerald-950/20 border border-emerald-500/25 flex flex-col justify-between">
+                <div className={cn(
+                  "p-2 rounded-xl flex flex-col justify-between transition-all",
+                  (signal.status === 'HIT_TP1' || signal.status === 'HIT_TP2' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP1' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP2')
+                    ? "bg-emerald-500/20 border-2 border-emerald-400 shadow-md shadow-emerald-500/20"
+                    : "bg-emerald-950/20 border border-emerald-500/25"
+                )}>
                   <div className="flex items-center justify-between mb-0.5">
                     <span className="text-[9px] font-mono font-bold uppercase text-emerald-400">Target 1 (TP1)</span>
-                    <span className="text-[8px] font-mono font-bold text-emerald-300">{tp1GainText}</span>
+                    {(signal.status === 'HIT_TP1' || signal.status === 'HIT_TP2' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP1' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP2') ? (
+                      <span className="text-[8px] font-mono font-black text-slate-950 bg-emerald-400 px-1.5 py-0.2 rounded shadow-sm">✓ REACHED</span>
+                    ) : (
+                      <span className="text-[8px] font-mono font-bold text-emerald-300">{tp1GainText}</span>
+                    )}
                   </div>
                   <span className="font-mono font-bold text-xs sm:text-sm text-emerald-400 tracking-tight">
                     {prefix}{fmt(signal.tp1)}
@@ -281,10 +317,19 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
                   <span className="text-[8px] font-mono text-emerald-400/70">Main Profit Lock</span>
                 </div>
 
-                <div className="p-2 rounded-xl bg-emerald-950/20 border border-emerald-500/25 flex flex-col justify-between">
+                <div className={cn(
+                  "p-2 rounded-xl flex flex-col justify-between transition-all",
+                  ((signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP2')
+                    ? "bg-emerald-500/20 border-2 border-emerald-400 shadow-md shadow-emerald-500/20"
+                    : "bg-emerald-950/20 border border-emerald-500/25"
+                )}>
                   <div className="flex items-center justify-between mb-0.5">
                     <span className="text-[9px] font-mono font-bold uppercase text-emerald-300">Target 2 (TP2)</span>
-                    <span className="text-[8px] font-mono font-bold text-emerald-300">{tp2GainText}</span>
+                    {((signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP2') ? (
+                      <span className="text-[8px] font-mono font-black text-slate-950 bg-emerald-400 px-1.5 py-0.2 rounded shadow-sm">✓ REACHED</span>
+                    ) : (
+                      <span className="text-[8px] font-mono font-bold text-emerald-300">{tp2GainText}</span>
+                    )}
                   </div>
                   <span className="font-mono font-bold text-xs sm:text-sm text-emerald-300 tracking-tight">
                     {prefix}{fmt(signal.tp2)}
@@ -650,6 +695,90 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
   );
 }
 
+function isMarketOpenLocal(symbol: string): { isOpen: boolean; reason: string } {
+  const cleanSym = (symbol || '').toUpperCase().trim();
+  const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => cleanSym.includes(c));
+  if (isCrypto) {
+    return { isOpen: true, reason: 'Crypto trades 24/7/365' };
+  }
+
+  const now = new Date();
+  const day = now.getUTCDay(); // 0 = Sunday, 1 = Monday ... 5 = Friday, 6 = Saturday
+  const hour = now.getUTCHours();
+  const minute = now.getUTCMinutes();
+  const timeMinutes = hour * 60 + minute;
+
+  // US Stocks (Equities: AAPL, TSLA, NVDA, MSFT, AMZN)
+  const isStock = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'].includes(cleanSym);
+  if (isStock) {
+    if (day === 0 || day === 6) {
+      return {
+        isOpen: false,
+        reason: `US Equities market for ${symbol} is closed for the weekend. Regular trading: Mon–Fri 9:30 AM – 4:00 PM EST (13:30 – 20:00 UTC).`
+      };
+    }
+    if (timeMinutes < 810 || timeMinutes >= 1200) {
+      return {
+        isOpen: false,
+        reason: `US Equities market for ${symbol} is closed. Regular trading session: Mon–Fri 9:30 AM – 4:00 PM EST (13:30 – 20:00 UTC).`
+      };
+    }
+    return { isOpen: true, reason: 'US Equities Session Active' };
+  }
+
+  // Metals / Gold (XAU/USD, GOLD)
+  const isGold = cleanSym.includes('XAU') || cleanSym.includes('GOLD');
+  if (isGold) {
+    if (day === 6) {
+      return {
+        isOpen: false,
+        reason: `Metals market for ${symbol} is closed on Saturdays. Bullion trading reopens Sunday at 23:00 UTC.`
+      };
+    }
+    if (day === 0 && hour < 23) {
+      return {
+        isOpen: false,
+        reason: `Metals market for ${symbol} is closed. Bullion trading reopens Sunday at 23:00 UTC.`
+      };
+    }
+    if (day === 5 && hour >= 22) {
+      return {
+        isOpen: false,
+        reason: `Metals market for ${symbol} closed for the weekend on Friday at 22:00 UTC.`
+      };
+    }
+    if (day >= 1 && day <= 4 && hour === 21) {
+      return {
+        isOpen: false,
+        reason: `Metals market for ${symbol} is in daily settlement halt (21:00 – 22:00 UTC). Trading resumes at 22:00 UTC.`
+      };
+    }
+    return { isOpen: true, reason: 'Metals Market Active' };
+  }
+
+  // Traditional Markets (Forex & Indices)
+  if (day === 6) {
+    return {
+      isOpen: false,
+      reason: `Traditional market for ${symbol} is closed on Saturdays. Markets reopen Sunday at 22:00 UTC.`
+    };
+  }
+  if (day === 0 && hour < 22) {
+    return {
+      isOpen: false,
+      reason: `Traditional market for ${symbol} is closed. Global trading reopens Sunday at 22:00 UTC.`
+    };
+  }
+  if (day === 5 && hour >= 22) {
+    return {
+      isOpen: false,
+      reason: `Traditional market for ${symbol} closed for the weekend on Friday at 22:00 UTC.`
+    };
+  }
+
+  return { isOpen: true, reason: 'Market Active' };
+}
+
 const AVAILABLE_MARKETS = [
   { name: 'Bitcoin', symbol: 'BTC/USD', type: 'crypto' },
   { name: 'Ethereum', symbol: 'ETH/USD', type: 'crypto' },
@@ -730,31 +859,85 @@ export default function SignalsPage() {
 
       for (const sig of activeList) {
         if (sig.direction === 'WAIT' || !sig.entry || !sig.tp1) continue;
+        if (sig.status === 'HIT_TP1' || sig.status === 'HIT_TP2' || sig.status === 'HIT_SL') continue;
 
-        const norm = sig.symbol.replace('/USD', '').toUpperCase();
-        const ticker = tickers.find((t) => t.symbol.toUpperCase().replace('/USD', '') === norm || t.symbol.toUpperCase() === norm);
-        if (!ticker || !ticker.price) continue;
+        // Strict exact symbol matching to avoid Ethereum/crypto dummy matching
+        const norm = sig.symbol.trim().toUpperCase();
+        const baseNorm = norm.replace('/USD', '');
+        
+        // Find matching live ticker: exact match first with isLive !== false
+        const ticker = tickers.find((t) => 
+          (t.symbol.toUpperCase() === norm || t.symbol.toUpperCase() === `${baseNorm}/USD`) &&
+          t.price > 0 &&
+          (t as any).isLive !== false
+        ) || tickers.find((t) => t.symbol.toUpperCase() === norm && t.price > 0);
+
+        if (!ticker || !ticker.price || ticker.price <= 0) continue;
 
         const curr = ticker.price;
+        
+        // Plausibility check: ignore wildly divergent bad ticks (>15% jump for intraday setup)
+        const priceDev = Math.abs(curr - sig.entry) / sig.entry;
+        if (priceDev > 0.15) continue;
+
         const isBuy = sig.direction === 'BUY';
-        const hitTP = isBuy ? curr >= sig.tp1 : curr <= sig.tp1;
+        const hitTP1 = isBuy ? curr >= sig.tp1 : curr <= sig.tp1;
+        const hitTP2 = sig.tp2 ? (isBuy ? curr >= sig.tp2 : curr <= sig.tp2) : false;
+        const hitSL = sig.stopLoss ? (isBuy ? curr <= sig.stopLoss : curr >= sig.stopLoss) : false;
 
-        if (hitTP) {
+        if (hitTP1 || hitTP2) {
           playSignalChime('TP_HIT');
-          sendDeviceNotification(`Take Profit Hit: ${sig.symbol}!`, {
-            body: `${sig.direction} target achieved at ${sig.tp1} (+${sig.riskReward} R:R). Generating next fresh signal...`,
-          });
-          toast.success(`TARGET HIT on ${sig.symbol} at ${sig.tp1}! Closed in full profit (+${sig.riskReward}). Generating replacement signal...`, {
-            duration: 6000,
+          const outcome: 'HIT_TP1' | 'HIT_TP2' = hitTP2 ? 'HIT_TP2' : 'HIT_TP1';
+          const targetPrice = hitTP2 ? sig.tp2 : sig.tp1;
+
+          sendDeviceNotification(`🎯 ${sig.symbol}: Target Hit!`, {
+            body: `${sig.direction} target achieved at ${targetPrice} (+${sig.riskReward} R:R).`,
           });
 
-          // Dismiss the hit signal from active view while preserving database history
-          setSignals(signals.filter(s => s.id !== sig.id));
+          // Single clean toast without noisy "Generating replacement signal..."
+          toast.success(`🎯 TARGET HIT: ${sig.symbol} reached ${targetPrice}! (+${sig.riskReward} R:R profit secured)`, {
+            id: `tp-hit-${sig.id}`,
+            duration: 5000,
+          });
 
-          // Immediately generate replacement fresh signal
-          setTimeout(() => {
-            handleGenerateSignalSilent(sig.symbol);
-          }, 1000);
+          // Update the signal in place so the card indicates the win rather than deleting it!
+          setSignals(useAIStore.getState().signals.map(s => {
+            if (s.id === sig.id) {
+              return {
+                ...s,
+                status: outcome,
+                outcome,
+                aiReasoning: {
+                  ...(typeof s.aiReasoning === 'object' ? s.aiReasoning : {}),
+                  status: outcome,
+                  outcomeResolution: outcome,
+                  resolvedAt: new Date().toISOString(),
+                  resolvedPrice: curr
+                }
+              };
+            }
+            return s;
+          }));
+          break;
+        } else if (hitSL) {
+          // Update as HIT_SL in place
+          setSignals(useAIStore.getState().signals.map(s => {
+            if (s.id === sig.id) {
+              return {
+                ...s,
+                status: 'HIT_SL',
+                outcome: 'HIT_SL',
+                aiReasoning: {
+                  ...(typeof s.aiReasoning === 'object' ? s.aiReasoning : {}),
+                  status: 'HIT_SL',
+                  outcomeResolution: 'HIT_SL',
+                  resolvedAt: new Date().toISOString(),
+                  resolvedPrice: curr
+                }
+              };
+            }
+            return s;
+          }));
           break;
         }
       }
@@ -762,7 +945,7 @@ export default function SignalsPage() {
 
     const interval = setInterval(checkTargets, 2500);
     return () => clearInterval(interval);
-  }, [tickers]);
+  }, [tickers, setSignals]);
 
   const filtered = signals.filter(s => {
     if (activeTab !== 'all' && s.type !== activeTab) return false;
@@ -794,10 +977,10 @@ export default function SignalsPage() {
         ? userWatchlist
         : AVAILABLE_MARKETS.map(m => m.symbol);
 
-      // Only target symbols that DO NOT already have an active locked signal
+      // Only target symbols that DO NOT already have an active locked signal and whose markets are currently OPEN
       const existingSymbols = new Set(signals.map(s => s.symbol));
-      const unanalyzed = sourceList.filter(s => !existingSymbols.has(s));
-      if (unanalyzed.length === 0) return; // All tracked markets already have locked institutional signals
+      const unanalyzed = sourceList.filter(s => !existingSymbols.has(s) && isMarketOpenLocal(s).isOpen);
+      if (unanalyzed.length === 0) return; // All tracked markets already have locked institutional signals or are closed
 
       const randSymbol = unanalyzed[Math.floor(Math.random() * unanalyzed.length)];
       handleGenerateSignalSilent(randSymbol);
@@ -881,6 +1064,9 @@ export default function SignalsPage() {
   };
 
   const handleGenerateSignalSilent = async (symbol: string) => {
+    const marketStatus = isMarketOpenLocal(symbol);
+    if (!marketStatus.isOpen) return;
+
     try {
       const targetInterval = selectedStyle === 'scalp' ? '5m' : selectedStyle === 'day' ? '1h' : selectedStyle === 'swing' ? '4h' : '15m';
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
@@ -967,6 +1153,16 @@ export default function SignalsPage() {
   };
 
   const handleGenerateSignal = async (symbol: string) => {
+    const marketStatus = isMarketOpenLocal(symbol);
+    if (!marketStatus.isOpen) {
+      toast(marketStatus.reason, {
+        id: `closed-${symbol}`,
+        icon: '🔒',
+        duration: 4000,
+      });
+      return;
+    }
+
     setGeneratingSymbol(symbol);
     const targetInterval = selectedStyle === 'scalp' ? '5m' : selectedStyle === 'day' ? '1h' : selectedStyle === 'swing' ? '4h' : '15m';
     const styleLabel = selectedStyle === 'scalp' ? '⚡ 5m Scalp' : selectedStyle === 'day' ? '📊 1h Day Trade' : selectedStyle === 'swing' ? '📈 4h Swing' : '1W Macro + 1D Flow + 4H Structure + 1H Timing';
@@ -1077,7 +1273,8 @@ export default function SignalsPage() {
     setIsBatchGenerating(true);
     const targetInterval = selectedStyle === 'scalp' ? '5m' : selectedStyle === 'day' ? '1h' : selectedStyle === 'swing' ? '4h' : '15m';
     const toastId = toast.loading(`Running Top-Down MTF Scan across major markets (${targetInterval})...`);
-    const keySymbols = ['BTC/USD', 'ETH/USD', 'US30', 'US100', 'XAU/USD', 'EUR/USD', 'USD/JPY'];
+    const allKeySymbols = ['BTC/USD', 'ETH/USD', 'US30', 'US100', 'XAU/USD', 'EUR/USD', 'USD/JPY'];
+    const keySymbols = allKeySymbols.filter(sym => isMarketOpenLocal(sym).isOpen);
     let count = 0;
     try {
       for (const sym of keySymbols) {
@@ -1361,26 +1558,43 @@ export default function SignalsPage() {
         <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1">
           {AVAILABLE_MARKETS.map(market => {
             const isGeneratingThis = generatingSymbol === market.symbol;
+            const marketStatus = isMarketOpenLocal(market.symbol);
+            const isClosed = !marketStatus.isOpen;
             return (
               <button
                 key={market.symbol}
                 onClick={() => handleGenerateSignal(market.symbol)}
-                disabled={generatingSymbol !== null}
+                disabled={generatingSymbol !== null || isClosed}
+                title={isClosed ? marketStatus.reason : `Generate predictive signal for ${market.symbol}`}
                 className={cn(
-                  "px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50",
-                  market.type === 'crypto'
-                    ? 'border-purple-500/10 hover:border-purple-500/35 bg-purple-500/5 hover:bg-purple-500/10 text-purple-300'
-                    : market.type === 'stocks'
-                    ? 'border-blue-500/10 hover:border-blue-500/35 bg-blue-500/5 hover:bg-blue-500/10 text-blue-300'
-                    : market.type === 'indices'
-                    ? 'border-indigo-500/10 hover:border-indigo-500/35 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-300'
-                    : market.type === 'commodities'
-                    ? 'border-amber-500/10 hover:border-amber-500/35 bg-amber-500/5 hover:bg-amber-500/10 text-amber-300'
-                    : 'border-emerald-500/10 hover:border-emerald-500/35 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-300'
+                  "px-3 py-1.5 rounded-xl text-xs font-semibold border flex items-center gap-1.5 transition-all",
+                  isClosed
+                    ? "border-slate-800/80 bg-slate-900/40 text-slate-500 cursor-not-allowed opacity-50"
+                    : "cursor-pointer disabled:opacity-50",
+                  !isClosed && (
+                    market.type === 'crypto'
+                      ? 'border-purple-500/10 hover:border-purple-500/35 bg-purple-500/5 hover:bg-purple-500/10 text-purple-300'
+                      : market.type === 'stocks'
+                      ? 'border-blue-500/10 hover:border-blue-500/35 bg-blue-500/5 hover:bg-blue-500/10 text-blue-300'
+                      : market.type === 'indices'
+                      ? 'border-indigo-500/10 hover:border-indigo-500/35 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-300'
+                      : market.type === 'commodities'
+                      ? 'border-amber-500/10 hover:border-amber-500/35 bg-amber-500/5 hover:bg-amber-500/10 text-amber-300'
+                      : 'border-emerald-500/10 hover:border-emerald-500/35 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-300'
+                  )
                 )}
               >
-                {isGeneratingThis ? <Loader2 size={12} className="animate-spin text-purple-400" /> : <BrainCircuit size={12} />}
-                {market.name} ({market.symbol})
+                {isGeneratingThis ? (
+                  <Loader2 size={12} className="animate-spin text-purple-400" />
+                ) : isClosed ? (
+                  <span className="text-[10px]">🔒</span>
+                ) : (
+                  <BrainCircuit size={12} />
+                )}
+                <span>{market.name} ({market.symbol})</span>
+                {isClosed && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 font-mono">CLOSED</span>
+                )}
               </button>
             );
           })}

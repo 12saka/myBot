@@ -223,8 +223,8 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
-    if ((user as any).status === 'SUSPENDED' || (user as any).isSuspended) {
-      throw new ForbiddenException('Your account has been suspended by Admin. Please contact support via WhatsApp (+254712345678) or email.');
+    if ((user as any).status === 'SUSPENDED' || (user as any).isSuspended || user.profile?.riskAppetite === 'SUSPENDED') {
+      throw new ForbiddenException('Your account has been suspended by Administration. Please contact support via WhatsApp (+254780566096) or email.');
     }
 
     const isPasswordValid = await bcrypt.compare(passwordPlain, user.passwordHash);
@@ -258,8 +258,8 @@ export class AuthService {
       throw new UnauthorizedException('Invalid 2FA session.');
     }
 
-    if ((user as any).status === 'SUSPENDED' || (user as any).isSuspended) {
-      throw new ForbiddenException('Your account has been suspended by Admin. Please contact support via WhatsApp (+254712345678) or email.');
+    if ((user as any).status === 'SUSPENDED' || (user as any).isSuspended || user.profile?.riskAppetite === 'SUSPENDED') {
+      throw new ForbiddenException('Your account has been suspended by Administration. Please contact support via WhatsApp (+254780566096) or email.');
     }
 
     return this.createLoginSession(user, ipAddress, userAgent, '2FA');

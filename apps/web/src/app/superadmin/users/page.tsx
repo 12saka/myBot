@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '@/lib/utils';
 
 export default function SuperadminUsersPage() {
   const router = useRouter();
@@ -116,6 +117,21 @@ export default function SuperadminUsersPage() {
       toast.error(err.message || 'User update failed');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleQuickChangeRole = async (user: any, newRole: string) => {
+    if (user.role === newRole) return;
+    const toastId = toast.loading(`Switching ${user.email} role to ${newRole}...`);
+    try {
+      await apiFetch(`/api/v2/admin/users/${user.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role: newRole }),
+      });
+      toast.success(`Role for ${user.email} switched to ${newRole}!`, { id: toastId });
+      setUsers(prev => prev.map(u => u.id === user.id ? { ...u, role: newRole } : u));
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to switch role.', { id: toastId });
     }
   };
 
@@ -345,20 +361,27 @@ export default function SuperadminUsersPage() {
                       </td>
 
                       <td className="p-3.5 sm:p-4">
-                        <div className="flex flex-col gap-1">
-                          <span
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border inline-block w-fit ${
+                        <div className="flex flex-col gap-1.5">
+                          <select
+                            value={u.role || 'TRADER'}
+                            onChange={(e) => handleQuickChangeRole(u, e.target.value)}
+                            className={cn(
+                              "px-2 py-1 rounded-md text-[10px] font-mono font-bold border transition cursor-pointer outline-none",
                               u.role === 'SUPER_ADMIN'
-                                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                ? 'bg-purple-950/80 text-purple-300 border-purple-500/50 hover:border-purple-400'
                                 : u.role === 'ADMIN'
-                                ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                ? 'bg-blue-950/80 text-blue-300 border-blue-500/50 hover:border-blue-400'
                                 : u.role === 'INSTRUCTOR'
-                                ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
-                                : 'bg-slate-500/20 text-slate-400 border-slate-500/30'
-                            }`}
+                                ? 'bg-teal-950/80 text-teal-300 border-teal-500/50 hover:border-teal-400'
+                                : 'bg-slate-900 text-slate-300 border-white/10 hover:border-white/30'
+                            )}
+                            title="Quick Switch User Role"
                           >
-                            {u.role}
-                          </span>
+                            <option value="TRADER">TRADER</option>
+                            <option value="INSTRUCTOR">INSTRUCTOR</option>
+                            <option value="ADMIN">ADMIN</option>
+                            <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                          </select>
                           <span className={`text-[10px] font-mono font-semibold ${isSuspended ? 'text-rose-400' : 'text-emerald-400'}`}>
                             ● {isSuspended ? 'Suspended' : 'Active'}
                           </span>
