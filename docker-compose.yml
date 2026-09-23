@@ -49,6 +49,8 @@ services:
     environment:
       - PORT=8000
       - AI_SERVICE_API_KEY=internal-secret-key
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
     restart: unless-stopped
 
 volumes:

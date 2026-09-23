@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useMarketStore } from '@/store/useMarketStore';
 import { toast } from 'react-hot-toast';
+import { getApiUrl } from '@/lib/api';
 
 const WebSocketContext = createContext<Socket | null>(null);
 
@@ -11,8 +12,10 @@ export const useWebSocket = () => useContext(WebSocketContext);
 
 const SYMBOLS_TO_SUBSCRIBE = [
   'BTC', 'ETH', 'SOL', 'BNB', 'XRP',
-  'AAPL', 'TSLA', 'NVDA',
-  'EUR/USD', 'GBP/USD', 'USD/JPY'
+  'BTC/USD', 'ETH/USD', 'SOL/USD', 'BNB/USD', 'XRP/USD',
+  'AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN',
+  'EUR/USD', 'GBP/USD', 'USD/JPY',
+  'XAU/USD', 'GOLD', 'US100', 'US30', 'SPX500', 'DAX40', 'OIL'
 ];
 
 export function WebSocketProvider({ children }: { children: React.ReactNode }) {
@@ -66,7 +69,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     const fetchLivePrices = async () => {
       if (!isMounted) return;
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+        const apiUrl = getApiUrl();
         
         // Fetch from API Gateway as Single Source of Truth for all markets
         const gatewayRes = await fetch(`${apiUrl}/api/v2/markets/tickers`).catch(() => null);
@@ -81,6 +84,9 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
               if (storeSymbol === 'GOLD') storeSymbol = 'XAU/USD';
               if (storeSymbol === 'BTC') storeSymbol = 'BTC/USD';
               if (storeSymbol === 'ETH') storeSymbol = 'ETH/USD';
+              if (storeSymbol === 'SOL') storeSymbol = 'SOL/USD';
+              if (storeSymbol === 'BNB') storeSymbol = 'BNB/USD';
+              if (storeSymbol === 'XRP') storeSymbol = 'XRP/USD';
               if (isMounted && m.price && parseFloat(m.price) > 0) {
                 updateTicker(storeSymbol, {
                   price: parseFloat(m.price),
@@ -143,7 +149,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === 'undefined') return;
 
     const token = localStorage.getItem('trademind_token');
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    const apiUrl = getApiUrl();
     
     const socket = io(apiUrl, {
       query: { token: token || '' },
@@ -160,9 +166,10 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
     socket.on('market_tick', (data: { symbol: string; bidPrice: number; askPrice: number }) => {
       const symbol = data.symbol;
-      const storeSymbol = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(symbol)
+      let storeSymbol = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(symbol)
         ? `${symbol}/USD`
         : symbol;
+      if (storeSymbol === 'GOLD') storeSymbol = 'XAU/USD';
 
       throttledUpdateTicker(storeSymbol, {
         price: data.bidPrice,

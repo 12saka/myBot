@@ -132,7 +132,7 @@ export function Sidebar() {
       {/* Sidebar */}
       <motion.aside
         className={cn(
-          'fixed left-0 top-0 z-50 h-full flex flex-col glass-panel border-r border-white/6',
+          'fixed left-0 top-0 z-50 h-full flex flex-col bg-slate-950/95 backdrop-blur-2xl border-r border-white/10 shadow-2xl shadow-black/50',
           'transition-all duration-300 ease-in-out',
           'md:sticky md:top-0 md:h-screen',
           sidebarOpen ? 'flex translate-x-0' : 'hidden md:flex -translate-x-full md:translate-x-0'

@@ -1429,7 +1429,7 @@ export class SignalsController implements OnModuleInit {
     entryCondition: string;
   } {
     const distFromEma = Math.abs(currentPrice - ema20);
-    const isExtended = distFromEma > (atr * 0.35);
+    const isExtended = distFromEma > (atr * 0.20);
 
     if (direction === 'BUY') {
       if (isExtended && currentPrice > ema20) {
@@ -2375,9 +2375,9 @@ export class SignalsController implements OnModuleInit {
 
     // Targets & Dynamic Risk-to-Reward Ratio (Timeframe Scaled & Adaptive Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const minPct = isScalp ? 0.0035 : 0.0065; // 0.35% - 0.65% tight structure risk room
-    const maxPct = isScalp ? 0.0075 : 0.0120; // 0.75% - 1.20% max risk room
-    const slDist = Math.min(Math.max(atr * 0.9, effectiveEntry * minPct), effectiveEntry * maxPct);
+    const minPct = isScalp ? 0.0020 : 0.0040; // 0.20% - 0.40% tight structure risk room
+    const maxPct = isScalp ? 0.0045 : 0.0080; // 0.45% - 0.80% max risk room
+    const slDist = Math.min(Math.max(atr * 0.7, effectiveEntry * minPct), effectiveEntry * maxPct);
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
     const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
@@ -2675,7 +2675,7 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 0.9, isScalp ? 18 : 35), isScalp ? 35 : 75);
+    const slDist = Math.min(Math.max(atr * 0.7, isScalp ? 12 : 25), isScalp ? 25 : 50);
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
     const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
@@ -2973,7 +2973,7 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based for US30)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 0.9, isScalp ? 28 : 55), isScalp ? 55 : 110);
+    const slDist = Math.min(Math.max(atr * 0.7, isScalp ? 18 : 38), isScalp ? 38 : 75);
 
     // Structure Invalidation SL (Adaptive Session Swing Window)
     const swingSlice = candles.slice(-Math.min(lookback, isScalp ? 8 : 15));
@@ -3255,8 +3255,8 @@ export class SignalsController implements OnModuleInit {
     // Calculate Targets & Risk/Reward (Institutional Volatility & Structure-Based FX Protection)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = isJpy 
-      ? Math.min(Math.max(atr * 0.85, isScalp ? 0.12 : 0.22), isScalp ? 0.25 : 0.45)
-      : Math.min(Math.max(atr * 0.85, isScalp ? 0.0008 : 0.0015), isScalp ? 0.0018 : 0.0030); // 8-15 pips tight institutional buffer
+      ? Math.min(Math.max(atr * 0.7, isScalp ? 0.08 : 0.15), isScalp ? 0.18 : 0.30)
+      : Math.min(Math.max(atr * 0.7, isScalp ? 0.0005 : 0.0010), isScalp ? 0.0012 : 0.0022); // 5-10 pips tight institutional buffer
 
     // Institutional Structure Invalidation SL (Adaptive Session Swing Window)
     const swingLows = candles.slice(-Math.min(fxLookback, isScalp ? 8 : 16)).map(c => Number(c.low));
@@ -3495,9 +3495,9 @@ export class SignalsController implements OnModuleInit {
     const effectiveEntry = precisionOrder.entryPrice;
 
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const minPct = isScalp ? 0.0035 : 0.0065; // 0.35% - 0.65% tight structure risk room
-    const maxPct = isScalp ? 0.0075 : 0.0150; // 0.75% - 1.50% max risk room
-    const slDist = Math.min(Math.max(atr * 0.9, effectiveEntry * minPct), effectiveEntry * maxPct);
+    const minPct = isScalp ? 0.0020 : 0.0040; // 0.20% - 0.40% tight structure risk room
+    const maxPct = isScalp ? 0.0045 : 0.0080; // 0.45% - 0.80% max risk room
+    const slDist = Math.min(Math.max(atr * 0.7, effectiveEntry * minPct), effectiveEntry * maxPct);
 
     const lowestLow = Math.min(...recentLows);
     const highestHigh = Math.max(...recentHighs);
@@ -3736,8 +3736,8 @@ export class SignalsController implements OnModuleInit {
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const isSpx = symbol.toUpperCase().includes('SPX');
     const slDist = isSpx 
-      ? Math.min(Math.max(atr * 0.9, isScalp ? 4.5 : 8.5), isScalp ? 9.5 : 18.0)
-      : Math.min(Math.max(atr * 0.9, isScalp ? 15.0 : 30.0), isScalp ? 32.0 : 70.0);
+      ? Math.min(Math.max(atr * 0.7, isScalp ? 3.0 : 6.0), isScalp ? 6.5 : 12.0)
+      : Math.min(Math.max(atr * 0.7, isScalp ? 10.0 : 20.0), isScalp ? 22.0 : 45.0);
 
     const lowestLow = Math.min(...recentLows);
     const highestHigh = Math.max(...recentHighs);
@@ -4043,7 +4043,7 @@ export class SignalsController implements OnModuleInit {
 
     // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based USDJPY Targets)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = Math.min(Math.max(atr * 0.85, isScalp ? 0.12 : 0.22), isScalp ? 0.25 : 0.45);
+    const slDist = Math.min(Math.max(atr * 0.7, isScalp ? 0.08 : 0.15), isScalp ? 0.18 : 0.30);
 
     const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision);
     const effectiveEntry = precisionOrder.entryPrice;
@@ -4393,8 +4393,8 @@ export class SignalsController implements OnModuleInit {
     // 9. Exact Targets: Tight Structural SL for Gold ($3.50 - $6.50 scalp, $6.00 - $12.00 swing)
     const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
     const slDist = Math.min(
-      Math.max(atr * 0.9, isScalp ? 3.50 : 6.50),
-      isScalp ? 6.50 : 12.00
+      Math.max(atr * 0.65, isScalp ? 2.20 : 4.50),
+      isScalp ? 4.50 : 8.50
     );
 
     // Structure Invalidation SL (Adaptive Session Swing Window with tight ATR buffer)
@@ -4676,7 +4676,7 @@ export class SignalsController implements OnModuleInit {
     const slPips = isForex ? (sig.symbol.includes('JPY') ? slDist * 100 : slDist * 10000) : slDist;
 
     // Evaluate structural failure dimensions
-    const isShallowSL = isForex ? slPips < 5 : slDist < (entry * 0.001);
+    const isShallowSL = isForex ? slPips < 3.5 : slDist < (entry * 0.0005);
     const hadNews = Array.isArray(reasoning.indicators) && reasoning.indicators.some((i: string) => i.toLowerCase().includes('news') || i.toLowerCase().includes('cpi'));
     const htfAligned = !String(reasoning.htfBias || '').toLowerCase().includes('counter');
 
@@ -4691,7 +4691,7 @@ export class SignalsController implements OnModuleInit {
       failureDesc = 'Trade was active during an unexpected high-impact economic news release (CPI/NFP/FOMC), causing transient spread and volatility spikes.';
     } else if (isShallowSL) {
       primaryFailure = 'Category H — Shallow Stop Loss Placement';
-      failureDesc = `Stop Loss (${slPips.toFixed(1)} pips) was placed too close to entry without clearing the 24-candle session swing invalidation boundary.`;
+      failureDesc = `Stop Loss (${slPips.toFixed(1)} pips) was placed too close to entry without clearing the session swing invalidation boundary.`;
     } else {
       primaryFailure = 'Category O — Statistically Normal Market Invalidation';
       failureDesc = 'All 23 structural and liquidity parameters were aligned; this trade is within normal expected statistical variance.';
@@ -4717,7 +4717,7 @@ export class SignalsController implements OnModuleInit {
         lossCategory: primaryFailure.split(' — ')[0],
       },
       actionableTakeaway: isShallowSL
-        ? 'Widen invalidation buffer beyond the 24-candle session extreme + 0.45x ATR on subsequent setups.'
+        ? 'Widen invalidation buffer beyond the session extreme + 0.20x ATR on subsequent setups.'
         : 'Maintain risk management rules; setup had positive expected mathematical value.'
     };
   }

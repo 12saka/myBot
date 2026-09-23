@@ -25,7 +25,7 @@ export function InstructorTopbar({ onOpenMobile }: TopbarProps) {
   const role = profile?.role || 'INSTRUCTOR';
 
   return (
-    <header className="h-16 border-b border-teal-500/20 bg-slate-950/80 backdrop-blur-xl px-4 md:px-6 flex items-center justify-between z-30 shrink-0 shadow-lg shadow-black/40">
+    <header className="h-16 border-b border-teal-500/20 bg-slate-950/95 backdrop-blur-2xl px-4 md:px-6 flex items-center justify-between z-40 shrink-0 shadow-xl shadow-black/50">
       <div className="flex items-center gap-3">
         <button
           onClick={onOpenMobile}

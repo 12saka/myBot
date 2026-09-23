@@ -117,7 +117,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Mobile Bottom Navigation */}
           {!sidebarOpen && (
-            <nav className="glass-panel fixed bottom-0 left-0 right-0 z-50 border-t border-white/5 py-2 md:hidden">
+            <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-slate-950/95 backdrop-blur-2xl py-2 md:hidden shadow-2xl shadow-black">
               <div className="flex items-center justify-around px-2">
                 {[
                   { href: '/dashboard', label: 'Home',      icon: LayoutDashboard },

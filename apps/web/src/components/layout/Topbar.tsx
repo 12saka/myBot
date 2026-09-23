@@ -248,9 +248,9 @@ export function Topbar() {
   };
 
   return (
-    <header className="glass-panel sticky top-0 z-30 w-full border-b border-white/5">
+    <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-slate-950/95 backdrop-blur-2xl shadow-xl shadow-black/40">
       {/* Market ticker tape */}
-      <div className="border-b border-white/4 overflow-hidden bg-black/20">
+      <div className="border-b border-white/5 overflow-hidden bg-slate-950/90">
         <div className="flex gap-8 px-4 py-1.5 ticker-tape" style={{ width: 'max-content' }}>
           {[...featured, ...featured].map((ticker, i) => (
             <div key={i} className="flex items-center gap-2 text-xs whitespace-nowrap min-w-max">
@@ -361,7 +361,7 @@ export function Topbar() {
 
             {/* Notifications Dropdown */}
             {dropdownOpen && (
-              <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-sm glass-panel rounded-2xl border border-white/10 shadow-2xl p-4 z-50 space-y-3">
+              <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-sm rounded-2xl border border-white/10 bg-slate-950/95 backdrop-blur-2xl shadow-2xl p-4 z-50 space-y-3">
                 <div className="flex items-center justify-between border-b border-white/5 pb-2">
                   <span className="text-[10px] font-bold text-white uppercase tracking-wider">Recent Notifications</span>
                   {unreadCount > 0 && (
@@ -461,7 +461,7 @@ export function Topbar() {
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: -20 }}
               transition={{ duration: 0.25, ease: 'easeOut' }}
-              className="w-full max-w-xl glass-panel rounded-2xl border border-white/10 overflow-hidden shadow-2xl"
+              className="w-full max-w-xl rounded-2xl border border-white/10 bg-slate-950/95 backdrop-blur-2xl overflow-hidden shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Search input header */}

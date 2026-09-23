@@ -2,7 +2,16 @@ import type { AISignal } from '@/store/useAIStore';
 import type { Ticker } from '@/store/useMarketStore';
 import type { Position } from '@/store/usePortfolioStore';
 
-export const getApiUrl = () => process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+export const getApiUrl = () => {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && !envUrl.includes('mybot-8w1c')) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return 'https://trademind-api-gateway.onrender.com';
+  }
+  return (envUrl || 'http://localhost:4000').replace(/\/+$/, '');
+};
 
 export const getAuthToken = () => {
   if (typeof window === 'undefined') return null;
