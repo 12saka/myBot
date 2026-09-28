@@ -192,7 +192,7 @@ export class MarketsService implements OnModuleInit {
         if (response.ok) {
           const stats = await response.json();
           if (Array.isArray(stats)) {
-            const targetSymbols = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'PAXGUSDT']);
+            const targetSymbols = new Set(['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT']);
             for (const item of stats) {
               if (targetSymbols.has(item.symbol)) {
                 const price = parseFloat(item.lastPrice || '0');
@@ -211,17 +211,16 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Binance 24h stats API connection failed: ${err.message}`);
       }
 
-      // High-availability CoinGecko quoter for Crypto & Gold spot backup
+      // High-availability CoinGecko quoter for Crypto
       try {
-        const cgRes = await this.fetchWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,ripple,paxos-gold&vs_currencies=usd&include_24hr_change=true', {}, 3500);
+        const cgRes = await this.fetchWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,binancecoin,ripple&vs_currencies=usd&include_24hr_change=true', {}, 3500);
         if (cgRes.ok) {
           const cgData = await cgRes.json();
           if (cgData.bitcoin?.usd) cryptoPriceMap['BTCUSDT'] = cryptoPriceMap['BTCUSDT'] || { price: cgData.bitcoin.usd, changePct: parseFloat((cgData.bitcoin.usd_24h_change || 0).toFixed(2)), volume: 15000000000 };
           if (cgData.ethereum?.usd) cryptoPriceMap['ETHUSDT'] = cryptoPriceMap['ETHUSDT'] || { price: cgData.ethereum.usd, changePct: parseFloat((cgData.ethereum.usd_24h_change || 0).toFixed(2)), volume: 8000000000 };
           if (cgData.solana?.usd) cryptoPriceMap['SOLUSDT'] = cryptoPriceMap['SOLUSDT'] || { price: cgData.solana.usd, changePct: parseFloat((cgData.solana.usd_24h_change || 0).toFixed(2)), volume: 3000000000 };
           if (cgData.binancecoin?.usd) cryptoPriceMap['BNBUSDT'] = cryptoPriceMap['BNBUSDT'] || { price: cgData.binancecoin.usd, changePct: parseFloat((cgData.binancecoin.usd_24h_change || 0).toFixed(2)), volume: 1000000000 };
-          if (cgData.ripple?.usd) cryptoPriceMap['XRPUSDT'] = cryptoPriceMap['XRPUSDT'] || { price: cgData.ripple.usd, changePct: parseFloat((cgData.ripple.usd_24h_change || 0).toFixed(2)), volume: 800000000 };
-          if (cgData['paxos-gold']?.usd) cryptoPriceMap['PAXGUSDT'] = cryptoPriceMap['PAXGUSDT'] || { price: cgData['paxos-gold'].usd, changePct: parseFloat((cgData['paxos-gold'].usd_24h_change || 0).toFixed(2)), volume: 50000000 };
+          if (cgData.ripple?.usd) cryptoPriceMap['XRPUSDT'] = cryptoPriceMap['XRPUSDT'] || { price: cgData.ripple.usd, changePct: parseFloat((cgData.ripple.usd_24h_change || 0).toFixed(2)), volume: 8000000000 };
         }
       } catch (err: any) {}
 
@@ -328,6 +327,7 @@ export class MarketsService implements OnModuleInit {
         { name: 'VIX', yahoo: '^VIX' },
         { name: 'NQ', yahoo: 'NQ=F' },
         { name: 'YM', yahoo: 'YM=F' },
+        { name: 'ES', yahoo: 'ES=F' },
         { name: 'GOLD', yahoo: 'GC=F' },
         { name: 'XAU/USD', yahoo: 'GC=F' },
         { name: 'OIL', yahoo: 'CL=F' },
@@ -416,101 +416,105 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // High-precision cash index calibration for US100 (NASDAQ 100) and US30 (Dow Jones)
+        // Live contract & index pricing for US100 (NASDAQ 100), US30 (Dow Jones), and SPX500
         if (asset.name === 'US100' || asset.name === 'NAS') {
-          if (yahooPriceMap['^NDX'] && yahooPriceMap['^NDX'].price > 0) {
+          if (yahooPriceMap['NQ=F'] && yahooPriceMap['NQ=F'].price > 0) {
+            currentPrice = yahooPriceMap['NQ=F'].price;
+            changePct24h = yahooPriceMap['NQ=F'].changePct;
+            volume24h = yahooPriceMap['NQ=F'].volume;
+          } else if (yahooPriceMap['^NDX'] && yahooPriceMap['^NDX'].price > 0) {
             currentPrice = yahooPriceMap['^NDX'].price;
             changePct24h = yahooPriceMap['^NDX'].changePct;
             volume24h = yahooPriceMap['^NDX'].volume;
-          } else if (yahooPriceMap['NQ=F'] && yahooPriceMap['NQ=F'].price > 0) {
-            // Futures basis calibration: adjust futures price to spot NDX baseline
-            const baseNDX = lastCached && lastCached.price > 15000 && lastCached.price < 35000 ? lastCached.price : 29644.17;
-            const futuresDelta = yahooPriceMap['NQ=F'].changePct;
-            currentPrice = parseFloat((baseNDX * (1 + futuresDelta / 100)).toFixed(2));
-            changePct24h = futuresDelta;
-            volume24h = yahooPriceMap['NQ=F'].volume;
           }
         }
         if (asset.name === 'US30' || asset.name === 'DOW') {
-          if (yahooPriceMap['^DJI'] && yahooPriceMap['^DJI'].price > 0) {
+          if (yahooPriceMap['YM=F'] && yahooPriceMap['YM=F'].price > 0) {
+            currentPrice = yahooPriceMap['YM=F'].price;
+            changePct24h = yahooPriceMap['YM=F'].changePct;
+            volume24h = yahooPriceMap['YM=F'].volume;
+          } else if (yahooPriceMap['^DJI'] && yahooPriceMap['^DJI'].price > 0) {
             currentPrice = yahooPriceMap['^DJI'].price;
             changePct24h = yahooPriceMap['^DJI'].changePct;
             volume24h = yahooPriceMap['^DJI'].volume;
-          } else if (yahooPriceMap['YM=F'] && yahooPriceMap['YM=F'].price > 0) {
-            const baseDJI = lastCached && lastCached.price > 30000 && lastCached.price < 60000 ? lastCached.price : 51682.64;
-            const futuresDelta = yahooPriceMap['YM=F'].changePct;
-            currentPrice = parseFloat((baseDJI * (1 + futuresDelta / 100)).toFixed(2));
-            changePct24h = futuresDelta;
-            volume24h = yahooPriceMap['YM=F'].volume;
           }
         }
         if (asset.name === 'SPX500' || asset.name === 'SP500') {
-          if (yahooPriceMap['^GSPC'] && yahooPriceMap['^GSPC'].price > 0) {
+          if (yahooPriceMap['ES=F'] && yahooPriceMap['ES=F'].price > 0) {
+            currentPrice = yahooPriceMap['ES=F'].price;
+            changePct24h = yahooPriceMap['ES=F'].changePct;
+            volume24h = yahooPriceMap['ES=F'].volume;
+          } else if (yahooPriceMap['^GSPC'] && yahooPriceMap['^GSPC'].price > 0) {
             currentPrice = yahooPriceMap['^GSPC'].price;
             changePct24h = yahooPriceMap['^GSPC'].changePct;
             volume24h = yahooPriceMap['^GSPC'].volume;
           }
         }
 
-        // Real Gold Spot (XAU/USD) pricing: Strictly lock to physical/interbank spot price (~$4,349)
-        // COMEX futures (GC=F) trade at a contango basis spread (~+$35), so spot MUST take absolute priority.
+        // Real Gold Spot (XAU/USD) pricing: TradingView Forex/Interbank Spot Gold
+        // Strictly lock to real spot price. DO NOT use PAXG crypto proxy token.
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
           let spotFound = false;
-          try {
-            const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 3000);
-            if (spotRes.ok) {
-              const spotData = await spotRes.json();
-              if (spotData && Number(spotData.price) > 1000) {
-                currentPrice = Number(spotData.price);
-                spotFound = true;
-                if (yahooPriceMap['GC=F']) {
-                  changePct24h = yahooPriceMap['GC=F'].changePct;
-                  volume24h = yahooPriceMap['GC=F'].volume;
-                }
-              }
-            }
-          } catch (e) {}
 
-          // High-precision fallback 1: Binance PAXGUSDT spot proxy (~$4,347 - $4,350)
-          if (!spotFound) {
+          // Priority 1: Twelve Data real-time quote for XAU/USD (Identical to TradingView Spot Gold)
+          const tdKey = process.env.TWELVE_DATA_API_KEY;
+          if (tdKey) {
             try {
-              const paxgRes = await this.fetchWithTimeout('https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT', {}, 2500);
-              if (paxgRes.ok) {
-                const paxgData = await paxgRes.json();
-                if (paxgData && Number(paxgData.price) > 1000) {
-                  currentPrice = Number(paxgData.price);
+              const tdQuoteRes = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=XAU/USD&apikey=${tdKey}`, {}, 3000);
+              if (tdQuoteRes.ok) {
+                const tdQuote = await tdQuoteRes.json();
+                const quotePrice = Number(tdQuote.close || tdQuote.price);
+                if (quotePrice > 1000 && !tdQuote.code) {
+                  currentPrice = quotePrice;
+                  changePct24h = parseFloat(tdQuote.percent_change || '0');
+                  volume24h = parseFloat(tdQuote.volume || '0');
                   spotFound = true;
-                  if (cryptoPriceMap['PAXGUSDT']) {
-                    changePct24h = cryptoPriceMap['PAXGUSDT'].changePct;
-                    volume24h = cryptoPriceMap['PAXGUSDT'].volume;
-                  }
                 }
               }
             } catch (e) {}
-          }
 
-          // Fallback 2: Twelve Data spot XAU/USD
-          if (!spotFound) {
-            const tdKey = process.env.TWELVE_DATA_API_KEY;
-            if (tdKey) {
+            if (!spotFound) {
               try {
                 const tdRes = await this.fetchWithTimeout(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${tdKey}`, {}, 2500);
                 if (tdRes.ok) {
                   const tdData = await tdRes.json();
-                  if (tdData && Number(tdData.price) >= 1800) {
+                  if (tdData && Number(tdData.price) > 1000 && !tdData.code) {
                     currentPrice = Number(tdData.price);
                     spotFound = true;
+                    if (yahooPriceMap['GC=F']) {
+                      changePct24h = yahooPriceMap['GC=F'].changePct;
+                      volume24h = yahooPriceMap['GC=F'].volume;
+                    }
                   }
                 }
               } catch (e) {}
             }
           }
 
-          // Fallback 3: Yahoo spot XAUUSD=X or contango-adjusted GC=F
-          if (!spotFound && yahooPriceMap['XAUUSD=X'] && yahooPriceMap['XAUUSD=X'].price > 1000) {
-            currentPrice = yahooPriceMap['XAUUSD=X'].price;
-            changePct24h = yahooPriceMap['XAUUSD=X'].changePct;
-            volume24h = yahooPriceMap['XAUUSD=X'].volume;
+          // Priority 2: Real Gold API spot
+          if (!spotFound) {
+            try {
+              const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 3000);
+              if (spotRes.ok) {
+                const spotData = await spotRes.json();
+                if (spotData && Number(spotData.price) > 1000) {
+                  currentPrice = Number(spotData.price);
+                  spotFound = true;
+                  if (yahooPriceMap['GC=F']) {
+                    changePct24h = yahooPriceMap['GC=F'].changePct;
+                    volume24h = yahooPriceMap['GC=F'].volume;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+
+          // Priority 3: Yahoo COMEX GC=F futures
+          if (!spotFound && yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price > 1000) {
+            currentPrice = yahooPriceMap['GC=F'].price;
+            changePct24h = yahooPriceMap['GC=F'].changePct;
+            volume24h = yahooPriceMap['GC=F'].volume;
+            spotFound = true;
           }
         }
 
@@ -678,7 +682,7 @@ export class MarketsService implements OnModuleInit {
       // 1. Try Binance (Crypto + Gold PAXG)
       if ((asset.type === 'crypto' || asset.name === 'XAU/USD' || asset.name === 'GOLD') && asset.binanceSymbol) {
         try {
-          const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=1h&limit=100`);
+          const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${asset.binanceSymbol}&interval=1h&limit=300`);
           if (res.ok) {
             const data = await res.json();
             for (const item of data) {
@@ -724,7 +728,7 @@ export class MarketsService implements OnModuleInit {
         if (twelveDataKey) {
           try {
             const tdSym = this.getTwelveDataSymbol(asset.name);
-            const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=1h&outputsize=100&apikey=${twelveDataKey}`);
+            const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=1h&outputsize=300&apikey=${twelveDataKey}`);
             if (response.ok) {
               const data = await response.json();
               const values = data.values || [];
@@ -744,7 +748,7 @@ export class MarketsService implements OnModuleInit {
                       high: parseFloat(v.high),
                       low: parseFloat(v.low),
                       close: parseFloat(v.close),
-                      volume: parseFloat(v.volume || 1000),
+                      volume: parseFloat(v.volume || 0),
                     },
                     create: {
                       symbol: asset.name,
@@ -753,7 +757,7 @@ export class MarketsService implements OnModuleInit {
                       high: parseFloat(v.high),
                       low: parseFloat(v.low),
                       close: parseFloat(v.close),
-                      volume: parseFloat(v.volume || 1000),
+                      volume: parseFloat(v.volume || 0),
                       timestamp,
                     },
                   });
@@ -772,7 +776,7 @@ export class MarketsService implements OnModuleInit {
       if (!seeded) {
         try {
           const yahooTicker = this.getYahooTicker(asset.name);
-          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1h&range=7d`;
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1h&range=1mo`;
           const res = await this.fetchWithTimeout(url);
           if (res.ok) {
             const data = await res.json();
@@ -792,7 +796,7 @@ export class MarketsService implements OnModuleInit {
                 const close = closes[i];
                 const high = highs[i];
                 const low = lows[i];
-                const volume = volumes[i] || 1000;
+                const volume = volumes[i] || 0;
                 
                 if (open !== null && close !== null && high !== null && low !== null) {
                   await this.prisma.historicalCandle.upsert({
@@ -856,7 +860,7 @@ export class MarketsService implements OnModuleInit {
         ]
       },
       orderBy: { timestamp: 'asc' },
-      take: 200,
+      take: 300,
     });
     
     // 2. If we have at least 50 candles and they are fresh (e.g. last candle is within 3 * interval time), return them!
@@ -888,7 +892,7 @@ export class MarketsService implements OnModuleInit {
       if (interval === '1h') binanceInterval = '1h';
       try {
         const binanceSym = `${baseAsset}USDT`;
-        const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=150`);
+        const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=300`);
         if (res.ok) {
           const klines = await res.json();
           // Clear old candles for this symbol+interval to avoid duplicates
@@ -926,7 +930,7 @@ export class MarketsService implements OnModuleInit {
           let tdInterval = interval;
           if (interval === '1h') tdInterval = '1h'; // Twelve Data supports '1h'
           
-          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=100&apikey=${twelveDataKey}`);
+          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=300&apikey=${twelveDataKey}`);
           if (response.ok) {
             const data = await response.json();
             const values = data.values || [];
@@ -947,7 +951,7 @@ export class MarketsService implements OnModuleInit {
                     high: parseFloat(v.high),
                     low: parseFloat(v.low),
                     close: parseFloat(v.close),
-                    volume: parseFloat(v.volume || 1000),
+                    volume: parseFloat(v.volume || 0),
                   }
                 });
                 newCandles.push(candle);
@@ -972,8 +976,8 @@ export class MarketsService implements OnModuleInit {
           let range = '2d';
           if (interval === '1m') range = '1d';
           else if (interval === '3m' || interval === '5m') range = '2d';
-          else if (interval === '15m' || interval === '30m') range = '5d';
-          else if (interval === '1h') range = '7d';
+          else if (interval === '15m' || interval === '30m') range = '14d';
+          else if (interval === '1h') range = '1mo';
           
           const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=${yahooInterval}&range=${range}`);
           if (res.ok) {
@@ -1005,7 +1009,7 @@ export class MarketsService implements OnModuleInit {
                     high: parseFloat(highs[i]),
                     low: parseFloat(lows[i]),
                     close: parseFloat(closes[i]),
-                    volume: parseFloat(volumes[i] || 1000),
+                    volume: parseFloat(volumes[i] || 0),
                   }
                 });
                 newCandles.push(candle);

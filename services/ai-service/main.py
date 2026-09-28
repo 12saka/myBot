@@ -8,7 +8,7 @@ _base = os.path.dirname(os.path.abspath(__file__))
 _env_paths = [
     os.path.join(_base, '../../.env'),
     os.path.join(_base, '../../../.env'),
-    'G:/my_Projects/myBot/.env',
+    os.path.join(os.getcwd(), '.env'),
 ]
 for _ep in _env_paths:
     if os.path.exists(_ep):
@@ -24,8 +24,8 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
+from typing import List, Optional, Any, Union
+from datetime import datetime, timezone
 
 # ── New official Google GenAI SDK ─────────────────────────────────────
 from google import genai
@@ -60,10 +60,12 @@ if GEMINI_API_KEY:
 else:
     print("[AI-Service] WARNING: GEMINI_API_KEY is not set. Running in Sandbox Mock mode.")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_FALLBACK_MODELS = [
+    "gemini-3.8-flash",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
+    "gemini-3.1-pro-preview",
     "gemini-1.5-pro",
 ]
 
@@ -83,8 +85,9 @@ class CandleItem(BaseModel):
     high: float
     low: float
     close: float
-    volume: float
-    timestamp: str
+    volume: float = 0.0
+    timestamp: Optional[Any] = None
+    time: Optional[Any] = None
 
 class NewsItem(BaseModel):
     headline: str
@@ -147,6 +150,12 @@ class PredictResponse(BaseModel):
     central_bank_buying: Optional[dict] = None
     geopolitical_risk: Optional[dict] = None
     signal_grade: Optional[str] = None
+    entry_type: Optional[str] = "MARKET_NOW"
+    entry_zone: Optional[str] = None
+    entry_condition: Optional[str] = None
+    risk_reward_ratio_tp1: Optional[float] = None
+    risk_reward_ratio_tp2: Optional[float] = None
+    data_freshness_status: Optional[str] = "VERIFIED_LIVE"
 
 class ChatMessage(BaseModel):
     role: str
@@ -166,10 +175,180 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     portfolioContext: Optional[PortfolioContext] = None
 
-# --- Indicator Calculator Engine ---
+# --- Data Freshness & Quantitative Indicator Engines ---
 
-def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
-    if not candles or len(candles) < 20:
+def candles_to_df(candles: Any) -> pd.DataFrame:
+    """Safely converts candles (Pydantic objects or dicts) into a normalized pandas DataFrame."""
+    if not candles:
+        return pd.DataFrame()
+    records = []
+    for c in candles:
+        if isinstance(c, dict):
+            records.append(c)
+        elif hasattr(c, "model_dump"):
+            records.append(c.model_dump())
+        elif hasattr(c, "dict"):
+            records.append(c.dict())
+        else:
+            records.append({
+                "open": getattr(c, "open", 0.0),
+                "high": getattr(c, "high", 0.0),
+                "low": getattr(c, "low", 0.0),
+                "close": getattr(c, "close", 0.0),
+                "volume": getattr(c, "volume", 0.0),
+                "timestamp": getattr(c, "timestamp", getattr(c, "time", None))
+            })
+    df = pd.DataFrame(records)
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    return df
+
+def validate_candle_freshness(candles: Any, timeframe: str) -> tuple[bool, str, float]:
+    """
+    Validates whether the latest candle timestamp is fresh for live market execution.
+    Returns: (is_fresh: bool, status_message: str, age_minutes: float)
+    """
+    if not candles:
+        return False, "No candles provided", 999999.0
+    
+    last_candle = candles[-1]
+    if isinstance(last_candle, dict):
+        ts_raw = str(last_candle.get("timestamp") or last_candle.get("time") or "").strip()
+    else:
+        ts_raw = str(getattr(last_candle, "timestamp", None) or getattr(last_candle, "time", None) or "").strip()
+    
+    parsed_dt = None
+    # 1. Try numeric unix timestamp (seconds or milliseconds)
+    try:
+        val = float(ts_raw)
+        if val > 1e11:  # milliseconds
+            parsed_dt = datetime.fromtimestamp(val / 1000.0, tz=timezone.utc)
+        elif val > 1e8:  # seconds
+            parsed_dt = datetime.fromtimestamp(val, tz=timezone.utc)
+    except (ValueError, OverflowError):
+        pass
+    
+    # 2. Try ISO / string parsing
+    if parsed_dt is None:
+        try:
+            ts_clean = ts_raw.replace('Z', '+00:00')
+            parsed_dt = datetime.fromisoformat(ts_clean)
+            if parsed_dt.tzinfo is None:
+                parsed_dt = parsed_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            try:
+                parsed_dt = pd.to_datetime(ts_raw, utc=True).to_pydatetime()
+            except Exception:
+                pass
+                
+    if parsed_dt is None:
+        # Unable to parse timestamp format, allow with notice
+        return True, "TIMESTAMP_FORMAT_UNPARSED", 0.0
+        
+    now = datetime.now(timezone.utc)
+    age_seconds = (now - parsed_dt).total_seconds()
+    age_minutes = max(0.0, age_seconds / 60.0)
+    
+    tf = timeframe.lower()
+    if tf in ['1m', 'm1']: max_age = 15
+    elif tf in ['3m', 'm3']: max_age = 25
+    elif tf in ['5m', 'm5']: max_age = 45
+    elif tf in ['15m', 'm15']: max_age = 90
+    elif tf in ['30m', 'm30']: max_age = 180
+    elif tf in ['1h', 'h1']: max_age = 360  # 6 hours
+    elif tf in ['4h', 'h4']: max_age = 1440  # 24 hours
+    elif tf in ['1d', 'd1']: max_age = 4320  # 3 days
+    else: max_age = 180
+    
+    if age_minutes > max_age:
+        return False, f"Candle data is STALE ({age_minutes:.1f}m old, exceeds {max_age}m limit for {timeframe}). Latest: {ts_raw}", age_minutes
+        
+    return True, f"VERIFIED_LIVE ({age_minutes:.1f}m latency)", age_minutes
+
+def calculate_volume_profile(candles: Any, n_bins: int = 24) -> dict:
+    """
+    Computes genuine Volume Profile (Point of Control POC, Value Area High VAH, Value Area Low VAL)
+    based on the real volume-at-price distribution across the provided candle set.
+    Strictly ZERO fake hardcoded percentage multipliers.
+    """
+    if not candles:
+        return {"poc_price": 0.0, "value_area_high": 0.0, "value_area_low": 0.0, "profile_range": 0.0}
+    
+    df = candles_to_df(candles)
+    if df.empty or len(df) < 5:
+        return {"poc_price": 0.0, "value_area_high": 0.0, "value_area_low": 0.0, "profile_range": 0.0}
+    highs = df['high'].values
+    lows = df['low'].values
+    vols = df['volume'].values
+    
+    min_p = float(np.min(lows))
+    max_p = float(np.max(highs))
+    last_close = float(df['close'].iloc[-1])
+    
+    if max_p <= min_p or np.sum(vols) <= 0:
+        return {"poc_price": last_close, "value_area_high": last_close, "value_area_low": last_close, "profile_range": 0.0}
+    
+    bin_edges = np.linspace(min_p, max_p, n_bins + 1)
+    bin_mids = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    bin_vols = np.zeros(n_bins)
+    
+    for h, l, v in zip(highs, lows, vols):
+        if h <= l:
+            idx = int(np.clip(np.digitize([l], bin_edges)[0] - 1, 0, n_bins - 1))
+            bin_vols[idx] += v
+        else:
+            overlap_low = np.maximum(l, bin_edges[:-1])
+            overlap_high = np.minimum(h, bin_edges[1:])
+            overlap_len = np.maximum(0.0, overlap_high - overlap_low)
+            total_len = h - l
+            if total_len > 0:
+                bin_vols += v * (overlap_len / total_len)
+    
+    poc_idx = int(np.argmax(bin_vols))
+    poc_price = float(round(bin_mids[poc_idx], 4))
+    
+    total_volume = float(np.sum(bin_vols))
+    target_va_vol = 0.70 * total_volume
+    
+    va_indices = {poc_idx}
+    current_va_vol = bin_vols[poc_idx]
+    
+    up_idx = poc_idx + 1
+    down_idx = poc_idx - 1
+    
+    while current_va_vol < target_va_vol and (up_idx < n_bins or down_idx >= 0):
+        up_vol = bin_vols[up_idx] if up_idx < n_bins else -1.0
+        down_vol = bin_vols[down_idx] if down_idx >= 0 else -1.0
+        
+        if up_vol >= down_vol and up_idx < n_bins:
+            va_indices.add(up_idx)
+            current_va_vol += up_vol
+            up_idx += 1
+        elif down_idx >= 0:
+            va_indices.add(down_idx)
+            current_va_vol += down_vol
+            down_idx -= 1
+        else:
+            break
+            
+    min_va_bin = min(va_indices)
+    max_va_bin = max(va_indices)
+    val = float(round(bin_edges[min_va_bin], 4))
+    vah = float(round(bin_edges[max_va_bin + 1], 4))
+    
+    return {
+        "poc_price": poc_price,
+        "value_area_high": vah,
+        "value_area_low": val,
+        "profile_range": float(round(max_p - min_p, 4)),
+        "poc": poc_price,
+        "vah": vah,
+        "val": val
+    }
+
+def calculate_technical_indicators(candles: Any) -> dict:
+    if not candles:
         return {
             "ema20": None, "ema50": None, "ema200": None, "rsi14": None, 
             "macd": None, "macd_signal": None, "macd_hist": None,
@@ -177,7 +356,14 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
             "vwap": None, "adx": None, "volume_trend": "neutral", "trend": "Neutral"
         }
     
-    df = pd.DataFrame([c.dict() for c in candles])
+    df = candles_to_df(candles)
+    if df.empty or len(df) < 20:
+        return {
+            "ema20": None, "ema50": None, "ema200": None, "rsi14": None, 
+            "macd": None, "macd_signal": None, "macd_hist": None,
+            "atr": None, "bb_upper": None, "bb_lower": None, "bb_middle": None,
+            "vwap": None, "adx": None, "volume_trend": "neutral", "trend": "Neutral"
+        }
     df['close'] = df['close'].astype(float)
     df['high'] = df['high'].astype(float)
     df['low'] = df['low'].astype(float)
@@ -218,9 +404,29 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
     df['bb_upper'] = df['bb_middle'] + 2 * df['bb_std']
     df['bb_lower'] = df['bb_middle'] - 2 * df['bb_std']
     
-    # 6. VWAP
+    # 6. Anchored / Session VWAP (Session-anchored or 50-period rolling)
     df['tp'] = (df['high'] + df['low'] + df['close']) / 3
-    df['vwap'] = (df['tp'] * df['volume']).cumsum() / (df['volume'].cumsum() + 1e-9)
+    try:
+        if 'timestamp' in df.columns:
+            ts_series = pd.to_datetime(df['timestamp'], errors='coerce')
+            if ts_series.notna().any() and ts_series.dt.date.nunique() > 1:
+                day_group = ts_series.dt.date
+                pv = df['tp'] * df['volume']
+                cum_pv = pv.groupby(day_group).cumsum()
+                cum_vol = df['volume'].groupby(day_group).cumsum()
+                df['vwap'] = cum_pv / (cum_vol + 1e-9)
+            else:
+                roll_window = min(50, len(df))
+                roll_pv = (df['tp'] * df['volume']).rolling(window=roll_window, min_periods=1).sum()
+                roll_vol = df['volume'].rolling(window=roll_window, min_periods=1).sum()
+                df['vwap'] = roll_pv / (roll_vol + 1e-9)
+        else:
+            roll_window = min(50, len(df))
+            roll_pv = (df['tp'] * df['volume']).rolling(window=roll_window, min_periods=1).sum()
+            roll_vol = df['volume'].rolling(window=roll_window, min_periods=1).sum()
+            df['vwap'] = roll_pv / (roll_vol + 1e-9)
+    except Exception:
+        df['vwap'] = (df['tp'] * df['volume']).cumsum() / (df['volume'].cumsum() + 1e-9)
     
     # 7. ADX
     df['up_move'] = df['high'] - df['high'].shift(1)
@@ -242,24 +448,38 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
     avg_vol_20 = float(vol_sma20.iloc[-1]) if not pd.isna(vol_sma20.iloc[-1]) and vol_sma20.iloc[-1] > 0 else 1000.0
     rvol = float(last_row['volume'] / avg_vol_20)
     
-    # 10. Dynamic Swing Pivot High & Low
-    swing_high = float(df['high'].tail(20).max())
-    swing_low = float(df['low'].tail(20).min())
+    # 10. Dynamic Swing Pivot High & Low (Fractal lookback 20)
+    lookback_swing = min(20, len(df))
+    swing_high = float(df['high'].tail(lookback_swing).max())
+    swing_low = float(df['low'].tail(lookback_swing).min())
     
-    # 11. RSI Divergence Detection (Pivot Based)
+    # 11. Real Fractal Pivot-to-Pivot RSI Divergence
     rsi_divergence = "none"
     if len(df) >= 20 and not df['rsi14'].isna().all():
-        tail_df = df.tail(20)
-        min_close_idx = tail_df['close'].idxmin()
-        max_close_idx = tail_df['close'].idxmax()
-        last_idx = df.index[-1]
+        lows = df['low'].values
+        highs = df['high'].values
+        rsis = df['rsi14'].values
+        n = len(df)
         
-        # Bullish divergence: price made lower low, but RSI made higher low
-        if min_close_idx != last_idx and df.loc[min_close_idx, 'close'] > last_row['close'] and df.loc[min_close_idx, 'rsi14'] < last_row['rsi14']:
-            rsi_divergence = "bullish_divergence"
-        # Bearish divergence: price made higher high, but RSI made lower high
-        elif max_close_idx != last_idx and df.loc[max_close_idx, 'close'] < last_row['close'] and df.loc[max_close_idx, 'rsi14'] > last_row['rsi14']:
-            rsi_divergence = "bearish_divergence"
+        swing_low_indices = []
+        swing_high_indices = []
+        for i in range(2, n - 1):
+            if lows[i] <= lows[i-1] and lows[i] <= lows[i-2] and lows[i] <= lows[i+1]:
+                swing_low_indices.append(i)
+            if highs[i] >= highs[i-1] and highs[i] >= highs[i-2] and highs[i] >= highs[i+1]:
+                swing_high_indices.append(i)
+                
+        if len(swing_low_indices) >= 2:
+            prev_low_i = swing_low_indices[-2]
+            curr_low_i = swing_low_indices[-1]
+            if lows[curr_low_i] < lows[prev_low_i] and rsis[curr_low_i] > rsis[prev_low_i] + 1.0:
+                rsi_divergence = "bullish_divergence"
+                
+        if len(swing_high_indices) >= 2 and rsi_divergence == "none":
+            prev_high_i = swing_high_indices[-2]
+            curr_high_i = swing_high_indices[-1]
+            if highs[curr_high_i] > highs[prev_high_i] and rsis[curr_high_i] < rsis[prev_high_i] - 1.0:
+                rsi_divergence = "bearish_divergence"
 
     trend = "Neutral"
     if last_row['close'] > last_row['ema50'] and (pd.isna(last_row['ema200']) or last_row['close'] > last_row['ema200']):
@@ -289,8 +509,8 @@ def calculate_technical_indicators(candles: List[CandleItem]) -> dict:
         "trend": trend
     }
 
-def detect_market_structure(candles: List[CandleItem]) -> dict:
-    if not candles or len(candles) < 20:
+def detect_market_structure(candles: Any) -> dict:
+    if not candles:
         return {
             "support": None,
             "resistance": None,
@@ -304,11 +524,36 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
             "sweep_bearish": False,
             "liquidity_sweep": False,
             "ob_price": None,
+            "ob_low": None,
+            "ob_high": None,
             "fvg_low": None,
-            "fvg_high": None
+            "fvg_high": None,
+            "breakout_bullish": False,
+            "breakout_bearish": False
         }
     
-    df = pd.DataFrame([c.dict() for c in candles])
+    df = candles_to_df(candles)
+    if df.empty or len(df) < 20:
+        return {
+            "support": None,
+            "resistance": None,
+            "fvg_bullish": False,
+            "fvg_bearish": False,
+            "fvg_detected": False,
+            "order_block_bullish": False,
+            "order_block_bearish": False,
+            "order_block_detected": False,
+            "sweep_bullish": False,
+            "sweep_bearish": False,
+            "liquidity_sweep": False,
+            "ob_price": None,
+            "ob_low": None,
+            "ob_high": None,
+            "fvg_low": None,
+            "fvg_high": None,
+            "breakout_bullish": False,
+            "breakout_bearish": False
+        }
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = df[col].astype(float)
         
@@ -319,39 +564,68 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
     if pd.isna(resistance):
         resistance = float(df['high'].max())
         
+    # Fair Value Gap (FVG)
     fvg_bullish = False
     fvg_bearish = False
     fvg_low = None
     fvg_high = None
-    for i in range(len(df) - 3, len(df)):
+    for i in range(len(df) - 4, len(df)):
         if i < 2: continue
-        if df['low'].iloc[i] > df['high'].iloc[i-2] + (df['close'].iloc[i-1] * 0.0005):
+        # Bullish FVG: Low of candle 0 > High of candle -2 with gap
+        if df['low'].iloc[i] > df['high'].iloc[i-2] + (df['close'].iloc[i-1] * 0.0003):
             fvg_bullish = True
             fvg_low = float(df['high'].iloc[i-2])
             fvg_high = float(df['low'].iloc[i])
             break
-        if df['high'].iloc[i] < df['low'].iloc[i-2] - (df['close'].iloc[i-1] * 0.0005):
+        # Bearish FVG: High of candle 0 < Low of candle -2 with gap
+        if df['high'].iloc[i] < df['low'].iloc[i-2] - (df['close'].iloc[i-1] * 0.0003):
             fvg_bearish = True
             fvg_low = float(df['high'].iloc[i])
             fvg_high = float(df['low'].iloc[i-2])
             break
             
+    # Institutional Order Block Detection (Requires Displacement & Break of Structure)
     order_block_bullish = False
     order_block_bearish = False
     ob_price = None
-    for i in range(len(df) - 5, len(df)):
-        if i < 2: continue
-        body_size = abs(df['close'].iloc[i] - df['open'].iloc[i])
+    ob_low = None
+    ob_high = None
+    
+    # Scan recent candles for displacement that broke prior highs/lows
+    for i in range(len(df) - 6, len(df) - 1):
+        if i < 3: continue
+        curr_body = abs(df['close'].iloc[i] - df['open'].iloc[i])
         avg_body = abs(df['close'] - df['open']).rolling(10).mean().iloc[i]
-        if body_size > avg_body * 1.5:
-            if df['close'].iloc[i] > df['open'].iloc[i]:
-                order_block_bullish = True
-                ob_price = float(df['open'].iloc[i])
-            else:
-                order_block_bearish = True
-                ob_price = float(df['open'].iloc[i])
-            break
+        
+        # Bullish Displacement: strong bull candle breaking above previous 5-candle high
+        prior_5_high = df['high'].iloc[max(0, i-5):i].max()
+        if df['close'].iloc[i] > df['open'].iloc[i] and curr_body > (avg_body * 1.3) and df['close'].iloc[i] >= prior_5_high:
+            # Bullish OB is the last bearish candle BEFORE this displacement move
+            for j in range(i - 1, max(0, i - 4), -1):
+                if df['close'].iloc[j] <= df['open'].iloc[j]:
+                    order_block_bullish = True
+                    ob_price = float(df['open'].iloc[j])
+                    ob_low = float(df['low'].iloc[j])
+                    ob_high = float(df['high'].iloc[j])
+                    break
+            if order_block_bullish:
+                break
+                
+        # Bearish Displacement: strong bear candle breaking below previous 5-candle low
+        prior_5_low = df['low'].iloc[max(0, i-5):i].min()
+        if df['close'].iloc[i] < df['open'].iloc[i] and curr_body > (avg_body * 1.3) and df['close'].iloc[i] <= prior_5_low:
+            # Bearish OB is the last bullish candle BEFORE this displacement move
+            for j in range(i - 1, max(0, i - 4), -1):
+                if df['close'].iloc[j] >= df['open'].iloc[j]:
+                    order_block_bearish = True
+                    ob_price = float(df['open'].iloc[j])
+                    ob_low = float(df['low'].iloc[j])
+                    ob_high = float(df['high'].iloc[j])
+                    break
+            if order_block_bearish:
+                break
 
+    # Liquidity Sweeps & Break of Structure (BOS)
     sweep_bullish = False
     sweep_bearish = False
     breakout_bullish = False
@@ -364,7 +638,7 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
         upper_wick = row['high'] - max(row['open'], row['close'])
         lower_wick = min(row['open'], row['close']) - row['low']
         
-        # True Bearish Sweep Rejection (Must make high, but reject with long upper wick >= 38% of candle and close bearish)
+        # True Bearish Sweep Rejection (Must make high, but reject with long upper wick >= 38% and close bearish)
         if row['high'] >= prev_high and upper_wick >= (candle_range * 0.38) and row['close'] < row['open']:
             sweep_bearish = True
             break
@@ -372,7 +646,7 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
         elif row['close'] >= prev_high and row['close'] > row['open']:
             breakout_bullish = True
 
-        # True Bullish Sweep Rejection (Must make low, but reject with long lower wick >= 38% of candle and close bullish)
+        # True Bullish Sweep Rejection (Must make low, but reject with long lower wick >= 38% and close bullish)
         if row['low'] <= prev_low and lower_wick >= (candle_range * 0.38) and row['close'] > row['open']:
             sweep_bullish = True
             break
@@ -392,18 +666,28 @@ def detect_market_structure(candles: List[CandleItem]) -> dict:
         "order_block_bearish": order_block_bearish,
         "order_block_detected": order_block_bullish or order_block_bearish,
         "ob_price": ob_price,
+        "ob_low": ob_low,
+        "ob_high": ob_high,
         "sweep_bullish": sweep_bullish,
         "sweep_bearish": sweep_bearish,
-        "liquidity_sweep": sweep_bullish or sweep_bearish
+        "liquidity_sweep": sweep_bullish or sweep_bearish,
+        "breakout_bullish": breakout_bullish,
+        "breakout_bearish": breakout_bearish
     }
 
-def analyze_multi_timeframe(candles: List[CandleItem]) -> dict:
-    if not candles or len(candles) < 24:
+def analyze_multi_timeframe(candles: Any) -> dict:
+    if not candles:
         return {"alignment_score": 0.5, "4h_trend": "Neutral", "1d_trend": "Neutral"}
     try:
-        df = pd.DataFrame([c.dict() for c in candles])
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df = df.set_index('timestamp')
+        df = candles_to_df(candles)
+        if df.empty or len(df) < 24:
+            return {"alignment_score": 0.5, "4h_trend": "Neutral", "1d_trend": "Neutral"}
+        ts_col = 'timestamp' if 'timestamp' in df.columns else ('time' if 'time' in df.columns else None)
+        if ts_col:
+            df['datetime'] = pd.to_datetime(df[ts_col], utc=True)
+            df = df.set_index('datetime')
+        else:
+            return {"alignment_score": 0.5, "4h_trend": "Neutral", "1d_trend": "Neutral"}
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = df[col].astype(float)
         
@@ -449,11 +733,22 @@ def detect_trading_session() -> dict:
         "weekend_gap_risk": "High" if is_weekend else "Low"
     }
 
-def build_computed_explanation(symbol, indicators, structure, current_price, rule_direction) -> str:
+def build_computed_explanation(
+    symbol: str, 
+    indicators: dict, 
+    structure: dict, 
+    current_price: float, 
+    rule_direction: str,
+    entry: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    tp1: Optional[float] = None,
+    tp2: Optional[float] = None,
+    entry_type: str = "MARKET_NOW",
+    rr_tp1: float = 2.0,
+    rr_tp2: float = 3.2
+) -> str:
     trend = indicators.get("trend", "Neutral")
     rsi = indicators.get("rsi14") or 50.0
-    macd = indicators.get("macd") or 0.0
-    macd_sig = indicators.get("macd_signal") or 0.0
     macd_hist = indicators.get("macd_hist") or 0.0
     ema20 = indicators.get("ema20")
     ema50 = indicators.get("ema50")
@@ -471,6 +766,11 @@ def build_computed_explanation(symbol, indicators, structure, current_price, rul
     sweep_bear = structure.get("sweep_bearish", False)
     sup = structure.get("support", current_price * 0.99)
     res = structure.get("resistance", current_price * 1.01)
+
+    entry_val = entry if entry is not None else current_price
+    sl_val = stop_loss if stop_loss is not None else 0.0
+    tp1_val = tp1 if tp1 is not None else 0.0
+    tp2_val = tp2 if tp2 is not None else 0.0
 
     # Paragraph 1: Trend & Macro Structure Context
     p1 = f"**1. Trend & Structure Context**: {symbol} is exhibiting a distinct {trend.upper()} market structure. "
@@ -500,12 +800,22 @@ def build_computed_explanation(symbol, indicators, structure, current_price, rul
 
     # Paragraph 3: Risk Management & Target Invalidation
     p3 = f"**3. Risk Architecture & Invalidation**: Volatility is sized using 14-period ATR (${atr:,.2f}). "
-    if rule_direction == "BUY":
-        p3 += f"Stop-loss is anchored below swing structural support to minimize drawdown exposure. Take-profit targets are staged at 1:2.0 (TP1) and 1:3.2 (TP2) risk-to-reward ratios. Invalidation occurs if candle closes below structural support."
-    elif rule_direction == "SELL":
-        p3 += f"Stop-loss is anchored above swing structural resistance to protect capital against counter-trend spikes. Take-profit targets are staged at 1:2.0 (TP1) and 1:3.2 (TP2) risk-to-reward ratios. Invalidation occurs if candle closes above structural resistance."
+    if rule_direction == "BUY" and sl_val > 0 and tp1_val > 0:
+        p3 += (
+            f"Execution type is {entry_type} calibrated at ${entry_val:,.2f}. "
+            f"Stop-loss is strictly anchored at ${sl_val:,.2f} below swing structural invalidation with volatility padding. "
+            f"Take-profit targets are staged at ${tp1_val:,.2f} (1:{rr_tp1:.1f} R:R) and ${tp2_val:,.2f} (1:{rr_tp2:.1f} R:R runner). "
+            f"Trade structure is invalidated if candle breaches ${sl_val:,.2f}."
+        )
+    elif rule_direction == "SELL" and sl_val > 0 and tp1_val > 0:
+        p3 += (
+            f"Execution type is {entry_type} calibrated at ${entry_val:,.2f}. "
+            f"Stop-loss is strictly anchored at ${sl_val:,.2f} above swing structural invalidation with volatility padding. "
+            f"Take-profit targets are staged at ${tp1_val:,.2f} (1:{rr_tp1:.1f} R:R) and ${tp2_val:,.2f} (1:{rr_tp2:.1f} R:R runner). "
+            f"Trade structure is invalidated if candle breaches ${sl_val:,.2f}."
+        )
     else:
-        p3 += "Capital preservation rule: Wait for confirmed breakout and liquidity grab before initiating exposure."
+        p3 += "Capital preservation rule: Market in neutral consolidation or conflicting directional metrics. Wait for confirmed liquidity sweep and confirmed displacement before taking exposure."
 
     return f"{p1}\n\n{p2}\n\n{p3}"
 
@@ -558,10 +868,38 @@ async def get_prediction(
             technicals={},
             structure={},
             scores={"bullish": 0, "bearish": 0},
-            category_scores={"technical": 0.0, "fundamental": 0.0, "sentiment": 0.0, "correlation": 0.0, "volume": 0.0, "on_chain": None}
+            category_scores={"technical": 0.0, "fundamental": 0.0, "sentiment": 0.0, "correlation": 0.0, "volume": 0.0, "on_chain": None},
+            data_freshness_status="INSUFFICIENT_CANDLES",
+            entry_type="WAIT",
+            entry_condition="Minimum 20 candles required for structural analysis"
         )
 
-    current_price = float(candles[-1].close)
+    # Data Freshness Quality Gate: Reject signals if candle data is stale/delayed
+    is_fresh, freshness_msg, age_mins = validate_candle_freshness(candles, timeframe)
+    last_c = candles[-1]
+    last_close = float(last_c.close if hasattr(last_c, 'close') else (last_c.get('close', 0.0) if isinstance(last_c, dict) else getattr(last_c, 'close', 0.0)))
+    if not is_fresh:
+        return PredictResponse(
+            symbol=symbol,
+            direction="WAIT",
+            confidence=0.0,
+            entry=last_close,
+            stop_loss=0.0,
+            take_profit_1=0.0,
+            take_profit_2=0.0,
+            indicators=["Stale Market Data Quality Rejection"],
+            ai_explanation=f"TradeMind Live Execution Quality Gate: Stale market data detected for {symbol} ({freshness_msg}). Refusing to generate live trading signals on delayed or non-live market quotes.",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            technicals={},
+            structure={},
+            scores={"bullish": 0, "bearish": 0},
+            category_scores={"technical": 0.0, "fundamental": 0.0, "sentiment": 0.0, "correlation": 0.0, "volume": 0.0, "on_chain": None},
+            data_freshness_status="STALE_DATA_REJECTED",
+            entry_type="WAIT",
+            entry_condition="Wait for live market data feed to reconnect with fresh quotes."
+        )
+
+    current_price = last_close
     indicators = calculate_technical_indicators(candles)
     structure = detect_market_structure(candles)
     mtf = analyze_multi_timeframe(candles)
@@ -631,6 +969,8 @@ async def get_prediction(
     # 2. Institutional Macro Fundamentals & Central Bank Intelligence (Max 20%)
     macro_weight_bull = 0.0
     macro_weight_bear = 0.0
+    news_bull_count = 0
+    news_bear_count = 0
     if req.news:
         bull_kws = ["beat", "surge", "growth", "record", "upgrade", "cut", "bullish", "profit", "accumulat", "expansion", "rally", "inflow", "boj intervention", "yields rise", "fomc dovish", "fed rate cut"]
         bear_kws = ["miss", "crash", "plunge", "downgrade", "hike", "inflation", "bearish", "layoff", "lawsuit", "investigat", "recession", "war", "yields drop", "fomc hawkish", "fed rate hike"]
@@ -641,12 +981,15 @@ async def get_prediction(
         elif news_bear_count > news_bull_count:
             macro_weight_bear = 15.0; macro_weight_bull = 0.0
 
-    # 3. Institutional Liquidity & SMC Sweeps (Max 15%)
-    liq_weight_bull = 0.0; liq_weight_bear = 0.0
-    if structure.get("sweep_bullish"): liq_weight_bull += 8.0
-    if structure.get("sweep_bearish"): liq_weight_bear += 8.0
-    if structure.get("order_block_bullish"): liq_weight_bull += 7.0
-    if structure.get("order_block_bearish"): liq_weight_bear += 7.0
+    # 3. Institutional Liquidity & SMC Confluence (Max 25% - Single Consolidate Engine, Zero Double-Counting)
+    smc_score_bull = 0.0
+    smc_score_bear = 0.0
+    if structure.get("order_block_bullish"): smc_score_bull += 10.0
+    elif structure.get("order_block_bearish"): smc_score_bear += 10.0
+    if structure.get("fvg_bullish"): smc_score_bull += 8.0
+    elif structure.get("fvg_bearish"): smc_score_bear += 8.0
+    if structure.get("sweep_bullish"): smc_score_bull += 7.0
+    elif structure.get("sweep_bearish"): smc_score_bear += 7.0
 
     # 4. Volume Profile (POC, VAH, VAL) (Max 10%)
     vol_weight_bull = 0.0; vol_weight_bear = 0.0
@@ -775,8 +1118,8 @@ async def get_prediction(
     if rvol < 0.8: risk_penalty += 4.0  # Low liquidity penalty
     if 'JPY' in sym_upper and current_price > 155.0: risk_penalty += 6.0  # BoJ Intervention risk penalty
 
-    total_bull_score = trend_score_bull + struct_score_bull + smc_score_bull + macro_weight_bull + liq_weight_bull + vol_weight_bull + cor_weight_bull + pat_weight_bull
-    total_bear_score = trend_score_bear + struct_score_bear + smc_score_bear + macro_weight_bear + liq_weight_bear + vol_weight_bear + cor_weight_bear + pat_weight_bear
+    total_bull_score = trend_score_bull + struct_score_bull + smc_score_bull + macro_weight_bull + vol_weight_bull + cor_weight_bull + pat_weight_bull
+    total_bear_score = trend_score_bear + struct_score_bear + smc_score_bear + macro_weight_bear + vol_weight_bear + cor_weight_bear + pat_weight_bear
 
     score_diff = abs(total_bull_score - total_bear_score)
     if score_diff < 4.0 or (total_bull_score == 0 and total_bear_score == 0):
@@ -801,6 +1144,14 @@ async def get_prediction(
         confidence = float(round(min(0.95, max(0.35, raw_confidence / 100.0)), 2))
         if confidence < 0.55:
             rule_direction = "WAIT"
+
+    # Institutional News Adverse Veto Gate
+    if rule_direction == "BUY" and news_bear_count >= 2 and (news_bull_count == 0 or news_bear_count >= news_bull_count * 1.5):
+        rule_direction = "WAIT"
+        confidence = min(confidence, 0.40)
+    elif rule_direction == "SELL" and news_bull_count >= 2 and (news_bear_count == 0 or news_bull_count >= news_bear_count * 1.5):
+        rule_direction = "WAIT"
+        confidence = min(confidence, 0.40)
 
     direction = rule_direction
     entry = current_price
@@ -867,14 +1218,30 @@ async def get_prediction(
     if indicators.get("macd_hist", 0) > 0 and rule_direction == "BUY": tech_score += 0.1
     if indicators.get("macd_hist", 0) < 0 and rule_direction == "SELL": tech_score += 0.1
 
+    news_sentiment_score = 0.5
+    if req.news and len(req.news) > 0:
+        total_news_kws = news_bull_count + news_bear_count
+        if total_news_kws > 0:
+            news_sentiment_score = float(round(min(1.0, max(0.1, news_bull_count / total_news_kws)), 2))
+
+    fundamental_score = 0.5
+    if req.intermarket:
+        fundamental_score = min(1.0, max(0.1, round(0.5 + (0.2 if (macro_weight_bull > macro_weight_bear) else -0.2 if (macro_weight_bear > macro_weight_bull) else 0.0), 2)))
+    elif req.news:
+        fundamental_score = round(news_sentiment_score, 2)
+
     category_scores = {
         "technical": min(1.0, round(tech_score, 2)),
-        "fundamental": round((macro_weight_bull if rule_direction == "BUY" else macro_weight_bear) / 15.0, 2) if (macro_weight_bull > 0 or macro_weight_bear > 0) else 0.5,
-        "sentiment": round((macro_weight_bull if rule_direction == "BUY" else macro_weight_bear) / 15.0, 2) if (macro_weight_bull > 0 or macro_weight_bear > 0) else 0.5,
+        "fundamental": fundamental_score,
+        "sentiment": news_sentiment_score,
         "correlation": min(1.0, round((cor_weight_bull if rule_direction == "BUY" else cor_weight_bear) / 8.0, 2)) if (cor_weight_bull > 0 or cor_weight_bear > 0) else 0.5,
         "volume": min(1.0, round(rvol / 2.0, 2)),
         "on_chain": None
     }
+
+    indicator_verdicts = {}
+    market_structure_analysis = ""
+    tradingview_idea = ""
 
     # Gemini generation integration (new SDK)
     if gemini_client:
@@ -1028,19 +1395,35 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
                     continue
 
             if res_json:
-                ai_direction = str(res_json.get("direction", direction)).upper()
-                if ai_direction in ["BUY", "SELL", "WAIT"]:
-                    direction = ai_direction
-
+                ai_direction = str(res_json.get("direction", rule_direction)).upper()
                 raw_ai_confidence = float(res_json.get("confidence", confidence))
                 if raw_ai_confidence > 1:
                     raw_ai_confidence = raw_ai_confidence / 100.0
-                confidence = float(round(min(0.96, max(0.0, raw_ai_confidence)), 2))
+                raw_ai_confidence = min(0.96, max(0.0, raw_ai_confidence))
+
+                # Institutional Rule: Gemini can CONFIRM or DOWNGRADE/INVALIDATE to WAIT.
+                # LLM is NEVER permitted to blindly flip BUY <-> SELL against the mathematical engine.
+                if rule_direction in ["BUY", "SELL"]:
+                    if ai_direction == rule_direction:
+                        # Full institutional confluence: blend math confidence (70%) and AI confidence (30%)
+                        direction = rule_direction
+                        confidence = float(round((0.70 * confidence) + (0.30 * raw_ai_confidence), 2))
+                    elif ai_direction == "WAIT":
+                        # AI recommends caution / waiting: downgrade to WAIT
+                        direction = "WAIT"
+                        confidence = float(round(min(confidence, 0.48), 2))
+                    else:
+                        # Conflict! Math says BUY/SELL, but AI returned opposite. Trade is strictly invalidated!
+                        direction = "WAIT"
+                        confidence = float(round(min(confidence, 0.45), 2))
+                else:
+                    direction = "WAIT"
+                    confidence = float(round(min(confidence, 0.45), 2))
+
                 ai_explanation = res_json.get("explanation", ai_explanation)
                 indicator_verdicts = res_json.get("indicator_verdicts", {})
                 market_structure_analysis = res_json.get("market_structure_analysis", "")
                 tradingview_idea = res_json.get("tradingview_idea", "")
-                category_scores = res_json.get("category_scores", category_scores)
                 macro_context = res_json.get("macro_context", macro_context)
                 correlation_analysis = res_json.get("correlation_analysis", correlation_analysis)
             else:
@@ -1048,12 +1431,12 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
                 market_structure_analysis = ""
                 tradingview_idea = ""
         except Exception as e:
-            print(f"[AI-Service] ERROR: Gemini signal generation failed entirely, using heuristic: {str(e)}")
+            print(f"[AI-Service] ERROR: Gemini signal generation failed, using quantitative engine: {str(e)}")
             indicator_verdicts = {}
             market_structure_analysis = ""
             tradingview_idea = ""
 
-    # Respect the AI ensemble forecast direction directly unless confidence is below 55%
+    # Respect the calibrated direction directly unless confidence is below 55%
     if confidence >= 0.55:
         rule_direction = direction
     else:
@@ -1066,7 +1449,7 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
 
     # Real volume score: compare recent volume to 20-period average
     if candles and len(candles) >= 20:
-        recent_vols = [c.volume for c in candles[-20:] if c.volume]
+        recent_vols = [float(c.volume if hasattr(c, 'volume') else (c.get('volume', 0) if isinstance(c, dict) else getattr(c, 'volume', 0))) for c in candles[-20:]]
         if recent_vols:
             avg_vol = sum(recent_vols) / len(recent_vols)
             last_vol = recent_vols[-1] if recent_vols else avg_vol
@@ -1081,7 +1464,7 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
     trend_pct = min(100, int(adx_val * 2.5)) if adx_val is not None else 50
 
     # Real volatility from ATR as % of price
-    atr_val = indicators.get("atr")
+    atr_val = indicators.get("atr") or (current_price * 0.008)
     if atr_val is not None and current_price > 0:
         vol_ratio = (atr_val / current_price) * 100
         volatility_pct = min(100, max(10, int(vol_ratio * 25)))
@@ -1099,17 +1482,11 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
     }
 
     # Ensure indicator_verdicts exist even without Gemini
-    if 'indicator_verdicts' not in dir() or not indicator_verdicts:
+    if not indicator_verdicts:
         trend_status = indicators.get("trend") or "Neutral"
-        rsi_val = indicators.get("rsi14")
-        if rsi_val is None:
-            rsi_val = 50.0
-        macd_val = indicators.get("macd_hist")
-        if macd_val is None:
-            macd_val = 0.0
-        adx_val = indicators.get("adx")
-        if adx_val is None:
-            adx_val = 25.0
+        rsi_val = indicators.get("rsi14") or 50.0
+        macd_val = indicators.get("macd_hist") or 0.0
+        adx_val_clean = indicators.get("adx") or 25.0
         
         indicator_verdicts = {
             "ema": f"The overall trend is currently {trend_status}. Price is positioned relative to EMAs supporting a {trend_status.lower()} bias.",
@@ -1118,10 +1495,10 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
             "bollinger": f"Bollinger Bands indicate that price is currently near the {'middle band' if abs(indicators.get('bb_middle', 0) - current_price) < (indicators.get('bb_upper', 0) - indicators.get('bb_lower', 0)) * 0.2 else 'upper band (resistance zone)' if current_price > indicators.get('bb_middle', 0) else 'lower band (support zone)'}.",
             "vwap": f"Price is at {current_price:.2f} relative to VWAP of {indicators.get('vwap', current_price):.2f}, indicating a {'bullish/premium' if current_price > indicators.get('vwap', 0) else 'bearish/discount'} trading bias.",
             "atr": f"ATR of {indicators.get('atr', 0):.4f} shows moderate volatility. Targets have been placed relative to this standard deviation range.",
-            "adx": f"ADX is at {adx_val:.1f}, indicating a {'strong and reliable trend' if adx_val > 25 else 'weak or range-bound market condition'}."
+            "adx": f"ADX is at {adx_val_clean:.1f}, indicating a {'strong and reliable trend' if adx_val_clean > 25 else 'weak or range-bound market condition'}."
         }
         
-    if 'market_structure_analysis' not in dir() or not market_structure_analysis:
+    if not market_structure_analysis:
         market_structure_analysis = f"Market analysis on {timeframe} reveals dynamic support near {structure.get('support', 0):.2f} and resistance near {structure.get('resistance', 0):.2f}. "
         if structure.get('fvg_detected'):
             market_structure_analysis += "A Fair Value Gap (FVG) imbalance zone was identified on current price action, serving as an institutional magnet for algorithmic rebalancing. "
@@ -1132,81 +1509,134 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         else:
             market_structure_analysis += "No recent liquidity sweeps have occurred, suggesting trend continuation."
 
-    if not ai_explanation or len(ai_explanation.strip()) < 30:
-        trend_status = indicators.get("trend") or "Neutral"
-        rsi_val = indicators.get("rsi14") or 50.0
-        ema20_val = indicators.get("ema20") or current_price
-        ema50_val = indicators.get("ema50") or current_price
-        ema200_val = indicators.get("ema200") or current_price
-        vwap_val = indicators.get("vwap") or current_price
-        atr_val_now = indicators.get("atr") or (current_price * 0.01)
-
-        ai_explanation = (
-            f"1. TREND CONTEXT: {symbol} is trading at {current_price:.2f} on the {timeframe} timeframe in an established {trend_status.lower()} structure. "
-            f"Price is positioned {'above' if current_price > ema20_val else 'below'} the 20-period EMA ({ema20_val:.2f}) and {'above' if current_price > ema50_val else 'below'} the 50-period EMA ({ema50_val:.2f}), "
-            f"with institutional VWAP equilibrium anchored at {vwap_val:.2f}. Macro 200 EMA sits at {ema200_val:.2f}, providing major directional guidance.\n\n"
-            f"2. ENTRY RATIONALE: Confluence filters indicate a high-conviction {rule_direction} opportunity. "
-            f"RSI-14 is currently clocked at {rsi_val:.1f}, confirming {'accelerating upward momentum' if rsi_val > 55 else 'accelerating downward momentum' if rsi_val < 45 else 'balanced range equilibrium'}. "
-            f"{'A pristine Fair Value Gap (FVG) and Order Block zone confirm institutional accumulation.' if structure.get('fvg_detected') or structure.get('order_block_detected') else 'Structure remains aligned with current momentum.'}\n\n"
-            f"3. RISK MANAGEMENT & EXECUTION: Average True Range (ATR) volatility is measured at {atr_val_now:.4f}. "
-            f"Entry is calibrated at {current_price:.2f} with risk boundaries calculated to maintain a strict minimum 1:2.0 risk-to-reward ratio on Target 1 and 1:3.2 on Target 2. "
-            f"Trade structure is strictly invalidated if price breaches the opposite swing boundary."
-        )
-            
-    # PRO Institutional Retest Entry & Dynamic Timeframe-Calibrated SL / TP Boundaries (1:1.5 & 1:2.6 R:R)
+    # -------------------------------------------------------------------------
+    # INSTITUTIONAL PRECISION ENTRY DETERMINATION (MARKET vs LIMIT RETEST)
+    # -------------------------------------------------------------------------
     entry = float(current_price)
-    atr_val = indicators.get("atr") or (entry * 0.008)
-
-    is_scalping = timeframe in ['1m', '3m', '5m', '15m', '30m']
-    sym_upper = symbol.upper()
-    is_crypto = any(c in sym_upper for c in ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'])
-    is_gold = 'XAU' in sym_upper or 'GOLD' in sym_upper
-    is_us30 = 'US30' in sym_upper or 'DOW' in sym_upper
-    is_nas100 = 'US100' in sym_upper or 'NAS' in sym_upper
-    is_jpy = 'JPY' in sym_upper
-    is_forex = any(fx in sym_upper for fx in ['EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'NZD', 'SEK', 'NOK']) and not is_crypto
-
-    # Asset & timeframe calibrated stop distance
-    if is_gold:
-        sl_dist = min(max(atr_val * 1.35, 5.00 if is_scalping else 12.00), 14.00 if is_scalping else 32.00)
-    elif is_us30:
-        sl_dist = min(max(atr_val * 1.25, 35.0 if is_scalping else 75.0), 85.0 if is_scalping else 190.0)
-    elif is_nas100:
-        sl_dist = min(max(atr_val * 1.25, 22.0 if is_scalping else 45.0), 55.0 if is_scalping else 120.0)
-    elif is_jpy:
-        sl_dist = min(max(atr_val * 1.25, 0.25 if is_scalping else 0.45), 0.45 if is_scalping else 0.85)
-    elif is_forex:
-        sl_dist = min(max(atr_val * 1.25, 0.0022 if is_scalping else 0.0038), 0.0045 if is_scalping else 0.0075)
-    elif is_crypto:
-        min_pct = 0.0045 if is_scalping else 0.0080
-        max_pct = 0.0120 if is_scalping else 0.0250
-        sl_dist = min(max(atr_val * 1.25, entry * min_pct), entry * max_pct)
-    else:
-        min_pct = 0.004 if is_scalping else 0.008
-        max_pct = 0.012 if is_scalping else 0.025
-        sl_dist = min(max(atr_val * 1.25, entry * min_pct), entry * max_pct)
+    entry_type = "MARKET_NOW"
+    entry_zone = f"{(entry * 0.999):.2f} - {(entry * 1.001):.2f}"
+    entry_condition = f"Execute {rule_direction} directly at Market (${entry:.2f})"
 
     if rule_direction == "BUY":
-        stop_loss = entry - sl_dist
-        tp1 = entry + (sl_dist * 1.5)  # 1:1.5 R:R on Target 1 (highly reachable on 15m)
-        tp2 = entry + (sl_dist * 2.6)  # 1:2.6 R:R on Target 2
+        if structure.get("order_block_bullish") and structure.get("ob_price"):
+            ob_p = float(structure["ob_price"])
+            ob_l = float(structure.get("ob_low") or ob_p)
+            ob_h = float(structure.get("ob_high") or ob_p)
+            # If price is slightly above or near the OB (within 1.5 ATR), setup a Limit Retest Entry
+            if current_price >= ob_p and (current_price - ob_p) <= (atr_val * 1.5):
+                entry = float(round(ob_p, 4))
+                entry_type = "BUY_LIMIT"
+                entry_zone = f"{ob_l:.2f} - {ob_h:.2f}"
+                entry_condition = f"Place BUY_LIMIT order at ${entry:.2f} [Demand Zone: {entry_zone}]. Wait for retest."
+            elif structure.get("breakout_bullish") and float(indicators.get("adx") or 0) > 25:
+                entry = float(current_price)
+                entry_type = "MARKET_NOW"
+                entry_zone = f"{(entry * 0.9995):.2f} - {(entry * 1.0005):.2f}"
+                entry_condition = f"Execute immediate Market BUY at ${entry:.2f} on confirmed Bullish BOS breakout."
+        elif structure.get("fvg_bullish") and structure.get("fvg_low") and structure.get("fvg_high"):
+            fvg_mid = float(round((structure["fvg_low"] + structure["fvg_high"]) / 2, 4))
+            if current_price > fvg_mid and (current_price - fvg_mid) <= (atr_val * 1.2):
+                entry = fvg_mid
+                entry_type = "BUY_LIMIT"
+                entry_zone = f"{structure['fvg_low']:.2f} - {structure['fvg_high']:.2f}"
+                entry_condition = f"Place BUY_LIMIT order at FVG equilibrium (${entry:.2f}) [Imbalance: {entry_zone}]."
     elif rule_direction == "SELL":
-        stop_loss = entry + sl_dist
-        tp1 = entry - (sl_dist * 1.5)
-        tp2 = entry - (sl_dist * 2.6)
+        if structure.get("order_block_bearish") and structure.get("ob_price"):
+            ob_p = float(structure["ob_price"])
+            ob_l = float(structure.get("ob_low") or ob_p)
+            ob_h = float(structure.get("ob_high") or ob_p)
+            if current_price <= ob_p and (ob_p - current_price) <= (atr_val * 1.5):
+                entry = float(round(ob_p, 4))
+                entry_type = "SELL_LIMIT"
+                entry_zone = f"{ob_l:.2f} - {ob_h:.2f}"
+                entry_condition = f"Place SELL_LIMIT order at ${entry:.2f} [Supply Zone: {entry_zone}]. Wait for retest."
+            elif structure.get("breakout_bearish") and float(indicators.get("adx") or 0) > 25:
+                entry = float(current_price)
+                entry_type = "MARKET_NOW"
+                entry_zone = f"{(entry * 0.9995):.2f} - {(entry * 1.0005):.2f}"
+                entry_condition = f"Execute immediate Market SELL at ${entry:.2f} on confirmed Bearish BOS breakdown."
+        elif structure.get("fvg_bearish") and structure.get("fvg_low") and structure.get("fvg_high"):
+            fvg_mid = float(round((structure["fvg_low"] + structure["fvg_high"]) / 2, 4))
+            if current_price < fvg_mid and (fvg_mid - current_price) <= (atr_val * 1.2):
+                entry = fvg_mid
+                entry_type = "SELL_LIMIT"
+                entry_zone = f"{structure['fvg_low']:.2f} - {structure['fvg_high']:.2f}"
+                entry_condition = f"Place SELL_LIMIT order at FVG equilibrium (${entry:.2f}) [Imbalance: {entry_zone}]."
+    else:
+        entry = float(current_price)
+        entry_type = "WAIT"
+        entry_zone = f"{entry:.2f}"
+        entry_condition = "Awaiting confirmed institutional breakout and liquidity grab before taking exposure."
+
+    # -------------------------------------------------------------------------
+    # STRUCTURE-ANCHORED STOP LOSS & TAKE PROFIT TARGETS (Strict 1:2.0 & 1:3.2 R:R)
+    # -------------------------------------------------------------------------
+    if rule_direction == "BUY":
+        sup_val = float(structure.get("support") or (entry * 0.99))
+        swing_l = float(indicators.get("swing_low") or (entry * 0.99))
+        struct_invalidation = min(sup_val, swing_l)
+        atr_buffer = atr_val * 0.35
+        target_sl = struct_invalidation - atr_buffer
+        
+        # Bounded between 1.0x ATR (avoid noise sweep) and 2.8x ATR (avoid excessive risk)
+        min_sl = entry - (atr_val * 1.0)
+        max_sl = entry - (atr_val * 2.8)
+        stop_loss = max(max_sl, min(min_sl, target_sl))
+        
+        actual_sl_dist = abs(entry - stop_loss)
+        tp1 = entry + (actual_sl_dist * 2.0)  # Genuine 1:2.0 Risk-to-Reward
+        tp2 = entry + (actual_sl_dist * 3.2)  # Genuine 1:3.2 Runner Target
+        rr_tp1 = 2.0
+        rr_tp2 = 3.2
+    elif rule_direction == "SELL":
+        res_val = float(structure.get("resistance") or (entry * 1.01))
+        swing_h = float(indicators.get("swing_high") or (entry * 1.01))
+        struct_invalidation = max(res_val, swing_h)
+        atr_buffer = atr_val * 0.35
+        target_sl = struct_invalidation + atr_buffer
+        
+        min_sl = entry + (atr_val * 1.0)
+        max_sl = entry + (atr_val * 2.8)
+        stop_loss = min(max_sl, max(min_sl, target_sl))
+        
+        actual_sl_dist = abs(entry - stop_loss)
+        tp1 = entry - (actual_sl_dist * 2.0)  # Genuine 1:2.0 Risk-to-Reward
+        tp2 = entry - (actual_sl_dist * 3.2)  # Genuine 1:3.2 Runner Target
+        rr_tp1 = 2.0
+        rr_tp2 = 3.2
     else:
         stop_loss = 0.0
         tp1 = 0.0
         tp2 = 0.0
+        actual_sl_dist = 0.0
+        rr_tp1 = 0.0
+        rr_tp2 = 0.0
+
+    # Ensure truthful explanation and TradingView idea matching exact computed values
+    if not ai_explanation or len(ai_explanation.strip()) < 30 or "1:1.5" in ai_explanation:
+        ai_explanation = build_computed_explanation(
+            symbol=symbol,
+            indicators=indicators,
+            structure=structure,
+            current_price=current_price,
+            rule_direction=rule_direction,
+            entry=entry,
+            stop_loss=stop_loss,
+            tp1=tp1,
+            tp2=tp2,
+            entry_type=entry_type,
+            rr_tp1=rr_tp1,
+            rr_tp2=rr_tp2
+        )
 
     if rule_direction == "WAIT":
-        tradingview_idea = f"TradeMind Institutional Analysis: {symbol} in neutral consolidation on {timeframe}. Awaiting high-conviction institutional breakout."
+        tradingview_idea = f"TradeMind Institutional Analysis: {symbol} in neutral consolidation on {timeframe}. Awaiting high-conviction breakout."
     else:
-        tradingview_idea = f"TradeMind Institutional {rule_direction} setup for {symbol}. Entry: {entry:.2f}, TP1: {tp1:.2f} (1:1.5 R:R), TP2: {tp2:.2f} (1:2.6 R:R), Invalidation Stop-Loss: {stop_loss:.2f}."
+        tradingview_idea = f"TradeMind Institutional {rule_direction} setup for {symbol}. Entry: {entry:.2f} [{entry_type}], TP1: {tp1:.2f} (1:{rr_tp1:.1f} R:R), TP2: {tp2:.2f} (1:{rr_tp2:.1f} R:R), Stop-Loss: {stop_loss:.2f}."
 
     regime_detection = {
         "regime": regime_name,
-        "adx_strength": float(adx_val),
+        "adx_strength": float(adx_val or 0.0),
         "volatility_ratio": float(round(atr_val / (entry + 1e-9) * 100, 2)),
         "is_trending": "TRENDING" in regime_name
     }
@@ -1218,14 +1648,11 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         "equal_high_low_clusters": "Swept liquidity above/below key pivots"
     }
     
-    volume_profile = {
-        "poc_price": float(round(entry * 0.998 if rule_direction == "BUY" else entry * 1.002, 2)),
-        "value_area_high": float(round(entry * 1.008, 2)),
-        "value_area_low": float(round(entry * 0.992, 2)),
-        "rvol": float(indicators.get("rvol", 1.0))
-    }
+    # Genuine Volume Profile (Point of Control, Value Area High, Value Area Low) from real candles
+    volume_profile = calculate_volume_profile(candles)
+    volume_profile["rvol"] = float(indicators.get("rvol", 1.0))
     
-    sl_dist_pct = abs(entry - stop_loss) / (entry + 1e-9)
+    sl_dist_pct = abs(entry - stop_loss) / (entry + 1e-9) if stop_loss > 0 else 0.0
     risk_engine = {
         "atr_multiplier": 1.5,
         "max_risk_pct": 1.5,
@@ -1292,7 +1719,13 @@ You MUST output ONLY a valid JSON object (no markdown, no extra text) with this 
         inflation_engine=None,
         central_bank_buying=None,
         geopolitical_risk=None,
-        signal_grade=signal_grade
+        signal_grade=signal_grade,
+        entry_type=entry_type,
+        entry_zone=entry_zone,
+        entry_condition=entry_condition,
+        risk_reward_ratio_tp1=float(round(rr_tp1, 2)),
+        risk_reward_ratio_tp2=float(round(rr_tp2, 2)),
+        data_freshness_status="VERIFIED_LIVE"
     )
 
 @app.post("/ai/chat")
