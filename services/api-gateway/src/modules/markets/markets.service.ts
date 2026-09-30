@@ -62,6 +62,43 @@ export class MarketsService implements OnModuleInit {
     }
   }
 
+  public async fetchTradingViewQuotes(endpoint: 'cfd' | 'america' | 'crypto' | 'forex', tickers: string[]): Promise<Record<string, { price: number; changePct: number; high?: number; low?: number; volume?: number; bid?: number; ask?: number }>> {
+    try {
+      const res = await this.fetchWithTimeout(`https://scanner.tradingview.com/${endpoint}/scan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        },
+        body: JSON.stringify({
+          symbols: { tickers, query: { types: [] } },
+          columns: ['close', 'change', 'high', 'low', 'volume', 'bid', 'ask']
+        })
+      }, 4000);
+      if (res.ok) {
+        const data = await res.json();
+        const results: Record<string, any> = {};
+        (data.data || []).forEach((item: any) => {
+          const sym = item.s;
+          const vals = item.d || [];
+          if (vals[0] != null && !isNaN(vals[0])) {
+            results[sym] = {
+              price: Number(vals[0]),
+              changePct: Number(vals[1] || 0),
+              high: Number(vals[2] || vals[0]),
+              low: Number(vals[3] || vals[0]),
+              volume: Number(vals[4] || 0),
+              bid: vals[5] != null ? Number(vals[5]) : undefined,
+              ask: vals[6] != null ? Number(vals[6]) : undefined
+            };
+          }
+        });
+        return results;
+      }
+    } catch (e) {}
+    return {};
+  }
+
   async onModuleInit() {
     console.log('[MarketsService] Initializing real-time feeds and database candle cache...');
     this.bootstrapMarketCache();
@@ -311,6 +348,21 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Forex fallback notice: ${err.message}`);
       }
 
+      // 2.5. Official TradingView Live Scanner Quotes (Top Priority for Spot & Futures)
+      let tvCfd: Record<string, any> = {};
+      let tvAmerica: Record<string, any> = {};
+      let tvCrypto: Record<string, any> = {};
+      let tvForex: Record<string, any> = {};
+
+      try {
+        [tvCfd, tvAmerica, tvCrypto, tvForex] = await Promise.all([
+          this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']).catch(() => ({})),
+          this.fetchTradingViewQuotes('america', ['DJ:DJI', 'NASDAQ:NDX', 'SP:SPX']).catch(() => ({})),
+          this.fetchTradingViewQuotes('crypto', ['BINANCE:BTCUSDT', 'COINBASE:BTCUSD']).catch(() => ({})),
+          this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD', 'FX_IDC:GBPUSD', 'FX_IDC:USDJPY']).catch(() => ({}))
+        ]);
+      } catch (e) {}
+
       // High-availability Yahoo Chart v8 API for Crypto, Indices, Stocks, Commodities & Forex
       const chartTickers = [
         { name: 'BTC/USD', yahoo: 'BTC-USD' },
@@ -401,7 +453,42 @@ export class MarketsService implements OnModuleInit {
         let changePct24h = lastCached ? lastCached.changePct24h : 0;
         let volume24h = lastCached ? lastCached.volume24h : 0;
 
-        if (asset.binanceSymbol && cryptoPriceMap[asset.binanceSymbol] && cryptoPriceMap[asset.binanceSymbol].price > 0) {
+        // PRIORITY 1: Official TradingView Live Scanner Quotes (Direct Interbank & Exchange parity)
+        if (asset.name === 'BTC/USD' && tvCrypto['BINANCE:BTCUSDT']?.price > 10000) {
+          currentPrice = tvCrypto['BINANCE:BTCUSDT'].price;
+          changePct24h = tvCrypto['BINANCE:BTCUSDT'].changePct;
+          volume24h = tvCrypto['BINANCE:BTCUSDT'].volume || volume24h;
+        } else if (asset.name === 'US30' && tvAmerica['DJ:DJI']?.price > 20000) {
+          currentPrice = tvAmerica['DJ:DJI'].price;
+          changePct24h = tvAmerica['DJ:DJI'].changePct;
+          volume24h = tvAmerica['DJ:DJI'].volume || volume24h;
+        } else if (asset.name === 'US100' && tvAmerica['NASDAQ:NDX']?.price > 10000) {
+          currentPrice = tvAmerica['NASDAQ:NDX'].price;
+          changePct24h = tvAmerica['NASDAQ:NDX'].changePct;
+          volume24h = tvAmerica['NASDAQ:NDX'].volume || volume24h;
+        } else if (asset.name === 'SPX500' && tvAmerica['SP:SPX']?.price > 2000) {
+          currentPrice = tvAmerica['SP:SPX'].price;
+          changePct24h = tvAmerica['SP:SPX'].changePct;
+          volume24h = tvAmerica['SP:SPX'].volume || volume24h;
+        } else if ((asset.name === 'GOLD' || asset.name === 'XAU/USD') && (tvCfd['TVC:GOLD']?.price > 1000 || tvCfd['OANDA:XAUUSD']?.price > 1000)) {
+          const tvGold = tvCfd['TVC:GOLD']?.price > 1000 ? tvCfd['TVC:GOLD'] : tvCfd['OANDA:XAUUSD'];
+          currentPrice = tvGold.price;
+          changePct24h = tvGold.changePct;
+          volume24h = tvGold.volume || volume24h;
+        } else if (asset.name === 'EUR/USD' && (tvForex['FX_IDC:EURUSD']?.price > 0.5 || tvForex['OANDA:EURUSD']?.price > 0.5)) {
+          const tvEur = tvForex['FX_IDC:EURUSD']?.price > 0.5 ? tvForex['FX_IDC:EURUSD'] : tvForex['OANDA:EURUSD'];
+          currentPrice = tvEur.price;
+          changePct24h = tvEur.changePct;
+          volume24h = tvEur.volume || volume24h;
+        } else if (asset.name === 'GBP/USD' && tvForex['FX_IDC:GBPUSD']?.price > 0.5) {
+          currentPrice = tvForex['FX_IDC:GBPUSD'].price;
+          changePct24h = tvForex['FX_IDC:GBPUSD'].changePct;
+          volume24h = tvForex['FX_IDC:GBPUSD'].volume || volume24h;
+        } else if (asset.name === 'USD/JPY' && tvForex['FX_IDC:USDJPY']?.price > 50) {
+          currentPrice = tvForex['FX_IDC:USDJPY'].price;
+          changePct24h = tvForex['FX_IDC:USDJPY'].changePct;
+          volume24h = tvForex['FX_IDC:USDJPY'].volume || volume24h;
+        } else if (asset.binanceSymbol && cryptoPriceMap[asset.binanceSymbol] && cryptoPriceMap[asset.binanceSymbol].price > 0) {
           const binanceData = cryptoPriceMap[asset.binanceSymbol];
           currentPrice = binanceData.price;
           changePct24h = binanceData.changePct;
@@ -454,11 +541,11 @@ export class MarketsService implements OnModuleInit {
         // Real Gold Spot (XAU/USD) pricing: TradingView Forex/Interbank Spot Gold
         // Strictly lock to real spot price. DO NOT use PAXG crypto proxy token.
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
-          let spotFound = false;
+          let spotFound = currentPrice > 1000;
 
-          // Priority 1: Twelve Data real-time quote for XAU/USD (Identical to TradingView Spot Gold)
+          // Priority 2: Twelve Data real-time quote for XAU/USD (Identical to TradingView Spot Gold)
           const tdKey = process.env.TWELVE_DATA_API_KEY;
-          if (tdKey) {
+          if (!spotFound && tdKey) {
             try {
               const tdQuoteRes = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=XAU/USD&apikey=${tdKey}`, {}, 3000);
               if (tdQuoteRes.ok) {
@@ -850,7 +937,7 @@ export class MarketsService implements OnModuleInit {
     const dbSymbol = isCrypto ? `${baseAsset}/USD` : rawSymbol;
     const cleanSymbol = dbSymbol;
     
-    // 1. Try to read from DB first
+    // 1. Try to read from DB first (up to 1000 recent candles)
     let candles = await this.prisma.historicalCandle.findMany({
       where: {
         OR: [
@@ -859,9 +946,10 @@ export class MarketsService implements OnModuleInit {
           { symbol: rawSymbol, interval }
         ]
       },
-      orderBy: { timestamp: 'asc' },
-      take: 300,
+      orderBy: { timestamp: 'desc' },
+      take: 1000,
     });
+    candles.reverse();
     
     // 2. If we have at least 50 candles and they are fresh (e.g. last candle is within 3 * interval time), return them!
     const now = new Date();
@@ -882,17 +970,49 @@ export class MarketsService implements OnModuleInit {
     }
     
     if (isFresh) {
+      // Sync the latest candle with sub-second TradingView live spot quote
+      try {
+        let livePrice = 0;
+        const normSym = cleanSymbol;
+        if (normSym.includes('BTC')) {
+          const tv = await this.fetchTradingViewQuotes('crypto', ['BINANCE:BTCUSDT', 'COINBASE:BTCUSD']);
+          livePrice = tv['BINANCE:BTCUSDT']?.price || tv['COINBASE:BTCUSD']?.price || 0;
+        } else if (normSym === 'US30' || normSym.includes('DOW')) {
+          const tv = await this.fetchTradingViewQuotes('america', ['DJ:DJI']);
+          livePrice = tv['DJ:DJI']?.price || 0;
+        } else if (normSym === 'US100' || normSym.includes('NAS')) {
+          const tv = await this.fetchTradingViewQuotes('america', ['NASDAQ:NDX']);
+          livePrice = tv['NASDAQ:NDX']?.price || 0;
+        } else if (normSym === 'SPX500' || normSym.includes('SPX')) {
+          const tv = await this.fetchTradingViewQuotes('america', ['SP:SPX']);
+          livePrice = tv['SP:SPX']?.price || 0;
+        } else if (normSym === 'GOLD' || normSym.includes('XAU')) {
+          const tv = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
+          livePrice = tv['TVC:GOLD']?.price || tv['OANDA:XAUUSD']?.price || 0;
+        } else if (normSym.includes('EUR')) {
+          const tv = await this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD']);
+          livePrice = tv['FX_IDC:EURUSD']?.price || tv['OANDA:EURUSD']?.price || 0;
+        }
+        if (livePrice > 0 && candles.length > 0) {
+          const lastIdx = candles.length - 1;
+          candles[lastIdx].close = livePrice;
+          if (livePrice > candles[lastIdx].high) candles[lastIdx].high = livePrice;
+          if (livePrice < candles[lastIdx].low) candles[lastIdx].low = livePrice;
+        }
+      } catch (e) {}
       return candles;
     }
     
     // 3. Otherwise, fetch real-time from Yahoo Finance (for indices/forex/stocks/commodities) or Binance (for crypto)
     if (isCrypto) {
-      // Fetch from Binance
+      // Fetch from Binance (up to 1000 candles)
       let binanceInterval = interval;
       if (interval === '1h') binanceInterval = '1h';
+      else if (interval === '1d') binanceInterval = '1d';
+      else if (interval === '1wk') binanceInterval = '1w';
       try {
         const binanceSym = `${baseAsset}USDT`;
-        const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=300`);
+        const res = await this.fetchWithTimeout(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=1000`);
         if (res.ok) {
           const klines = await res.json();
           // Clear old candles for this symbol+interval to avoid duplicates
@@ -900,23 +1020,25 @@ export class MarketsService implements OnModuleInit {
             where: { symbol: cleanSymbol, interval }
           });
           
-          const newCandles = [];
-          for (const k of klines) {
-            const candle = await this.prisma.historicalCandle.create({
-              data: {
-                symbol: cleanSymbol,
-                interval,
-                timestamp: new Date(k[0]),
-                open: parseFloat(k[1]),
-                high: parseFloat(k[2]),
-                low: parseFloat(k[3]),
-                close: parseFloat(k[4]),
-                volume: parseFloat(k[5]),
-              }
+          const records = (klines || []).map((k: any) => ({
+            symbol: cleanSymbol,
+            interval,
+            timestamp: new Date(k[0]),
+            open: parseFloat(k[1]),
+            high: parseFloat(k[2]),
+            low: parseFloat(k[3]),
+            close: parseFloat(k[4]),
+            volume: parseFloat(k[5] || 0),
+          }));
+
+          if (records.length > 0) {
+            await this.prisma.historicalCandle.createMany({
+              data: records,
+              skipDuplicates: true
             });
-            newCandles.push(candle);
+            console.log(`[MarketsService] ${records.length} wide candlesticks cached from Binance for ${cleanSymbol}.`);
+            return records;
           }
-          return newCandles;
         }
       } catch (err: any) {
         console.warn(`[MarketsService] Failed to fetch live Binance candles for ${cleanSymbol}: ${err.message}`);
@@ -928,9 +1050,11 @@ export class MarketsService implements OnModuleInit {
         try {
           const tdSym = this.getTwelveDataSymbol(cleanSymbol);
           let tdInterval = interval;
-          if (interval === '1h') tdInterval = '1h'; // Twelve Data supports '1h'
+          if (interval === '1h') tdInterval = '1h';
+          else if (interval === '1d') tdInterval = '1day';
+          else if (interval === '1wk') tdInterval = '1week';
           
-          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=300&apikey=${twelveDataKey}`);
+          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=1000&apikey=${twelveDataKey}`);
           if (response.ok) {
             const data = await response.json();
             const values = data.values || [];
@@ -939,26 +1063,25 @@ export class MarketsService implements OnModuleInit {
                 where: { symbol: cleanSymbol, interval }
               });
               
-              const newCandles = [];
-              const reversedValues = [...values].reverse(); // reverse chronological -> chronological
-              for (const v of reversedValues) {
-                const candle = await this.prisma.historicalCandle.create({
-                  data: {
-                    symbol: cleanSymbol,
-                    interval,
-                    timestamp: new Date(v.datetime),
-                    open: parseFloat(v.open),
-                    high: parseFloat(v.high),
-                    low: parseFloat(v.low),
-                    close: parseFloat(v.close),
-                    volume: parseFloat(v.volume || 0),
-                  }
-                });
-                newCandles.push(candle);
-              }
+              const reversedValues = [...values].reverse();
+              const records = reversedValues.map((v: any) => ({
+                symbol: cleanSymbol,
+                interval,
+                timestamp: new Date(v.datetime),
+                open: parseFloat(v.open),
+                high: parseFloat(v.high),
+                low: parseFloat(v.low),
+                close: parseFloat(v.close),
+                volume: parseFloat(v.volume || 0),
+              }));
+
+              await this.prisma.historicalCandle.createMany({
+                data: records,
+                skipDuplicates: true
+              });
               fetchedFromTwelveData = true;
-              console.log(`[MarketsService] Candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
-              return newCandles;
+              console.log(`[MarketsService] ${records.length} wide Candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
+              return records;
             }
           }
         } catch (err: any) {
@@ -967,17 +1090,21 @@ export class MarketsService implements OnModuleInit {
       }
 
       if (!fetchedFromTwelveData) {
-        // Fetch from Yahoo Finance chart API
+        // Fetch from Yahoo Finance chart API (Wide institutional history)
         try {
           const yahooTicker = this.getYahooTicker(cleanSymbol);
           let yahooInterval = interval;
           if (interval === '1h') yahooInterval = '60m';
+          else if (interval === '1d') yahooInterval = '1d';
+          else if (interval === '1wk') yahooInterval = '1wk';
           
-          let range = '2d';
-          if (interval === '1m') range = '1d';
-          else if (interval === '3m' || interval === '5m') range = '2d';
-          else if (interval === '15m' || interval === '30m') range = '14d';
-          else if (interval === '1h') range = '1mo';
+          let range = '5d';
+          if (interval === '1m') range = '7d';
+          else if (interval === '3m' || interval === '5m') range = '30d';
+          else if (interval === '15m' || interval === '30m') range = '60d';
+          else if (interval === '1h') range = '730d';
+          else if (interval === '1d') range = '5y';
+          else if (interval === '1wk') range = '10y';
           
           const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=${yahooInterval}&range=${range}`);
           if (res.ok) {
@@ -992,29 +1119,33 @@ export class MarketsService implements OnModuleInit {
             const volumes = quote.volume || [];
             
             if (timestamps.length > 0) {
-              // Delete old candles for this symbol+interval
               await this.prisma.historicalCandle.deleteMany({
                 where: { symbol: cleanSymbol, interval }
               });
               
-              const newCandles = [];
+              const records = [];
               for (let i = 0; i < timestamps.length; i++) {
-                if (opens[i] === null || closes[i] === null) continue;
-                const candle = await this.prisma.historicalCandle.create({
-                  data: {
-                    symbol: cleanSymbol,
-                    interval,
-                    timestamp: new Date(timestamps[i] * 1000),
-                    open: parseFloat(opens[i]),
-                    high: parseFloat(highs[i]),
-                    low: parseFloat(lows[i]),
-                    close: parseFloat(closes[i]),
-                    volume: parseFloat(volumes[i] || 0),
-                  }
+                if (opens[i] === null || closes[i] === null || isNaN(opens[i]) || isNaN(closes[i])) continue;
+                records.push({
+                  symbol: cleanSymbol,
+                  interval,
+                  timestamp: new Date(timestamps[i] * 1000),
+                  open: parseFloat(opens[i]),
+                  high: parseFloat(highs[i]),
+                  low: parseFloat(lows[i]),
+                  close: parseFloat(closes[i]),
+                  volume: parseFloat(volumes[i] || 0),
                 });
-                newCandles.push(candle);
               }
-              return newCandles;
+
+              if (records.length > 0) {
+                await this.prisma.historicalCandle.createMany({
+                  data: records,
+                  skipDuplicates: true
+                });
+                console.log(`[MarketsService] ${records.length} wide candlesticks cached from Yahoo Finance for ${cleanSymbol}.`);
+                return records;
+              }
             }
           }
         } catch (err: any) {

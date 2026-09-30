@@ -1,4 +1,4 @@
-import { Module, Controller, Get, Post, Body, Param, UseGuards, Req, Delete, OnModuleInit, HttpException, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
+import { Module, Controller, Get, Post, Body, Param, Query, UseGuards, Req, Delete, OnModuleInit, HttpException, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
@@ -117,6 +117,11 @@ export class SignalsController implements OnModuleInit {
   }
 
   public async refreshCoreWatchlistSignals(): Promise<void> {
+    // 1. Permanently delete all expired signals from the database
+    await this.prisma.signal.deleteMany({
+      where: { expiresAt: { lte: new Date() } }
+    }).catch(() => {});
+
     const coreSymbols = ['GOLD', 'BTC/USD', 'US100', 'US30', 'EUR/USD'];
     for (const sym of coreSymbols) {
       try {
@@ -129,7 +134,11 @@ export class SignalsController implements OnModuleInit {
         });
 
         const ageMs = existing ? (Date.now() - new Date(existing.createdAt).getTime()) : Infinity;
-        if (!existing || ageMs > 2 * 3600 * 1000) {
+        if (!existing || ageMs > 30 * 60 * 1000) {
+          if (existing) {
+            // Delete stale signal permanently
+            await this.prisma.signal.delete({ where: { id: existing.id } }).catch(() => {});
+          }
           console.log(`[SignalsController] Proactively generating authentic top-down institutional signal for ${sym}...`);
           let sig = await this.generateSignalRequest(sym, '15m', true);
           if (sig && sig.direction === 'WAIT') {
@@ -168,46 +177,166 @@ export class SignalsController implements OnModuleInit {
     }
   }
 
+  public async fetchTradingViewQuotes(endpoint: 'cfd' | 'america' | 'crypto' | 'forex', tickers: string[]): Promise<Record<string, { price: number; changePct: number; high?: number; low?: number; volume?: number; bid?: number; ask?: number }>> {
+    try {
+      const res = await this.fetchWithTimeout(`https://scanner.tradingview.com/${endpoint}/scan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        },
+        body: JSON.stringify({
+          symbols: { tickers, query: { types: [] } },
+          columns: ['close', 'change', 'high', 'low', 'volume', 'bid', 'ask']
+        })
+      }, 4000);
+      if (res.ok) {
+        const data = await res.json();
+        const results: Record<string, any> = {};
+        (data.data || []).forEach((item: any) => {
+          const sym = item.s;
+          const vals = item.d || [];
+          if (vals[0] != null && !isNaN(vals[0])) {
+            results[sym] = {
+              price: Number(vals[0]),
+              changePct: Number(vals[1] || 0),
+              high: Number(vals[2] || vals[0]),
+              low: Number(vals[3] || vals[0]),
+              volume: Number(vals[4] || 0),
+              bid: vals[5] != null ? Number(vals[5]) : undefined,
+              ask: vals[6] != null ? Number(vals[6]) : undefined
+            };
+          }
+        });
+        return results;
+      }
+    } catch (e) {}
+    return {};
+  }
+
   @Get()
   @ApiOperation({ summary: 'Get all active AI trading signals' })
-  async getSignals() {
+  async getSignals(@Query('forceFresh') forceFreshQuery?: string) {
     try {
-      // 1. Fetch unexpired signals from database
-      let activeSignals = await this.prisma.signal.findMany({
+      const forceFresh = forceFreshQuery === 'true';
+      const now = new Date();
+
+      // 1. Fetch live TradingView spot quotes for core markets
+      const [tvCfd, tvAmerica, tvCrypto, tvForex]: Record<string, any>[] = await Promise.all([
+        this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']).catch(() => ({} as Record<string, any>)),
+        this.fetchTradingViewQuotes('america', ['DJ:DJI', 'NASDAQ:NDX', 'SP:SPX']).catch(() => ({} as Record<string, any>)),
+        this.fetchTradingViewQuotes('crypto', ['BINANCE:BTCUSDT', 'COINBASE:BTCUSD']).catch(() => ({} as Record<string, any>)),
+        this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD', 'FX_IDC:GBPUSD', 'FX_IDC:USDJPY']).catch(() => ({} as Record<string, any>))
+      ]);
+
+      const livePrices: Record<string, number> = {};
+      if (tvCrypto['BINANCE:BTCUSDT']?.price > 10000) livePrices['BTC/USD'] = tvCrypto['BINANCE:BTCUSDT'].price;
+      if (tvAmerica['DJ:DJI']?.price > 20000) livePrices['US30'] = tvAmerica['DJ:DJI'].price;
+      if (tvAmerica['NASDAQ:NDX']?.price > 10000) livePrices['US100'] = tvAmerica['NASDAQ:NDX'].price;
+      if (tvAmerica['SP:SPX']?.price > 2000) livePrices['SPX500'] = tvAmerica['SP:SPX'].price;
+      if (tvCfd['TVC:GOLD']?.price > 1000) livePrices['GOLD'] = tvCfd['TVC:GOLD'].price;
+      else if (tvCfd['OANDA:XAUUSD']?.price > 1000) livePrices['GOLD'] = tvCfd['OANDA:XAUUSD'].price;
+      if (tvForex['FX_IDC:EURUSD']?.price > 0.5) livePrices['EUR/USD'] = tvForex['FX_IDC:EURUSD'].price;
+      else if (tvForex['OANDA:EURUSD']?.price > 0.5) livePrices['EUR/USD'] = tvForex['OANDA:EURUSD'].price;
+
+      // 2. Permanently purge any expired signals from the database
+      await this.prisma.signal.deleteMany({
+        where: { expiresAt: { lte: now } }
+      }).catch(() => {});
+
+      const dbSignals = await this.prisma.signal.findMany({
         where: {
-          expiresAt: {
-            gt: new Date(),
-          },
+          expiresAt: { gt: now },
         },
         orderBy: { createdAt: 'desc' },
       });
 
-      // If active signals are depleted (< 4), proactively replenish core watchlist
-      if (activeSignals.length < 4) {
-        await this.refreshCoreWatchlistSignals();
-        activeSignals = await this.prisma.signal.findMany({
-          where: {
-            expiresAt: {
-              gt: new Date(),
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
+      const validSignals: any[] = [];
+      const coreWatchlist = ['BTC/USD', 'EUR/USD', 'US30', 'US100', 'GOLD'];
+      const coveredSymbols = new Set<string>();
+
+      // 3. Inspect existing signals against live market price
+      for (const sig of dbSignals) {
+        const sym = this.normalizeSymbol(sig.symbol);
+        if (coveredSymbols.has(sym)) {
+          continue;
+        }
+
+        const currPrice = livePrices[sym];
+        const ageMs = now.getTime() - new Date(sig.createdAt).getTime();
+
+        // If forceFresh requested, delete immediately from DB so a fresh signal is generated
+        if (forceFresh) {
+          await this.prisma.signal.delete({
+            where: { id: sig.id }
+          }).catch(() => {});
+          continue;
+        }
+
+        // Check if signal has already completed (Hit TP1, TP2, or SL)
+        let isCompleted = false;
+        let completionOutcome = '';
+        if (currPrice && currPrice > 0 && sig.direction !== 'WAIT' && sig.entryPrice && sig.takeProfit1) {
+          const isBuy = sig.direction === 'BUY';
+          const hitTP1 = isBuy ? currPrice >= sig.takeProfit1 : currPrice <= sig.takeProfit1;
+          const hitTP2 = sig.takeProfit2 ? (isBuy ? currPrice >= sig.takeProfit2 : currPrice <= sig.takeProfit2) : false;
+          const hitSL = sig.stopLoss ? (isBuy ? currPrice <= sig.stopLoss : currPrice >= sig.stopLoss) : false;
+
+          if (hitTP2) {
+            isCompleted = true;
+            completionOutcome = 'HIT_TP2';
+          } else if (hitTP1) {
+            isCompleted = true;
+            completionOutcome = 'HIT_TP1';
+          } else if (hitSL) {
+            isCompleted = true;
+            completionOutcome = 'HIT_SL';
+          }
+
+          // Check if price ran away before entry (price moved > 0.40 * TP distance towards TP)
+          const tpDist = Math.abs(sig.takeProfit1 - sig.entryPrice);
+          const priceOffsetFromEntry = isBuy ? (currPrice - sig.entryPrice) : (sig.entryPrice - currPrice);
+          if (tpDist > 0 && priceOffsetFromEntry > tpDist * 0.45) {
+            isCompleted = true;
+            completionOutcome = 'PRICE_OUTSIDE_ENTRY_ZONE';
+          }
+        }
+
+        // Stale if age > 35 minutes for intraday scalps
+        const isStale = ageMs > 35 * 60 * 1000;
+
+        if (isCompleted || isStale) {
+          console.log(`[SIGNALS GATEWAY] Permanently deleting completed/stale signal ${sig.id} for ${sym} (Outcome: ${isCompleted ? completionOutcome : 'EXPIRED'}). Generating fresh flowing setup...`);
+          await this.prisma.signal.delete({
+            where: { id: sig.id }
+          }).catch(() => {});
+          continue;
+        }
+
+        coveredSymbols.add(sym);
+        validSignals.push(sig);
       }
 
-      if (activeSignals.length > 0) {
-        return activeSignals;
+      // 4. Generate fresh signal for any core asset that has no active setup
+      for (const coreSym of coreWatchlist) {
+        if (!coveredSymbols.has(coreSym)) {
+          try {
+            console.log(`[SignalsController] Core asset ${coreSym} has no active entry zone. Generating fresh flowing market signal...`);
+            const fresh = await this.generateSignalRequest(coreSym, '15m', true);
+            if (fresh && fresh.direction !== 'WAIT') {
+              coveredSymbols.add(coreSym);
+              validSignals.push(fresh);
+            }
+          } catch (e: any) {
+            console.warn(`[SignalsController] Failed to auto-generate fresh signal for ${coreSym}: ${e.message}`);
+          }
+        }
       }
-      return [];
+
+      return validSignals;
     } catch (err: any) {
       console.error(`[SIGNALS GATEWAY] getSignals error caught gracefully: ${err.message}`);
-      try {
-        await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "userId" TEXT;`);
-        await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "strategyKey" TEXT;`);
-        return await this.prisma.signal.findMany({ take: 10, orderBy: { createdAt: 'desc' } });
-      } catch (dbErr) {
-        return [];
-      }
+      return [];
     }
   }
 
@@ -664,6 +793,12 @@ export class SignalsController implements OnModuleInit {
         entryType,
         entryPrice,
         entryZone,
+        entryZoneMin,
+        entryZoneMax,
+        idealEntry,
+        entryModel,
+        setupScore,
+        scoreBreakdown,
         entryCondition,
         stopLoss,
         takeProfit1,
@@ -716,7 +851,12 @@ export class SignalsController implements OnModuleInit {
         : interval === '4h' ? '6–24 Hours (Intraday Swing)'
         : '1–3 Days (Macro Swing)';
 
-      const expirationMs = 24 * 3600 * 1000; // Signals valid for 24h until TP/SL or manual dismissal
+      const expirationMs = interval === '1m' ? 15 * 60 * 1000
+        : interval === '3m' ? 25 * 60 * 1000
+        : interval === '5m' ? 35 * 60 * 1000
+        : interval === '15m' ? 45 * 60 * 1000
+        : interval === '1h' ? 2 * 3600 * 1000
+        : 8 * 3600 * 1000;
 
       let signal: any = null;
       try {
@@ -746,8 +886,14 @@ export class SignalsController implements OnModuleInit {
             locked_at: new Date().toISOString(),
             confidence_score: finalConfidence,
             win_probability: calculatedWinProb || finalConfidence,
+            setup_score: result.setupScore || finalConfidence,
+            entry_model: result.entryModel || 'TREND_CONTINUATION',
             entry_type: entryType,
             entry_zone: entryZone || `${(entryPrice * 0.999).toFixed(2)} - ${(entryPrice * 1.001).toFixed(2)}`,
+            entry_zone_min: result.entryZoneMin,
+            entry_zone_max: result.entryZoneMax,
+            ideal_entry: result.idealEntry || entryPrice,
+            score_breakdown: result.scoreBreakdown,
             entry_condition: entryCondition || (entryType === 'MARKET_NOW' ? `Execute ${direction} directly at Market ($${entryPrice.toFixed(2)})` : `Place ${entryType} at $${entryPrice.toFixed(2)} [Zone: ${entryZone}]`),
             take_profit_3: takeProfit3 || (direction === 'BUY' ? parseFloat((entryPrice + (Math.abs(takeProfit1 - entryPrice) * 2.2)).toFixed(2)) : parseFloat((entryPrice - (Math.abs(entryPrice - takeProfit1) * 2.2)).toFixed(2))),
             reasons_for: reasonsFor || [
@@ -845,16 +991,36 @@ export class SignalsController implements OnModuleInit {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete or dismiss an active trading signal' })
+  @ApiOperation({ summary: 'Delete signal permanently from database and generate fresh flowing signal' })
   async deleteSignal(@Param('id') id: string) {
+    let deletedSymbol: string | null = null;
+    let freshSignal: any = null;
     try {
-      await this.prisma.signal.delete({
+      const existing = await this.prisma.signal.findUnique({
         where: { id },
+        select: { id: true, symbol: true }
       });
+      if (existing) {
+        deletedSymbol = existing.symbol;
+        await this.prisma.signal.delete({
+          where: { id },
+        });
+        console.log(`[SignalsController] Signal ${id} (${deletedSymbol}) permanently deleted from database.`);
+      }
     } catch (err: any) {
       console.warn(`[SignalsController] Failed to delete signal ${id}: ${err.message}`);
     }
-    return { success: true };
+
+    if (deletedSymbol) {
+      try {
+        console.log(`[SignalsController] Generating immediate fresh signal for ${deletedSymbol} after user deletion...`);
+        freshSignal = await this.generateSignalRequest(deletedSymbol, '15m', true);
+      } catch (genErr: any) {
+        console.warn(`[SignalsController] Failed to auto-generate fresh signal after delete: ${genErr.message}`);
+      }
+    }
+
+    return { success: true, deletedId: id, symbol: deletedSymbol, freshSignal };
   }
 
   private getTwelveDataSymbol(symbol: string): string {
@@ -943,12 +1109,13 @@ export class SignalsController implements OnModuleInit {
     const cleanSymbol = normSym;
     const baseSymbol = normSym.replace('/USD', '').replace('USDT', '').trim();
     
-    // 1. Try to read from DB first
+    // 1. Try to read from DB first (up to 1000 recent candles)
     let candles = await this.prisma.historicalCandle.findMany({
       where: { symbol: normSym, interval },
-      orderBy: { timestamp: 'asc' },
-      take: 300,
+      orderBy: { timestamp: 'desc' },
+      take: 1000,
     });
+    candles.reverse();
     
     // 2. If we have cached candles and they are fresh, return them
     const now = new Date();
@@ -975,11 +1142,37 @@ export class SignalsController implements OnModuleInit {
     }
     
     if (isFresh) {
-      // Sync the latest candle with sub-3-second live spot price
+      // Sync the latest candle with sub-second TradingView live spot quote
       try {
         let livePrice = 0;
         const isGoldAsset = normSym === 'GOLD' || normSym.includes('XAU');
-        if (isGoldAsset) {
+        const isBtcAsset = normSym.includes('BTC');
+        const isUs30 = normSym === 'US30' || normSym.includes('DOW');
+        const isUs100 = normSym === 'US100' || normSym.includes('NAS');
+        const isEurUsd = normSym.includes('EUR');
+
+        // Priority 1: Official TradingView live quotes (Direct Interbank & Exchange parity)
+        try {
+          if (isGoldAsset) {
+            const tv = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
+            livePrice = tv['TVC:GOLD']?.price || tv['OANDA:XAUUSD']?.price || 0;
+          } else if (isBtcAsset) {
+            const tv = await this.fetchTradingViewQuotes('crypto', ['BINANCE:BTCUSDT', 'COINBASE:BTCUSD']);
+            livePrice = tv['BINANCE:BTCUSDT']?.price || tv['COINBASE:BTCUSD']?.price || 0;
+          } else if (isUs30) {
+            const tv = await this.fetchTradingViewQuotes('america', ['DJ:DJI']);
+            livePrice = tv['DJ:DJI']?.price || 0;
+          } else if (isUs100) {
+            const tv = await this.fetchTradingViewQuotes('america', ['NASDAQ:NDX']);
+            livePrice = tv['NASDAQ:NDX']?.price || 0;
+          } else if (isEurUsd) {
+            const tv = await this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD']);
+            livePrice = tv['FX_IDC:EURUSD']?.price || tv['OANDA:EURUSD']?.price || 0;
+          }
+        } catch (e) {}
+
+        // Priority 2: Twelve Data or GoldAPI fallback for Gold
+        if (livePrice <= 0 && isGoldAsset) {
           const tdKey = process.env.TWELVE_DATA_API_KEY;
           if (tdKey) {
             try {
@@ -1179,7 +1372,7 @@ export class SignalsController implements OnModuleInit {
         if (binanceApiKey) headers['X-MBX-APIKEY'] = binanceApiKey;
 
         const res = await this.fetchWithTimeout(
-          `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=300`,
+          `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=1000`,
           { headers }
         );
         if (res.ok) {
@@ -1188,24 +1381,25 @@ export class SignalsController implements OnModuleInit {
             where: { symbol: cleanSymbol, interval }
           });
 
-          const newCandles = [];
-          for (const k of klines) {
-            const candle = await this.prisma.historicalCandle.create({
-              data: {
-                symbol: cleanSymbol,
-                interval,
-                timestamp: new Date(k[0]),
-                open: parseFloat(k[1]),
-                high: parseFloat(k[2]),
-                low: parseFloat(k[3]),
-                close: parseFloat(k[4]),
-                volume: parseFloat(k[5]),
-              }
+          const records = (klines || []).map((k: any) => ({
+            symbol: cleanSymbol,
+            interval,
+            timestamp: new Date(k[0]),
+            open: parseFloat(k[1]),
+            high: parseFloat(k[2]),
+            low: parseFloat(k[3]),
+            close: parseFloat(k[4]),
+            volume: parseFloat(k[5] || 0),
+          }));
+
+          if (records.length > 0) {
+            await this.prisma.historicalCandle.createMany({
+              data: records,
+              skipDuplicates: true
             });
-            newCandles.push(candle);
+            fetched = true;
+            return records;
           }
-          fetched = true;
-          return newCandles;
         }
       } catch (err: any) {
         console.warn(`[SignalsController] Failed to fetch live Binance candles for crypto ${cleanSymbol}: ${err.message}. Trying Twelve Data fallback.`);
@@ -1223,7 +1417,7 @@ export class SignalsController implements OnModuleInit {
           else if (interval === '1d') tdInterval = '1day';
           else if (interval === '1wk') tdInterval = '1week';
           
-          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=300&apikey=${twelveDataKey}`);
+          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=1000&apikey=${twelveDataKey}`);
           if (response.ok) {
             const data = await response.json();
             const values = data.values || [];
@@ -1232,26 +1426,25 @@ export class SignalsController implements OnModuleInit {
                 where: { symbol: cleanSymbol, interval }
               });
               
-              const newCandles = [];
               const reversedValues = [...values].reverse();
-              for (const v of reversedValues) {
-                const candle = await this.prisma.historicalCandle.create({
-                  data: {
-                    symbol: cleanSymbol,
-                    interval,
-                    timestamp: new Date(v.datetime),
-                    open: parseFloat(v.open),
-                    high: parseFloat(v.high),
-                    low: parseFloat(v.low),
-                    close: parseFloat(v.close),
-                    volume: parseFloat(v.volume || 0),
-                  }
-                });
-                newCandles.push(candle);
-              }
+              const records = reversedValues.map((v: any) => ({
+                symbol: cleanSymbol,
+                interval,
+                timestamp: new Date(v.datetime),
+                open: parseFloat(v.open),
+                high: parseFloat(v.high),
+                low: parseFloat(v.low),
+                close: parseFloat(v.close),
+                volume: parseFloat(v.volume || 0),
+              }));
+
+              await this.prisma.historicalCandle.createMany({
+                data: records,
+                skipDuplicates: true
+              });
               fetched = true;
-              console.log(`[SignalsController] Candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
-              return newCandles;
+              console.log(`[SignalsController] ${records.length} Candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
+              return records;
             }
           }
         } catch (err: any) {
@@ -1260,7 +1453,7 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // 5. Try Yahoo Finance fallback
+    // 5. Try Yahoo Finance fallback (Wide institutional lookback window)
     if (!fetched) {
       try {
         const yahooTicker = this.getYahooTicker(cleanSymbol);
@@ -1269,13 +1462,13 @@ export class SignalsController implements OnModuleInit {
         else if (interval === '1d') yahooInterval = '1d';
         else if (interval === '1wk') yahooInterval = '1wk';
         
-        let range = '2d';
-        if (interval === '1m') range = '1d';
-        else if (interval === '3m' || interval === '5m') range = '2d';
-        else if (interval === '15m' || interval === '30m') range = '14d';
-        else if (interval === '1h') range = '1mo';
-        else if (interval === '1d') range = '1y';
-        else if (interval === '1wk') range = '2y';
+        let range = '5d';
+        if (interval === '1m') range = '7d';
+        else if (interval === '3m' || interval === '5m') range = '30d';
+        else if (interval === '15m' || interval === '30m') range = '60d';
+        else if (interval === '1h') range = '730d';
+        else if (interval === '1d') range = '5y';
+        else if (interval === '1wk') range = '10y';
         
         const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=${yahooInterval}&range=${range}`);
         if (res.ok) {
@@ -1294,25 +1487,30 @@ export class SignalsController implements OnModuleInit {
               where: { symbol: cleanSymbol, interval }
             });
             
-            const newCandles = [];
+            const records = [];
             for (let i = 0; i < timestamps.length; i++) {
-              if (opens[i] === null || closes[i] === null) continue;
-              const candle = await this.prisma.historicalCandle.create({
-                data: {
-                  symbol: cleanSymbol,
-                  interval,
-                  timestamp: new Date(timestamps[i] * 1000),
-                  open: parseFloat(opens[i]),
-                  high: parseFloat(highs[i]),
-                  low: parseFloat(lows[i]),
-                  close: parseFloat(closes[i]),
-                  volume: parseFloat(volumes[i] || 0),
-                }
+              if (opens[i] === null || closes[i] === null || isNaN(opens[i]) || isNaN(closes[i])) continue;
+              records.push({
+                symbol: cleanSymbol,
+                interval,
+                timestamp: new Date(timestamps[i] * 1000),
+                open: parseFloat(opens[i]),
+                high: parseFloat(highs[i]),
+                low: parseFloat(lows[i]),
+                close: parseFloat(closes[i]),
+                volume: parseFloat(volumes[i] || 0),
               });
-              newCandles.push(candle);
             }
-            fetched = true;
-            return newCandles;
+
+            if (records.length > 0) {
+              await this.prisma.historicalCandle.createMany({
+                data: records,
+                skipDuplicates: true
+              });
+              fetched = true;
+              console.log(`[SignalsController] ${records.length} live wide candlesticks cached from Yahoo Finance for ${cleanSymbol}.`);
+              return records;
+            }
           }
         }
       } catch (err: any) {
@@ -1546,64 +1744,212 @@ export class SignalsController implements OnModuleInit {
     ema20: number,
     vwap: number,
     atr: number,
-    precision: number = 2
+    precision: number = 2,
+    opts?: {
+      rsi?: number;
+      ema50?: number;
+      ema200?: number;
+      fvg?: any;
+      ob?: any;
+      htfBias?: any;
+      sessionName?: string;
+      recentNews?: any[];
+      symbol?: string;
+      spread?: number;
+      lowestLow?: number;
+      highestHigh?: number;
+      interval?: string;
+    }
   ): {
     entryType: 'MARKET_NOW' | 'LIMIT_PULLBACK';
     entryPrice: number;
     entryZone: string;
+    entryZoneMin: number;
+    entryZoneMax: number;
+    idealEntry: number;
+    entryModel: 'TREND_CONTINUATION' | 'REVERSAL' | 'BREAKOUT' | 'RANGE_BOUND';
+    stopLoss: number;
+    takeProfit1: number;
+    takeProfit2: number;
+    takeProfit3: number;
+    riskRewardRatio: number;
+    setupScore: number;
+    scoreBreakdown: {
+      structure: number;
+      liquidity: number;
+      entryLocation: number;
+      momentum: number;
+      multiTimeframe: number;
+      volatility: number;
+      session: number;
+      macro: number;
+      news: number;
+      execution: number;
+      total: number;
+    };
     entryCondition: string;
     isOverextended: boolean;
     overextendedReason?: string;
+    passedGates: boolean;
+    gateRejectionReason?: string;
   } {
     const distFromEma = Math.abs(currentPrice - ema20);
-    // Overextension threshold: > 1.35x ATR away from EMA-20
     const isOverextended = distFromEma > (atr * 1.35);
-    const lower = (currentPrice - (atr * 0.12)).toFixed(precision);
-    const upper = (currentPrice + (atr * 0.12)).toFixed(precision);
 
-    if (direction === 'BUY') {
-      if (isOverextended && currentPrice > ema20) {
-        const pullbackTarget = parseFloat(Math.max(ema20, currentPrice - (atr * 0.50)).toFixed(precision));
-        const overextendedReason = `Price overextended ${(distFromEma / atr).toFixed(1)}x ATR above 20-EMA ($${currentPrice.toFixed(precision)} vs $${ema20.toFixed(precision)}). High risk of immediate mean-reversion retest. Awaiting pullback to institutional discount ($${pullbackTarget}).`;
-        return {
-          entryType: 'LIMIT_PULLBACK',
-          entryPrice: currentPrice,
-          entryZone: `${lower} - ${upper}`,
-          entryCondition: overextendedReason,
-          isOverextended: true,
-          overextendedReason
-        };
-      } else {
-        return {
-          entryType: 'MARKET_NOW',
-          entryPrice: currentPrice,
-          entryZone: `${lower} - ${upper}`,
-          entryCondition: `Execute BUY directly at Market ($${currentPrice.toFixed(precision)}). Optimal momentum entry zone [${lower} - ${upper}] confirmed near institutional accumulation floor.`,
-          isOverextended: false
-        };
-      }
-    } else {
-      if (isOverextended && currentPrice < ema20) {
-        const bounceTarget = parseFloat(Math.min(ema20, currentPrice + (atr * 0.50)).toFixed(precision));
-        const overextendedReason = `Price overextended ${(distFromEma / atr).toFixed(1)}x ATR below 20-EMA ($${currentPrice.toFixed(precision)} vs $${ema20.toFixed(precision)}). High risk of short-squeeze bounce. Awaiting relief rally to institutional premium ($${bounceTarget}).`;
-        return {
-          entryType: 'LIMIT_PULLBACK',
-          entryPrice: currentPrice,
-          entryZone: `${lower} - ${upper}`,
-          entryCondition: overextendedReason,
-          isOverextended: true,
-          overextendedReason
-        };
-      } else {
-        return {
-          entryType: 'MARKET_NOW',
-          entryPrice: currentPrice,
-          entryZone: `${lower} - ${upper}`,
-          entryCondition: `Execute SELL directly at Market ($${currentPrice.toFixed(precision)}). Optimal distribution entry zone [${lower} - ${upper}] confirmed near institutional ceiling.`,
-          isOverextended: false
-        };
-      }
+    const minBound = direction === 'BUY'
+      ? parseFloat((currentPrice - (atr * 0.15)).toFixed(precision))
+      : parseFloat((currentPrice - (atr * 0.10)).toFixed(precision));
+    const maxBound = direction === 'BUY'
+      ? parseFloat((currentPrice + (atr * 0.10)).toFixed(precision))
+      : parseFloat((currentPrice + (atr * 0.15)).toFixed(precision));
+    const idealEntry = parseFloat(currentPrice.toFixed(precision));
+    const entryZone = `${minBound} - ${maxBound}`;
+
+    // --- SETUP SCORE ENGINE (Weighted 10 Components, Max 100) ---
+    // 1. Structure (20 pts)
+    let structureScore = 10;
+    if (opts?.ema50 && opts?.ema200) {
+      if (direction === 'BUY' && ema20 >= opts.ema50 && opts.ema50 >= opts.ema200) structureScore += 8;
+      else if (direction === 'SELL' && ema20 <= opts.ema50 && opts.ema50 <= opts.ema200) structureScore += 8;
+      else structureScore += 4;
     }
+    if (opts?.ob?.order_block_detected) structureScore += 2;
+
+    // 2. Liquidity (15 pts)
+    let liquidityScore = 10;
+    if (direction === 'BUY' && currentPrice > vwap) liquidityScore += 5;
+    else if (direction === 'SELL' && currentPrice < vwap) liquidityScore += 5;
+
+    // 3. Entry Location (15 pts)
+    let entryLocationScore = 12;
+    if (opts?.fvg?.fvg_detected) entryLocationScore += 3;
+
+    // 4. Momentum (10 pts)
+    let momentumScore = 7;
+    const rsi = opts?.rsi ?? 50;
+    if (direction === 'BUY' && rsi >= 48 && rsi <= 68) momentumScore = 10;
+    else if (direction === 'SELL' && rsi <= 52 && rsi >= 32) momentumScore = 10;
+    else if ((direction === 'BUY' && rsi > 78) || (direction === 'SELL' && rsi < 22)) momentumScore = 3;
+
+    // 5. Multi-Timeframe Alignment (10 pts)
+    let mtfScore = 6;
+    if (opts?.htfBias?.htfDirection === direction) mtfScore = 10;
+    else if (opts?.htfBias?.htfDirection === 'NEUTRAL') mtfScore = 7;
+
+    // 6. Volatility (8 pts)
+    let volatilityScore = isOverextended ? 3 : 8;
+
+    // 7. Session (7 pts)
+    const currentHour = new Date().getUTCHours();
+    let sessionScore = 4;
+    if (currentHour >= 7 && currentHour <= 17) sessionScore = 7; // London & NY active overlap
+
+    // 8. Macro (7 pts)
+    let macroScore = opts?.htfBias?.bias1d === (direction === 'BUY' ? 'BULLISH' : 'BEARISH') ? 7 : 5;
+
+    // 9. News (5 pts)
+    let newsScore = 5;
+    if (opts?.recentNews && opts.recentNews.length > 0) {
+      const adverseWords = direction === 'BUY' ? ['crash', 'plunge', 'bearish', 'recession', 'hike'] : ['surge', 'rally', 'bullish', 'expansion', 'cut'];
+      const adverseCount = opts.recentNews.filter(n => adverseWords.some(w => (n.headline || '').toLowerCase().includes(w))).length;
+      if (adverseCount >= 2) newsScore = 1;
+    }
+
+    // 10. Execution Conditions (3 pts)
+    const executionScore = 3;
+
+    const totalSetupScore = Math.min(96, Math.max(45,
+      structureScore + liquidityScore + entryLocationScore + momentumScore +
+      mtfScore + volatilityScore + sessionScore + macroScore + newsScore + executionScore
+    ));
+
+    const scoreBreakdown = {
+      structure: structureScore,
+      liquidity: liquidityScore,
+      entryLocation: entryLocationScore,
+      momentum: momentumScore,
+      multiTimeframe: mtfScore,
+      volatility: volatilityScore,
+      session: sessionScore,
+      macro: macroScore,
+      news: newsScore,
+      execution: executionScore,
+      total: totalSetupScore
+    };
+
+    // Determine Entry Model
+    let entryModel: 'TREND_CONTINUATION' | 'REVERSAL' | 'BREAKOUT' | 'RANGE_BOUND' = 'TREND_CONTINUATION';
+    if (opts?.fvg?.fvg_detected && mtfScore >= 8) entryModel = 'TREND_CONTINUATION';
+    else if (opts?.ob?.order_block_detected && (rsi > 70 || rsi < 30)) entryModel = 'REVERSAL';
+    else if (volatilityScore >= 7 && (opts?.rsi ?? 50) > 60) entryModel = 'BREAKOUT';
+    else entryModel = 'RANGE_BOUND';
+
+    // Structural Stop Loss & Take Profit Geometry
+    const isScalp = ['1m', '3m', '5m', '15m'].includes(opts?.interval || '15m');
+    const minSlDist = Math.max(atr * 1.4, currentPrice * (isScalp ? 0.003 : 0.008));
+    const lowestLow = opts?.lowestLow ?? (currentPrice - minSlDist);
+    const highestHigh = opts?.highestHigh ?? (currentPrice + minSlDist);
+
+    const stopLoss = direction === 'BUY'
+      ? parseFloat(Math.min(idealEntry - minSlDist, lowestLow - (atr * 0.35)).toFixed(precision))
+      : parseFloat(Math.max(idealEntry + minSlDist, highestHigh + (atr * 0.35)).toFixed(precision));
+
+    const slDist = Math.max(0.0001, Math.abs(idealEntry - stopLoss));
+    const takeProfit1 = direction === 'BUY'
+      ? parseFloat((idealEntry + slDist * 1.8).toFixed(precision))
+      : parseFloat((idealEntry - slDist * 1.8).toFixed(precision));
+    const takeProfit2 = direction === 'BUY'
+      ? parseFloat((idealEntry + slDist * 2.8).toFixed(precision))
+      : parseFloat((idealEntry - slDist * 2.8).toFixed(precision));
+    const takeProfit3 = direction === 'BUY'
+      ? parseFloat((idealEntry + slDist * 4.2).toFixed(precision))
+      : parseFloat((idealEntry - slDist * 4.2).toFixed(precision));
+
+    const riskRewardRatio = parseFloat((Math.abs(takeProfit1 - idealEntry) / slDist).toFixed(1));
+
+    // Hard Safety Gates
+    let passedGates = true;
+    let gateRejectionReason: string | undefined;
+
+    if (riskRewardRatio < 1.5) {
+      passedGates = false;
+      gateRejectionReason = `Insufficient Risk/Reward: 1:${riskRewardRatio} is below the 1:1.5 institutional threshold.`;
+    } else if (newsScore <= 1) {
+      passedGates = false;
+      gateRejectionReason = 'High adverse news risk detected in upcoming releases. Entry blocked.';
+    }
+
+    let overextendedReason: string | undefined;
+    if (isOverextended) {
+      overextendedReason = `Price overextended ${(distFromEma / atr).toFixed(1)}x ATR ${direction === 'BUY' ? 'above' : 'below'} 20-EMA ($${currentPrice.toFixed(precision)} vs $${ema20.toFixed(precision)}). High risk of immediate mean-reversion retest. Awaiting pullback to institutional entry zone [${entryZone}].`;
+    }
+
+    const entryType: 'MARKET_NOW' | 'LIMIT_PULLBACK' = isOverextended ? 'LIMIT_PULLBACK' : 'MARKET_NOW';
+    const entryCondition = isOverextended
+      ? overextendedReason!
+      : `Execute ${direction} in optimal confluence zone [${entryZone}]. Ideal entry: $${idealEntry.toFixed(precision)}. Setup score: ${totalSetupScore}/100 (${entryModel}).`;
+
+    return {
+      entryType,
+      entryPrice: currentPrice,
+      entryZone,
+      entryZoneMin: minBound,
+      entryZoneMax: maxBound,
+      idealEntry,
+      entryModel,
+      stopLoss,
+      takeProfit1,
+      takeProfit2,
+      takeProfit3,
+      riskRewardRatio,
+      setupScore: totalSetupScore,
+      scoreBreakdown,
+      entryCondition,
+      isOverextended,
+      overextendedReason,
+      passedGates,
+      gateRejectionReason
+    };
   }
 
   private computeSignalGrade(score: number, ema20?: number, ema50?: number, ema200?: number, direction?: string): string {
@@ -2568,7 +2914,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
+    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
+    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -2576,42 +2941,20 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    // Targets & Dynamic Risk-to-Reward Ratio (Timeframe Scaled & Adaptive Structure Based for BTC/Crypto)
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    // Institutional Calibration: Clear Bitcoin micro-wicks and volatility sweeps without choking (0.8% scalp, 1.5% 1h/swing minimum)
-    const minSlDist = Math.max(atr * 1.5, effectiveEntry * (isScalp ? 0.008 : 0.015));
-
-    // Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY' 
-      ? Math.min(effectiveEntry - minSlDist, lowestLow - (atr * 0.40))
-      : Math.max(effectiveEntry + minSlDist, highestHigh + (atr * 0.40));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated ${symbol} 12-Layer Crypto Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+    const aiValidation = `Dedicated ${symbol} Institutional Confluence Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -2619,14 +2962,20 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(2)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -2637,7 +2986,7 @@ export class SignalsController implements OnModuleInit {
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
     };
   }
 
@@ -2899,7 +3248,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
+    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
+    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -2907,42 +3275,20 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based for NASDAQ 100)
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    // Institutional Calibration: Clear 5-minute wicks and index noise on 30k NASDAQ (160 pts scalp, 260 pts day/swing minimum)
-    const minSlDist = Math.max(atr * 1.5, isScalp ? 160 : 260);
-
-    // Structure Invalidation SL (Adaptive Session Swing Window with 0.45x ATR buffer)
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY' 
-      ? Math.min(effectiveEntry - minSlDist, lowestLow - (atr * 0.45))
-      : Math.max(effectiveEntry + minSlDist, highestHigh + (atr * 0.45));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
-
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated US100 Institutional Tech Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss set at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -2950,25 +3296,31 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(2)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
+      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Tech Flow)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptPDL_Rejection ? 'PDL Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'PDH Swept' : 'Neutral Range',
+      liquidityStatus: sweptPDL_Rejection ? 'Sell-side Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Buy-side Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active Tech Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
     };
   }
 
@@ -3230,7 +3582,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
+    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
+    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -3238,41 +3609,20 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based for US30)
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    // Institutional Calibration: Clear 5-minute wicks and Dow Jones noise on 52k US30 (200 pts scalp, 350 pts day/swing minimum)
-    const minSlDist = Math.max(atr * 1.5, isScalp ? 200 : 350);
-
-    // Structure Invalidation SL (Adaptive Session Swing Window with 0.50x ATR buffer)
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY' 
-      ? Math.min(effectiveEntry - minSlDist, lowestLow - (atr * 0.50))
-      : Math.max(effectiveEntry + minSlDist, highestHigh + (atr * 0.50));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
 
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated US30 12-Layer Industrial & Cyclical Value Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss set at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -3280,25 +3630,31 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(2)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
+      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Industrial Flow)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptPDL_Rejection ? 'PDL Swept' : sweptPDH_Rejection ? 'PDH Swept' : 'Neutral Range',
+      liquidityStatus: sweptPDL_Rejection ? 'Sell-side Swept' : sweptPDH_Rejection ? 'Buy-side Swept' : 'Neutral Range',
       structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
       displacementStatus: isDisplacement ? 'Active YM Displacement' : 'Normal Volatility',
       sessionStatus: sessionName,
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
     };
   }
 
@@ -3544,7 +3900,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const swingSlice = validCandles.slice(-Math.min(fxLookback, isScalp ? 10 : 20));
+    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
+    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -3552,44 +3927,20 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    // Calculate Targets & Risk/Reward (Institutional Volatility & Structure-Based FX Protection)
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const slDist = isJpy 
-      ? Math.max(atr * 1.4, isScalp ? 0.12 : 0.22)
-      : Math.max(atr * 1.4, isScalp ? 0.0010 : 0.0018); // 10-18 pips safe institutional buffer
-
-    // Institutional Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingLows = validCandles.slice(-Math.min(fxLookback, isScalp ? 10 : 20)).map(c => Number(c.low));
-    const swingHighs = validCandles.slice(-Math.min(fxLookback, isScalp ? 10 : 20)).map(c => Number(c.high));
-    const lowestLow = Math.min(...swingLows);
-    const highestHigh = Math.max(...swingHighs);
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY' 
-      ? Math.min(effectiveEntry - slDist, lowestLow - (atr * 0.35))
-      : Math.max(effectiveEntry + slDist, highestHigh + (atr * 0.35));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
-
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated EURUSD/FX Macro Intelligence Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss set at ${stopLoss.toFixed(precision)} (R:R 1:${rrRatio}). ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(precision)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -3597,14 +3948,20 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(precision)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(precision)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(precision)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(precision)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb: confidenceScore,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -3615,7 +3972,7 @@ export class SignalsController implements OnModuleInit {
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, precision)
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, precision)
     };
   }
 
@@ -3818,7 +4175,25 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const lowestLow = Math.min(...recentLows);
+    const highestHigh = Math.max(...recentHighs);
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -3826,38 +4201,20 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const minSlDist = Math.max(atr * 1.5, effectiveEntry * (isScalp ? 0.008 : 0.015));
-
-    const lowestLow = Math.min(...recentLows);
-    const highestHigh = Math.max(...recentHighs);
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY'
-      ? Math.min(effectiveEntry - minSlDist, lowestLow - (atr * 0.35))
-      : Math.max(effectiveEntry + minSlDist, highestHigh + (atr * 0.35));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
-
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated US Equities & Growth Engine evaluated ${symbol} during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -3865,14 +4222,20 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(2)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -3883,7 +4246,7 @@ export class SignalsController implements OnModuleInit {
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
     };
   }
 
@@ -4087,7 +4450,25 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const lowestLow = Math.min(...recentLows);
+    const highestHigh = Math.max(...recentHighs);
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -4095,41 +4476,20 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const isSpx = symbol.toUpperCase().includes('SPX');
-    const minSlDist = isSpx 
-      ? Math.max(atr * 1.5, isScalp ? 25.0 : 45.0)
-      : Math.max(atr * 1.5, isScalp ? 45.0 : 80.0);
-
-    const lowestLow = Math.min(...recentLows);
-    const highestHigh = Math.max(...recentHighs);
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY'
-      ? Math.min(effectiveEntry - minSlDist, lowestLow - (atr * 0.40))
-      : Math.max(effectiveEntry + minSlDist, highestHigh + (atr * 0.40));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
-
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated Broad Benchmark Index Engine evaluated ${symbol} during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at ${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss set at ${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at ${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -4137,14 +4497,20 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(2)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -4155,7 +4521,7 @@ export class SignalsController implements OnModuleInit {
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, 2)
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
     };
   }
 
@@ -4430,7 +4796,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
+    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
+    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -4438,41 +4823,20 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    // Calculate Targets & Risk/Reward (Timeframe Scaled & Adaptive Structure Based USDJPY Targets)
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const minSlDist = Math.max(atr * 1.4, isScalp ? 0.14 : 0.25); // 14-25 pips safe buffer on USDJPY
-
-    // Structure Invalidation SL (Adaptive Session Swing Window)
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY' 
-      ? Math.min(effectiveEntry - minSlDist, lowestLow - (atr * 0.35))
-      : Math.max(effectiveEntry + minSlDist, highestHigh + (atr * 0.35));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
-
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Dedicated USDJPY Fed-BoJ Yield & Intervention Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). MoF Intervention Risk: ${interventionRiskLevel}. Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss set at ${stopLoss.toFixed(precision)} (R:R 1:${rrRatio}). ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). MoF Intervention Risk: ${interventionRiskLevel}. Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(precision)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
     return {
@@ -4480,14 +4844,20 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(precision)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(precision)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(precision)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(precision)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
       marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
@@ -4498,7 +4868,7 @@ export class SignalsController implements OnModuleInit {
       reasonsFor,
       reasonsAgainst,
       aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, stopLoss, direction, precision)
+      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, precision)
     };
   }
 
@@ -4808,7 +5178,26 @@ export class SignalsController implements OnModuleInit {
     });
     if (gateResult) return gateResult;
 
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2);
+    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
+    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
+    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
+    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
+
+    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
+      rsi,
+      ema50,
+      ema200,
+      fvg,
+      ob,
+      htfBias,
+      sessionName,
+      recentNews: news,
+      symbol,
+      lowestLow,
+      highestHigh,
+      interval
+    });
+
     if (precisionOrder.isOverextended) {
       return {
         direction: 'WAIT',
@@ -4816,46 +5205,25 @@ export class SignalsController implements OnModuleInit {
         evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const effectiveEntry = precisionOrder.entryPrice;
-
-    // 9. Exact Targets: Institutional Structural SL for Gold ($14.00 - $28.00 minimum on $4,280+ Gold)
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const minSlDist = Math.max(atr * 1.5, isScalp ? 14.00 : 24.00);
-
-    // Structure Invalidation SL (Adaptive Session Swing Window with 0.45x ATR buffer)
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    // Correct Structural Protection: BUY stop must be BELOW swing low; SELL stop must be ABOVE swing high
-    const stopLoss = direction === 'BUY'
-      ? Math.min(effectiveEntry - minSlDist, lowestLow - (atr * 0.45))
-      : Math.max(effectiveEntry + minSlDist, highestHigh + (atr * 0.45));
-
-    const effectiveSlDist = Math.abs(effectiveEntry - stopLoss);
-    if (effectiveSlDist <= 0 || !Number.isFinite(effectiveSlDist)) {
+    if (!precisionOrder.passedGates) {
       return {
         direction: 'WAIT',
-        invalidationReason: 'Invalid Market Structure: Stop Loss equals Entry price.',
-        evidence: {}
+        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
+        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
       };
     }
-    const takeProfit1 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 2.0) : effectiveEntry - (effectiveSlDist * 2.0);
-    const takeProfit2 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 3.2) : effectiveEntry - (effectiveSlDist * 3.2);
-    const takeProfit3 = direction === 'BUY' ? effectiveEntry + (effectiveSlDist * 4.5) : effectiveEntry - (effectiveSlDist * 4.5);
 
-    const rrRatio = parseFloat((Math.abs(takeProfit1 - effectiveEntry) / effectiveSlDist).toFixed(1));
-
-    const signalGrade = this.computeSignalGrade(confidenceScore, ema20, ema50, ema200, direction);
+    const effectiveEntry = precisionOrder.entryPrice;
+    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
 
     const aiValidation = `Institutional 12-Layer Confluence Engine evaluated XAUUSD setup during ${sessionName}. ` +
       `Data Source: ${goldSource}. Regime: ${regimeData.regime}. ` +
-      `Confluence Score: ${confidenceScore}/100 (${signalGrade}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [${precisionOrder.entryType}] ` +
-      `with invalidation stop loss set at $${stopLoss.toFixed(2)} (R:R 1:${rrRatio}). ` +
+      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
+      `with invalidation stop loss set at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
       `Intermarket Drivers: DXY ${dxy.price} (${dxy.trend}), US10Y ${us10y.yield}% (${us10y.trend}), VIX ${vix.level}. ` +
       `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
 
-    const computedEvidence: any = this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, effectiveEntry, stopLoss, direction, 2);
+    const computedEvidence: any = this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, effectiveEntry, precisionOrder.stopLoss, direction, 2);
     computedEvidence.regime = regimeData.regime;
     computedEvidence.dxy = dxy;
     computedEvidence.us10y = us10y;
@@ -4868,14 +5236,20 @@ export class SignalsController implements OnModuleInit {
       entryType: precisionOrder.entryType,
       entryPrice: effectiveEntry,
       entryZone: precisionOrder.entryZone,
+      entryZoneMin: precisionOrder.entryZoneMin,
+      entryZoneMax: precisionOrder.entryZoneMax,
+      idealEntry: precisionOrder.idealEntry,
+      entryModel: precisionOrder.entryModel,
+      setupScore: precisionOrder.setupScore,
+      scoreBreakdown: precisionOrder.scoreBreakdown,
       entryCondition: precisionOrder.entryCondition,
-      stopLoss: parseFloat(stopLoss.toFixed(2)),
-      takeProfit1: parseFloat(takeProfit1.toFixed(2)),
-      takeProfit2: parseFloat(takeProfit2.toFixed(2)),
-      takeProfit3: parseFloat(takeProfit3.toFixed(2)),
-      riskRewardRatio: rrRatio,
-      confidenceScore,
-      calculatedWinProb,
+      stopLoss: precisionOrder.stopLoss,
+      takeProfit1: precisionOrder.takeProfit1,
+      takeProfit2: precisionOrder.takeProfit2,
+      takeProfit3: precisionOrder.takeProfit3,
+      riskRewardRatio: precisionOrder.riskRewardRatio,
+      confidenceScore: precisionOrder.setupScore,
+      calculatedWinProb: precisionOrder.setupScore,
       signalGrade,
       marketRegime: `${regimeData.regime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Flow)`,
       htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),

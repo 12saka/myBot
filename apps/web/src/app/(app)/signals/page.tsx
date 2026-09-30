@@ -156,6 +156,11 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
               TF: {signal.aiReasoning?.timeframe || '15m'}
             </span>
+            {signal.aiReasoning?.entry_model && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                {String(signal.aiReasoning.entry_model).replace(/_/g, ' ')}
+              </span>
+            )}
             {(signal.status === 'HIT_TP1' || signal.status === 'HIT_TP2' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP1' || (signal.aiReasoning as any)?.outcomeResolution === 'HIT_TP2') && (
               <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-black bg-emerald-500/25 text-emerald-300 border border-emerald-500/50 flex items-center gap-1.5 shadow-sm shadow-emerald-500/20 animate-pulse">
                 <CheckCircle2 size={12} className="text-emerald-400" />
@@ -266,7 +271,9 @@ function SignalCard({ signal, index, onDelete, onViewChart }: SignalCardProps) {
                   <span className="font-mono font-black text-sm sm:text-base text-white tracking-tight leading-tight">
                     {prefix}{fmt(signal.entry)}
                   </span>
-                  <span className="text-[9px] font-mono text-slate-500 mt-0.5">Execution Base</span>
+                  <span className="text-[9px] font-mono text-cyan-400/90 mt-0.5 truncate" title={signal.aiReasoning?.entry_zone || `Zone: ${prefix}${fmt(signal.entry)}`}>
+                    Zone: {signal.aiReasoning?.entry_zone || `${prefix}${fmt(signal.entry)}`}
+                  </span>
                 </div>
 
                 <div className={cn(
@@ -900,7 +907,7 @@ export default function SignalsPage() {
             duration: 5000,
           });
 
-          // Update the signal in place so the card indicates the win rather than deleting it!
+          // Update the signal in place so the card indicates the win
           setSignals(useAIStore.getState().signals.map(s => {
             if (s.id === sig.id) {
               return {
@@ -918,6 +925,11 @@ export default function SignalsPage() {
             }
             return s;
           }));
+
+          // Flowing market: automatically request a fresh replacement setup for this symbol after 5s
+          setTimeout(() => {
+            handleGenerateSignalSilent(sig.symbol);
+          }, 5000);
           break;
         } else if (hitSL) {
           // Update as HIT_SL in place
@@ -938,6 +950,11 @@ export default function SignalsPage() {
             }
             return s;
           }));
+
+          // Flowing market: automatically request a fresh replacement setup for this symbol after 5s
+          setTimeout(() => {
+            handleGenerateSignalSilent(sig.symbol);
+          }, 5000);
           break;
         }
       }
@@ -1041,7 +1058,7 @@ export default function SignalsPage() {
     setIsRefreshing(true);
     const toastId = toast.loading('Refreshing signals from gateway...');
     try {
-      const raw = await apiFetch<any[]>('/api/v2/signals');
+      const raw = await apiFetch<any[]>('/api/v2/signals?forceFresh=true');
       if (Array.isArray(raw)) {
         const nowMs = Date.now();
         const activeOnly = raw.map(mapSignal).filter(s => {
@@ -1301,16 +1318,25 @@ export default function SignalsPage() {
   };
 
   const handleDeleteSignal = async (id: string) => {
-    const toastId = toast.loading('Dismissing active signal...');
+    const toastId = toast.loading('Deleting signal and generating fresh flowing setup...');
     try {
-      await apiFetch(`/api/v2/signals/${id}`, {
+      const res: any = await apiFetch(`/api/v2/signals/${id}`, {
         method: 'DELETE'
       });
-      setSignals(signals.filter(s => s.id !== id));
-      toast.success('Signal deleted successfully!', { id: toastId });
+      if (res?.freshSignal && res.freshSignal.direction !== 'WAIT') {
+        const fresh = res.freshSignal;
+        setSignals([fresh, ...signals.filter(s => s.id !== id && s.symbol !== fresh.symbol)]);
+        toast.success(`Signal deleted. Fresh flowing ${fresh.symbol} setup generated!`, { id: toastId });
+      } else {
+        setSignals(signals.filter(s => s.id !== id));
+        toast.success('Signal permanently deleted from database.', { id: toastId });
+        // Trigger fresh setup generation from flowing market price
+        fetchActiveSignals();
+      }
     } catch (err: any) {
       setSignals(signals.filter(s => s.id !== id));
       toast.success('Signal dismissed locally.', { id: toastId });
+      fetchActiveSignals();
     }
   };
 
