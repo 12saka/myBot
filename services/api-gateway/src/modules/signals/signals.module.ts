@@ -568,6 +568,74 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
+    // 3. Macro Economic Calendar & News Blackout Gate
+    const calendarEvents = await this.fetchEconomicCalendar();
+    const eventProximity = this.checkEconomicEventProximity(symbol, calendarEvents);
+    if (eventProximity.isBlocked) {
+      console.log(`[SIGNALS GATEWAY] Trade blocked by Economic Event Proximity for ${symbol}: ${eventProximity.reason}`);
+      return {
+        id: `event-gate-${symbol.toLowerCase()}-${Date.now()}`,
+        symbol,
+        direction: 'WAIT',
+        entryPrice: 0,
+        stopLoss: 0,
+        takeProfit1: 0,
+        takeProfit2: 0,
+        riskRewardRatio: 0,
+        winProbability: 0,
+        durationEstimate: eventProximity.stage === 'PRE_EVENT_LOCKOUT'
+          ? `Lockout (${eventProximity.minutesUntil}m until news)`
+          : `Absorption (${eventProximity.minutesAgo}m post news)`,
+        aiReasoning: {
+          status: eventProximity.stage,
+          entry_type: 'WAIT',
+          invalidationReason: eventProximity.reason,
+          explanation: eventProximity.reason,
+          economic_event: eventProximity.event,
+          timeframe: interval,
+        },
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + (eventProximity.stage === 'PRE_EVENT_LOCKOUT' ? Math.max(5, eventProximity.minutesUntil || 15) * 60 * 1000 : 10 * 60 * 1000)),
+      };
+    }
+
+    // 4. Real-time Spread Gate (TradingView Scanner)
+    const tvConfig = this.getTradingViewTicker(symbol);
+    try {
+      const tvQuotes = await this.fetchTradingViewQuotes(tvConfig.endpoint, [tvConfig.ticker]);
+      const q = tvQuotes[tvConfig.ticker];
+      if (q && q.bid != null && q.ask != null && q.ask > q.bid && q.price > 0) {
+        const spread = q.ask - q.bid;
+        const spreadPct = (spread / q.price) * 100;
+        const isGold = symbol.toUpperCase().includes('GOLD') || symbol.toUpperCase().includes('XAU');
+        const isSpreadBlown = isGold ? spread > 2.50 : spreadPct > 0.08;
+        if (isSpreadBlown) {
+          console.log(`[SIGNALS GATEWAY] Trade blocked by elevated spread for ${symbol}: spread=${spread.toFixed(2)} (${spreadPct.toFixed(3)}%)`);
+          return {
+            id: `spread-gate-${symbol.toLowerCase()}-${Date.now()}`,
+            symbol,
+            direction: 'WAIT',
+            entryPrice: q.price,
+            stopLoss: 0,
+            takeProfit1: 0,
+            takeProfit2: 0,
+            riskRewardRatio: 0,
+            winProbability: 0,
+            durationEstimate: 'Spread Stabilization',
+            aiReasoning: {
+              status: 'SPREAD_ELEVATED',
+              entry_type: 'WAIT',
+              invalidationReason: `Institutional Spread Gate: Real-time spread is elevated at ${spread.toFixed(2)} (${spreadPct.toFixed(3)}%). Entry blocked until institutional liquidity normalizes.`,
+              explanation: `Live spread of ${spread.toFixed(2)} exceeds institutional risk threshold for ${symbol}. Awaiting liquidity provider spread compression.`,
+              timeframe: interval,
+            },
+            createdAt: new Date(),
+            expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+          };
+        }
+      }
+    } catch (spreadErr) {}
+
     const aiServiceUrl = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
     const apiKey = process.env.AI_SERVICE_API_KEY || 'internal-secret-key';
     const cachedCandles = await this.getOrFetchCandles(symbol, interval);
@@ -2450,13 +2518,113 @@ export class SignalsController implements OnModuleInit {
     return 20; // 4h, 1d
   }
 
+  private economicCalendarCache: { events: any[]; cachedAt: number } | null = null;
+
+  async fetchEconomicCalendar(): Promise<any[]> {
+    const now = Date.now();
+    if (this.economicCalendarCache && (now - this.economicCalendarCache.cachedAt) < 300000) {
+      return this.economicCalendarCache.events;
+    }
+    try {
+      const res = await this.fetchWithTimeout('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {}, 4000);
+      if (res.ok) {
+        const events = await res.json();
+        if (Array.isArray(events)) {
+          this.economicCalendarCache = { events, cachedAt: now };
+          return events;
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[SignalsController] Economic calendar fetch notice: ${e.message}`);
+    }
+    return this.economicCalendarCache?.events || [];
+  }
+
+  checkEconomicEventProximity(symbol: string, calendarEvents: any[]): {
+    isBlocked: boolean;
+    reason: string;
+    stage: 'PRE_EVENT_LOCKOUT' | 'POST_EVENT_ABSORPTION' | 'CLEAR';
+    event?: any;
+    minutesUntil?: number;
+    minutesAgo?: number;
+  } {
+    if (!calendarEvents || calendarEvents.length === 0) {
+      return { isBlocked: false, reason: '', stage: 'CLEAR' };
+    }
+
+    const s = symbol.toUpperCase();
+    const relevantCurrencies = ['USD'];
+    if (s.includes('EUR')) relevantCurrencies.push('EUR');
+    if (s.includes('GBP')) relevantCurrencies.push('GBP');
+    if (s.includes('JPY')) relevantCurrencies.push('JPY');
+    if (s.includes('AUD')) relevantCurrencies.push('AUD');
+    if (s.includes('CAD')) relevantCurrencies.push('CAD');
+
+    const now = Date.now();
+
+    for (const item of calendarEvents) {
+      if (!relevantCurrencies.includes(item.country)) continue;
+      if (item.impact !== 'High' && item.impact !== 'Medium') continue;
+
+      const eventTime = new Date(item.date).getTime();
+      if (isNaN(eventTime)) continue;
+
+      const diffMinutes = (eventTime - now) / 60000;
+
+      // Gate 1: Pre-Event Blackout Window (25 mins before High impact, 12 mins before Medium)
+      const preWindow = item.impact === 'High' ? 25 : 12;
+      if (diffMinutes > 0 && diffMinutes <= preWindow) {
+        return {
+          isBlocked: true,
+          stage: 'PRE_EVENT_LOCKOUT',
+          event: item,
+          minutesUntil: Math.round(diffMinutes),
+          reason: `Pre-Event Volatility Gate: High-impact ${item.country} release "${item.title}" in ${Math.round(diffMinutes)}m. Pre-announcement liquidity vacuum prohibits new entries to protect capital.`
+        };
+      }
+
+      // Gate 2: Post-Event Volatility Absorption Window (12 mins after High impact, 5 mins after Medium)
+      const postWindow = item.impact === 'High' ? 12 : 5;
+      if (diffMinutes <= 0 && Math.abs(diffMinutes) <= postWindow) {
+        return {
+          isBlocked: true,
+          stage: 'POST_EVENT_ABSORPTION',
+          event: item,
+          minutesAgo: Math.round(Math.abs(diffMinutes)),
+          reason: `Post-Event Volatility Absorption Gate: High-impact ${item.country} "${item.title}" released ${Math.round(Math.abs(diffMinutes))}m ago. Awaiting post-news stop-hunt absorption and structure stabilization before entry.`
+        };
+      }
+    }
+
+    return { isBlocked: false, reason: '', stage: 'CLEAR' };
+  }
+
+  private getTradingViewTicker(symbol: string): { ticker: string; endpoint: 'cfd' | 'america' | 'crypto' | 'forex' } {
+    const s = symbol.toUpperCase().trim().replace('/', '');
+    if (s.includes('BTC')) return { ticker: 'BINANCE:BTCUSDT', endpoint: 'crypto' };
+    if (s.includes('ETH')) return { ticker: 'BINANCE:ETHUSDT', endpoint: 'crypto' };
+    if (s.includes('SOL')) return { ticker: 'BINANCE:SOLUSDT', endpoint: 'crypto' };
+    if (s.includes('GOLD') || s.includes('XAU')) return { ticker: 'TVC:GOLD', endpoint: 'cfd' };
+    if (s.includes('US30') || s.includes('DOW')) return { ticker: 'DJ:DJI', endpoint: 'america' };
+    if (s.includes('US100') || s.includes('NAS')) return { ticker: 'NASDAQ:NDX', endpoint: 'america' };
+    if (s.includes('SPX') || s.includes('SP500')) return { ticker: 'SP:SPX', endpoint: 'america' };
+    if (s.includes('EUR')) return { ticker: 'FX_IDC:EURUSD', endpoint: 'forex' };
+    if (s.includes('JPY')) return { ticker: 'FX_IDC:USDJPY', endpoint: 'forex' };
+    if (s.includes('GBP')) return { ticker: 'FX_IDC:GBPUSD', endpoint: 'forex' };
+    return { ticker: 'FX_IDC:EURUSD', endpoint: 'forex' };
+  }
+
   private intermarketCache: { data: any; cachedAt: number } | null = null;
 
   async fetchIntermarketData(): Promise<{
     dxy: { price: number; change1h: number; trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' };
     us10y: { yield: number; change1h: number; trend: 'RISING' | 'FALLING' | 'FLAT' };
     vix: { level: number; regime: 'LOW_RISK' | 'NORMAL' | 'ELEVATED' | 'EXTREME' };
+    silver: { price: number; change1h: number };
+    oil: { price: number; change1h: number };
+    sp500: { price: number; change1h: number };
     goldSpot: { price: number; source: string; isRealSpot: boolean };
+    upcomingEvent?: any;
   }> {
     const now = Date.now();
     if (this.intermarketCache && (now - this.intermarketCache.cachedAt) < 60000) {
@@ -2466,10 +2634,13 @@ export class SignalsController implements OnModuleInit {
     let dxy = { price: 0, change1h: 0, trend: 'NEUTRAL' as 'BULLISH' | 'BEARISH' | 'NEUTRAL' };
     let us10y = { yield: 0, change1h: 0, trend: 'FLAT' as 'RISING' | 'FALLING' | 'FLAT' };
     let vix = { level: 0, regime: 'NORMAL' as 'LOW_RISK' | 'NORMAL' | 'ELEVATED' | 'EXTREME' };
+    let silver = { price: 0, change1h: 0 };
+    let oil = { price: 0, change1h: 0 };
+    let sp500 = { price: 0, change1h: 0 };
     let goldSpot = { price: 0, source: 'UNAVAILABLE', isRealSpot: false };
 
     try {
-      const symbols = ['DX-Y.NYB', '^TNX', '^VIX', 'GC=F'];
+      const symbols = ['DX-Y.NYB', '^TNX', '^VIX', 'GC=F', 'SI=F', 'CL=F', 'ES=F'];
       const results = await Promise.allSettled(
         symbols.map(sym =>
           this.fetchWithTimeout(
@@ -2526,11 +2697,39 @@ export class SignalsController implements OnModuleInit {
           goldSpot = { price: parseFloat(price.toFixed(2)), source: 'YAHOO_COMEX_FUTURES', isRealSpot: true };
         }
       }
+
+      // Process Silver COMEX (SI=F)
+      if (results[4].status === 'fulfilled' && results[4].value?.chart?.result?.[0]) {
+        const meta = results[4].value.chart.result[0].meta;
+        const price = Number(meta.regularMarketPrice || 0);
+        if (price > 0) silver = { price: parseFloat(price.toFixed(3)), change1h: Number(meta.regularMarketChangePercent || 0) };
+      }
+
+      // Process Crude Oil (CL=F)
+      if (results[5].status === 'fulfilled' && results[5].value?.chart?.result?.[0]) {
+        const meta = results[5].value.chart.result[0].meta;
+        const price = Number(meta.regularMarketPrice || 0);
+        if (price > 0) oil = { price: parseFloat(price.toFixed(2)), change1h: Number(meta.regularMarketChangePercent || 0) };
+      }
+
+      // Process S&P 500 (ES=F)
+      if (results[6].status === 'fulfilled' && results[6].value?.chart?.result?.[0]) {
+        const meta = results[6].value.chart.result[0].meta;
+        const price = Number(meta.regularMarketPrice || 0);
+        if (price > 0) sp500 = { price: parseFloat(price.toFixed(2)), change1h: Number(meta.regularMarketChangePercent || 0) };
+      }
     } catch (err: any) {
-      console.warn(`[SignalsService] Intermarket fetch warning: ${err.message}. Market feeds marked neutral.`);
+      console.warn(`[SignalsService] Intermarket fetch warning: ${err.message}.`);
     }
 
-    const compiled = { dxy, us10y, vix, goldSpot };
+    let upcomingEvent = null;
+    try {
+      const calendar = await this.fetchEconomicCalendar();
+      const usdEvents = calendar.filter((e: any) => e.country === 'USD' && (e.impact === 'High' || e.impact === 'Medium'));
+      upcomingEvent = usdEvents.find((e: any) => new Date(e.date).getTime() > now) || null;
+    } catch (calErr) {}
+
+    const compiled = { dxy, us10y, vix, silver, oil, sp500, goldSpot, upcomingEvent };
     this.intermarketCache = { data: compiled, cachedAt: now };
     return compiled;
   }
