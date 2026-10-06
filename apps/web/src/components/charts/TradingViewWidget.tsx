@@ -8,13 +8,27 @@ interface TradingViewWidgetProps {
   symbol: string;
   containerId?: string;
   height?: number | string;
+  interval?: string;
+  theme?: string;
+  autosize?: boolean;
   entryPrice?: number;
   stopLoss?: number;
   tp1?: number;
   tp2?: number;
 }
 
-export function TradingViewWidget({ symbol = 'BTC/USD', containerId = `tv_chart_${(symbol || 'BTC').toUpperCase().replace(/[^A-Z0-9]/g, '')}`, height = '100%', entryPrice, stopLoss, tp1, tp2 }: TradingViewWidgetProps) {
+export function TradingViewWidget({
+  symbol = 'BTC/USD',
+  containerId = `tv_chart_${(symbol || 'BTC').toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+  height = '100%',
+  interval = '60',
+  theme = 'dark',
+  autosize = true,
+  entryPrice,
+  stopLoss,
+  tp1,
+  tp2
+}: TradingViewWidgetProps) {
   const onLoadScriptRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -45,35 +59,38 @@ export function TradingViewWidget({ symbol = 'BTC/USD', containerId = `tv_chart_
       const containerElement = document.getElementById(containerId);
       if (containerElement && 'TradingView' in window) {
         let tvSymbol = '';
-        const cleanSymbol = (symbol || 'BTC').toUpperCase().replace('/USD', '').trim();
-        
-        if (cleanSymbol === 'BTC') tvSymbol = 'BINANCE:BTCUSDT';
-        else if (cleanSymbol === 'ETH') tvSymbol = 'BINANCE:ETHUSDT';
-        else if (cleanSymbol === 'SOL') tvSymbol = 'BINANCE:SOLUSDT';
-        else if (cleanSymbol === 'BNB') tvSymbol = 'BINANCE:BNBUSDT';
-        else if (cleanSymbol === 'XRP') tvSymbol = 'BINANCE:XRPUSDT';
-        else if (cleanSymbol === 'AAPL') tvSymbol = 'NASDAQ:AAPL';
-        else if (cleanSymbol === 'TSLA') tvSymbol = 'NASDAQ:TSLA';
-        else if (cleanSymbol === 'NVDA') tvSymbol = 'NASDAQ:NVDA';
-        else if (cleanSymbol === 'MSFT') tvSymbol = 'NASDAQ:MSFT';
-        else if (cleanSymbol === 'AMZN') tvSymbol = 'NASDAQ:AMZN';
-        else if (cleanSymbol === 'US30') tvSymbol = 'TVC:DJI';
-        else if (cleanSymbol === 'US100') tvSymbol = 'TVC:NDX';
-        else if (cleanSymbol === 'SPX500') tvSymbol = 'TVC:SPX';
-        else if (cleanSymbol === 'DAX40') tvSymbol = 'TVC:DEU40';
-        else if (cleanSymbol === 'GOLD' || cleanSymbol === 'XAU' || cleanSymbol.includes('XAU')) tvSymbol = 'OANDA:XAUUSD';
-        else if (cleanSymbol === 'OIL') tvSymbol = 'OANDA:WTICOUSD';
-        else if (cleanSymbol.includes('EUR')) tvSymbol = 'FX_IDC:EURUSD';
-        else if (cleanSymbol.includes('GBP')) tvSymbol = 'FX_IDC:GBPUSD';
-        else if (cleanSymbol.includes('JPY')) tvSymbol = 'FX_IDC:USDJPY';
-        else tvSymbol = `BINANCE:${cleanSymbol}USDT`;
+        if (symbol && symbol.includes(':')) {
+          tvSymbol = symbol;
+        } else {
+          const cleanSymbol = (symbol || 'BTC').toUpperCase().replace('/USD', '').trim();
+          if (cleanSymbol === 'BTC') tvSymbol = 'BINANCE:BTCUSDT';
+          else if (cleanSymbol === 'ETH') tvSymbol = 'BINANCE:ETHUSDT';
+          else if (cleanSymbol === 'SOL') tvSymbol = 'BINANCE:SOLUSDT';
+          else if (cleanSymbol === 'BNB') tvSymbol = 'BINANCE:BNBUSDT';
+          else if (cleanSymbol === 'XRP') tvSymbol = 'BINANCE:XRPUSDT';
+          else if (cleanSymbol === 'AAPL') tvSymbol = 'NASDAQ:AAPL';
+          else if (cleanSymbol === 'TSLA') tvSymbol = 'NASDAQ:TSLA';
+          else if (cleanSymbol === 'NVDA') tvSymbol = 'NASDAQ:NVDA';
+          else if (cleanSymbol === 'MSFT') tvSymbol = 'NASDAQ:MSFT';
+          else if (cleanSymbol === 'AMZN') tvSymbol = 'NASDAQ:AMZN';
+          else if (cleanSymbol === 'US30') tvSymbol = 'TVC:DJI';
+          else if (cleanSymbol === 'US100') tvSymbol = 'TVC:NDX';
+          else if (cleanSymbol === 'SPX500') tvSymbol = 'TVC:SPX';
+          else if (cleanSymbol === 'DAX40') tvSymbol = 'TVC:DEU40';
+          else if (cleanSymbol === 'GOLD' || cleanSymbol === 'XAU' || cleanSymbol.includes('XAU')) tvSymbol = 'OANDA:XAUUSD';
+          else if (cleanSymbol === 'OIL') tvSymbol = 'OANDA:WTICOUSD';
+          else if (cleanSymbol.includes('EUR')) tvSymbol = 'FX_IDC:EURUSD';
+          else if (cleanSymbol.includes('GBP')) tvSymbol = 'FX_IDC:GBPUSD';
+          else if (cleanSymbol.includes('JPY')) tvSymbol = 'FX_IDC:USDJPY';
+          else tvSymbol = `BINANCE:${cleanSymbol}USDT`;
+        }
 
         new (window as any).TradingView.widget({
-          autosize: true,
+          autosize: autosize,
           symbol: tvSymbol,
-          interval: '60',
+          interval: interval,
           timezone: 'Etc/UTC',
-          theme: 'dark',
+          theme: theme,
           style: '1',
           locale: 'en',
           enable_publishing: false,
@@ -90,34 +107,37 @@ export function TradingViewWidget({ symbol = 'BTC/USD', containerId = `tv_chart_
         });
       }
     }
-  }, [symbol, containerId, height]);
+  }, [symbol, containerId, height, interval, theme, autosize]);
 
   // Build TradingView external URL
   const getTradingViewUrl = () => {
-    const containerElement = document.getElementById(containerId);
     // reuse the tvSymbol mapping logic
     let tvSym = '';
-    const cs = (symbol || 'BTC').toUpperCase().replace('/USD', '').trim();
-    if (cs === 'BTC') tvSym = 'BINANCE:BTCUSDT';
-    else if (cs === 'ETH') tvSym = 'BINANCE:ETHUSDT';
-    else if (cs === 'SOL') tvSym = 'BINANCE:SOLUSDT';
-    else if (cs === 'BNB') tvSym = 'BINANCE:BNBUSDT';
-    else if (cs === 'XRP') tvSym = 'BINANCE:XRPUSDT';
-    else if (cs === 'AAPL') tvSym = 'NASDAQ:AAPL';
-    else if (cs === 'TSLA') tvSym = 'NASDAQ:TSLA';
-    else if (cs === 'NVDA') tvSym = 'NASDAQ:NVDA';
-    else if (cs === 'MSFT') tvSym = 'NASDAQ:MSFT';
-    else if (cs === 'AMZN') tvSym = 'NASDAQ:AMZN';
-    else if (cs === 'US30') tvSym = 'TVC:DJI';
-    else if (cs === 'US100') tvSym = 'TVC:NDX';
-    else if (cs === 'SPX500') tvSym = 'TVC:SPX';
-    else if (cs === 'DAX40') tvSym = 'TVC:DEU40';
-    else if (cs === 'GOLD' || cs === 'XAU' || cs.includes('XAU')) tvSym = 'OANDA:XAUUSD';
-    else if (cs === 'OIL') tvSym = 'OANDA:WTICOUSD';
-    else if (cs.includes('EUR')) tvSym = 'FX_IDC:EURUSD';
-    else if (cs.includes('GBP')) tvSym = 'FX_IDC:GBPUSD';
-    else if (cs.includes('JPY')) tvSym = 'FX_IDC:USDJPY';
-    else tvSym = `BINANCE:${cs}USDT`;
+    if (symbol && symbol.includes(':')) {
+      tvSym = symbol;
+    } else {
+      const cs = (symbol || 'BTC').toUpperCase().replace('/USD', '').trim();
+      if (cs === 'BTC') tvSym = 'BINANCE:BTCUSDT';
+      else if (cs === 'ETH') tvSym = 'BINANCE:ETHUSDT';
+      else if (cs === 'SOL') tvSym = 'BINANCE:SOLUSDT';
+      else if (cs === 'BNB') tvSym = 'BINANCE:BNBUSDT';
+      else if (cs === 'XRP') tvSym = 'BINANCE:XRPUSDT';
+      else if (cs === 'AAPL') tvSym = 'NASDAQ:AAPL';
+      else if (cs === 'TSLA') tvSym = 'NASDAQ:TSLA';
+      else if (cs === 'NVDA') tvSym = 'NASDAQ:NVDA';
+      else if (cs === 'MSFT') tvSym = 'NASDAQ:MSFT';
+      else if (cs === 'AMZN') tvSym = 'NASDAQ:AMZN';
+      else if (cs === 'US30') tvSym = 'TVC:DJI';
+      else if (cs === 'US100') tvSym = 'TVC:NDX';
+      else if (cs === 'SPX500') tvSym = 'TVC:SPX';
+      else if (cs === 'DAX40') tvSym = 'TVC:DEU40';
+      else if (cs === 'GOLD' || cs === 'XAU' || cs.includes('XAU')) tvSym = 'OANDA:XAUUSD';
+      else if (cs === 'OIL') tvSym = 'OANDA:WTICOUSD';
+      else if (cs.includes('EUR')) tvSym = 'FX_IDC:EURUSD';
+      else if (cs.includes('GBP')) tvSym = 'FX_IDC:GBPUSD';
+      else if (cs.includes('JPY')) tvSym = 'FX_IDC:USDJPY';
+      else tvSym = `BINANCE:${cs}USDT`;
+    }
     return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym)}`;
   };
 

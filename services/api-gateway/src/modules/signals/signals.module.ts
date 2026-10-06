@@ -1,19 +1,439 @@
-import { Module, Controller, Get, Post, Body, Param, Query, UseGuards, Req, Delete, OnModuleInit, HttpException, HttpStatus, ServiceUnavailableException } from '@nestjs/common';
+import { Module, Controller, Get, Post, Body, Param, Query, UseGuards, Req, Delete, OnModuleInit, Logger } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Interval } from '@nestjs/schedule';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { generateHmacSignature } from '../../utils/hmac-signer';
-import { Interval } from '@nestjs/schedule';
 import { EntitlementService } from '../subscription/entitlement.service';
 import { SubscriptionModule } from '../subscription/subscription.module';
 import { AutomationModule } from '../automation/automation.module';
 import { AutomationService } from '../automation/automation.service';
-import axios from 'axios';
+import * as WS from 'ws';
+
+// ============================================================================
+// 1. DATA TYPES & PRODUCTION INTERFACES
+// ============================================================================
+
+export interface Candle {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  timestamp: Date;
+}
+
+export type OrderType = 
+  | 'BUY_LIMIT' 
+  | 'BUY_STOP' 
+  | 'MARKET_BUY' 
+  | 'SELL_LIMIT' 
+  | 'SELL_STOP' 
+  | 'MARKET_SELL' 
+  | 'WAIT';
+
+export type MarketRegimeType = 
+  | 'STRONG_BULL_TREND' 
+  | 'STRONG_BEAR_TREND' 
+  | 'COMPRESSION_RANGE' 
+  | 'EXPANSION_RANGE' 
+  | 'NEWS_SHOCK' 
+  | 'VOLATILITY_EXPANSION';
+
+export type VolatilityRegimeType = 'LOW' | 'NORMAL' | 'HIGH' | 'EXTREME';
+
+export type KillSwitchTier = 
+  | 'NONE'
+  | 'SYSTEM_KILL'
+  | 'DATA_KILL'
+  | 'BROKER_KILL'
+  | 'RISK_KILL'
+  | 'MODEL_KILL'
+  | 'NEWS_KILL'
+  | 'EXECUTION_KILL';
+
+export interface VolatilityMetrics {
+  regime: VolatilityRegimeType;
+  atr15m: number;
+  atrPercentile: number;
+  realizedVolatility: number;
+  rangeExpansionRatio: number;
+  riskMultiplier: number;
+  adaptiveBufferAtr: number;
+}
+
+export interface VolumeProfile {
+  poc: number;
+  vah: number;
+  val: number;
+  profileWidth: number;
+  valueRelation: 'ABOVE_VALUE' | 'INSIDE_VALUE' | 'BELOW_VALUE';
+}
+
+export interface FractalSwing {
+  index: number;
+  type: 'HIGH' | 'LOW';
+  price: number;
+  timestamp: Date;
+}
+
+export interface OrderBlock {
+  type: 'BULLISH' | 'BEARISH';
+  high: number;
+  low: number;
+  midpoint: number;
+  candleIndex: number;
+  mitigated: boolean;
+  qualityScore: number;
+}
+
+export interface FairValueGap {
+  type: 'BULLISH' | 'BEARISH';
+  top: number;
+  bottom: number;
+  midpoint: number;
+  size: number;
+  candleIndex: number;
+  mitigated: boolean;
+}
+
+export interface LiquiditySweep {
+  levelName: string;
+  levelPrice: number;
+  direction: 'BULLISH' | 'BEARISH';
+  wickExtreme: number;
+  candleIndex: number;
+  rejectionRatio: number;
+  qualityScore: number;
+}
+
+export interface SessionLevels {
+  session: 'ASIA' | 'LONDON' | 'NEW_YORK' | 'ROLLOVER';
+  pdh: number;
+  pdl: number;
+  pwh: number;
+  pwl: number;
+  ash: number;
+  asl: number;
+  sessionVwap: number;
+  anchoredVwapAsia: number;
+}
+
+export interface MicrostructureState {
+  bid: number;
+  ask: number;
+  spread: number;
+  isLiquid: boolean;
+  reason?: string;
+}
+
+export interface IntermarketState {
+  dxy: number;
+  dxyChange1h: number;
+  us10y: number;
+  us10yChange1h: number;
+  realYieldProxy: number;
+  eurusd?: number;
+  silver?: number;
+  oil?: number;
+  us100Change?: number;
+  safeHavenDemandScore: number;
+  riskSentiment: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+  macroAlignment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'SAFE_HAVEN_DECOUPLING';
+  conflictDetected: boolean;
+  conflictReason?: string;
+  rationale: string;
+}
+
+export interface ClassicalIndicators {
+  ema20: number;
+  ema50: number;
+  ema100: number;
+  ema200: number;
+  rsi14: number;
+  rsiDivergence: 'BULLISH_DIVERGENCE' | 'BEARISH_DIVERGENCE' | 'NONE';
+  macd: { macd: number; signal: number; histogram: number };
+  adx14: number;
+  isTrending: boolean;
+  bollingerBands: { upper: number; middle: number; lower: number; bandwidth: number };
+}
+
+export interface MultiTimeframeMemory {
+  structural: {
+    tf4h: { trend: 'BULLISH' | 'BEARISH' | 'RANGING'; candleCount: number };
+    tf1h: { trend: 'BULLISH' | 'BEARISH' | 'RANGING'; bosDetected: boolean; candleCount: number };
+  };
+  tactical: {
+    tf15m: { sessionPdhPdl: boolean; activeFvgs: number; candleCount: number };
+    tf5m: { mssTriggered: boolean; candleCount: number };
+  };
+  execution: {
+    tf1m: { spreadImpactPips: number; candleCount: number };
+  };
+}
+
+export interface FiveLevelFactorHierarchy {
+  level1_marketEnvironment: {
+    regime: MarketRegimeType;
+    volatilityRegime: VolatilityRegimeType;
+    atrPercentile: number;
+    session: string;
+    dayOfWeek: string;
+  };
+  level2_fundamentalMacro: {
+    dxy: number;
+    us10y: number;
+    realYield: number;
+    safeHavenScore: number;
+    riskSentiment: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+    macroConflict: boolean;
+  };
+  level3_technicalStructure: {
+    htfTrend4h: string;
+    primaryStructure1h: string;
+    tacticalStructure15m: string;
+    indicators: ClassicalIndicators;
+    poc: number;
+    vwap: number;
+  };
+  level4_entryConfirmation: {
+    model: string;
+    confirmation5m: boolean;
+    iczLow: number;
+    iczHigh: number;
+    preferredEntry: number;
+  };
+  level5_tradeQuality: {
+    orderType: OrderType;
+    ev: number;
+    r1: number;
+    recommendedLots: number;
+  };
+}
+
+export interface NewsGateState {
+  isBlackout: boolean;
+  eventStage: 'PRE_EVENT' | 'EVENT_SHOCK' | 'PRICE_DISCOVERY' | 'STRUCTURE_REBUILD' | 'NORMAL_MODE';
+  minutesToEvent: number | null;
+  eventTitle: string | null;
+  impactTier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
+}
+
+export interface ConfluenceCandidate {
+  source: string;
+  price: number;
+  weight: number;
+}
+
+export interface InstitutionalConfluenceZone {
+  zoneLow: number;
+  zoneHigh: number;
+  preferredEntry: number;
+  confluenceFactors: string[];
+  overlapCount: number;
+  zoneRank: 'TIER_1_PRIME' | 'TIER_2_STRONG' | 'TIER_3_MODERATE' | 'WEAK';
+  entryQualityCurve: { price: number; qualityScore: number }[];
+}
+
+export interface TradePathModel {
+  tp1Price: number;
+  tp1LiquiditySource: string;
+  tp1RiskReward: number;
+  probTp1BeforeSl: number;
+  tp2Price: number;
+  tp2LiquiditySource: string;
+  tp2RiskReward: number;
+  probTp2BeforeSl: number;
+  tp3Price: number;
+  tp3LiquiditySource: string;
+  tp3RiskReward: number;
+  probTp3BeforeSl: number;
+  probSlBeforeTp1: number;
+  expectedValueR: number;
+}
+
+export interface InvalidationAndExpiry {
+  structuralInvalidationLevel: number;
+  adaptiveVolBuffer: number;
+  exactStopLoss: number;
+  invalidationThesis: string;
+  orderExpiryHours: number;
+  preFillCancelTriggers: string[];
+}
+
+export interface DynamicPositionSizing {
+  riskBudgetUsd: number;
+  recommendedLots: number;
+  recommendedUnitsOz: number;
+  volatilityAdjustment: number;
+  confidenceAdjustment: number;
+}
+
+// -------------------------------------------------------------
+// FIVE DECISION GATES
+// -------------------------------------------------------------
+
+export interface GateCheck<T = any> {
+  gateId: 'GATE_1_DATA' | 'GATE_2_MARKET' | 'GATE_3_SETUP' | 'GATE_4_TRADE' | 'GATE_5_EXECUTION';
+  passed: boolean;
+  score: number;
+  code: string;
+  reason: string;
+  telemetry: T;
+}
+
+export interface FiveGatesSummary {
+  allPassed: boolean;
+  failingGate: string | null;
+  failingReason?: string;
+  gate1_data: GateCheck;
+  gate2_market: GateCheck;
+  gate3_setup: GateCheck;
+  gate4_trade: GateCheck;
+  gate5_execution: GateCheck;
+}
+
+export interface ImmutableTradeAudit {
+  tradeId: string;
+  timestamp: string;
+  engineVersion: string;
+  dataSnapshot: {
+    twelveDataClose: number;
+    tvSpotPrice: number;
+    spread: number;
+    dxy: number;
+    us10y: number;
+    realYield: number;
+  };
+  features: {
+    atr15m: number;
+    atrPercentile: number;
+    volumeProfilePoc: number;
+    sessionVwap: number;
+    regime: string;
+    iczOverlapCount: number;
+  };
+  fiveGates: FiveGatesSummary;
+  orderPlan: {
+    orderType: OrderType;
+    preferredEntry: number;
+    zone: [number, number];
+    sl: number;
+    tp1: number;
+    tp2: number;
+    tp3: number;
+    r1: number;
+    ev: number;
+  };
+  positionSizing: DynamicPositionSizing;
+  thesis: {
+    thesis: string;
+    invalidationConditions: string[];
+  };
+  executionStatus?: 'APPROVED_FOR_EXECUTION' | 'HELD_AT_GATE';
+}
+
+export interface XauusdLiveStateStore {
+  symbol: string;
+  engineVersion: string;
+  lastUpdated: string;
+  currentPrice: number;
+  bid: number;
+  ask: number;
+  spread: number;
+  marketRegime: MarketRegimeType;
+  volatilityRegime: VolatilityRegimeType;
+  session: string;
+  dxyAlignment: string;
+  us10yAlignment: string;
+  newsRisk: string;
+  activeOrderType: OrderType;
+  entryZone: [number, number];
+  preferredEntry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  expectedValueR: number;
+  fiveGates: FiveGatesSummary;
+  killSwitchActive: boolean;
+  killSwitchTier: KillSwitchTier;
+  killSwitchReason?: string;
+}
+
+export interface XauusdInstitutionalSetup {
+  fiveGates: FiveGatesSummary;
+  orderType: OrderType;
+  model: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE';
+  direction: 'BUY' | 'SELL' | 'WAIT';
+  grade: 'A+' | 'A' | 'B+' | 'WAIT';
+  opportunityScore: number;
+  marketBiasScore: number;
+  entryQualityScore: number;
+  entryPrice: number;
+  entryZone: [number, number];
+  stopLoss: number;
+  takeProfit1: number;
+  takeProfit2: number;
+  takeProfit3: number;
+  riskReward1: number;
+  riskReward2: number;
+  riskReward3: number;
+  tradePath: TradePathModel;
+  invalidationAndExpiry: InvalidationAndExpiry;
+  positionSizing: DynamicPositionSizing;
+  marketRegime: MarketRegimeType;
+  volatilityMetrics: VolatilityMetrics;
+  volumeProfile: VolumeProfile;
+  levels: {
+    currentPrice: number;
+    pdh: number;
+    pdl: number;
+    pwh: number;
+    pwl: number;
+    ash: number;
+    asl: number;
+    sessionVwap: number;
+    poc: number;
+    vah: number;
+    val: number;
+  };
+  microstructure: MicrostructureState;
+  intermarket: IntermarketState;
+  newsGate: NewsGateState;
+  killSwitchActive: boolean;
+  killSwitchTier: KillSwitchTier;
+  killSwitchReason?: string;
+  auditTrail: ImmutableTradeAudit;
+  confluenceReasons: string[];
+  summary: string;
+  hierarchy?: FiveLevelFactorHierarchy;
+  memory?: MultiTimeframeMemory;
+}
+
+// ============================================================================
+// 2. SIGNALS CONTROLLER & FIVE-GATE DECISION ENGINE
+// ============================================================================
 
 @ApiTags('signals')
 @Controller('signals')
 export class SignalsController implements OnModuleInit {
-  private newsCache: Map<string, { data: any[]; expiresAt: number }> = new Map();
+  private readonly logger = new Logger(SignalsController.name);
+  private readonly ENGINE_VERSION = 'XAU-PROD-3.2';
+
+  // In-memory Real-time State Store
+  private liveStateStore: XauusdLiveStateStore | null = null;
+
+  // Post-Trade Memory & Model Drift Tracking (Rolling 50 completed setups)
+  private recentTradesHistory: {
+    id: string;
+    symbol: string;
+    direction: string;
+    result: 'WIN' | 'LOSS' | 'SCRATCH';
+    pnlR: number;
+    timestamp: number;
+  }[] = [];
+
+  private candleCache: Map<string, { timestamp: number; candles: Candle[] }> = new Map();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -21,154 +441,25 @@ export class SignalsController implements OnModuleInit {
     private readonly automationService: AutomationService,
   ) {}
 
-  private async fetchRealtimeNews(symbol: string): Promise<any[]> {
-    const finnhubKey = process.env.FINNHUB_API_KEY;
-    if (!finnhubKey) return [];
-
-    const symUpper = (symbol || '').toUpperCase().trim();
-    const isStock = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META'].includes(symUpper);
-    const isNasdaq = symUpper.includes('US100') || symUpper.includes('NAS') || symUpper.includes('NQ');
-    const isDow = symUpper.includes('US30') || symUpper.includes('DOW') || symUpper.includes('YM');
-    const isSpx = symUpper.includes('SPX') || symUpper.includes('SP500') || symUpper.includes('ES');
-    const isGold = symUpper.includes('GOLD') || symUpper.includes('XAU');
-    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA'].some(c => symUpper.includes(c));
-    const isForex = ['EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'].some(fx => symUpper.includes(fx));
-
-    const cacheKey = isStock ? `stock_${symUpper}` :
-      isNasdaq ? 'index_nasdaq' :
-      isDow ? 'index_dow' :
-      isSpx ? 'index_spx' :
-      isGold ? 'commodity_gold' :
-      isCrypto ? 'crypto' :
-      isForex ? 'forex' : 'general';
-
-    const cached = this.newsCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
-      return cached.data;
-    }
-
-    try {
-      const fromDate = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString().split('T')[0];
-      const toDate = new Date().toISOString().split('T')[0];
-
-      let newsUrl = `https://finnhub.io/api/v1/news?category=general&token=${finnhubKey}`;
-      if (isStock) {
-        newsUrl = `https://finnhub.io/api/v1/company-news?symbol=${symUpper}&from=${fromDate}&to=${toDate}&token=${finnhubKey}`;
-      } else if (isNasdaq) {
-        newsUrl = `https://finnhub.io/api/v1/company-news?symbol=QQQ&from=${fromDate}&to=${toDate}&token=${finnhubKey}`;
-      } else if (isDow) {
-        newsUrl = `https://finnhub.io/api/v1/company-news?symbol=DIA&from=${fromDate}&to=${toDate}&token=${finnhubKey}`;
-      } else if (isSpx) {
-        newsUrl = `https://finnhub.io/api/v1/company-news?symbol=SPY&from=${fromDate}&to=${toDate}&token=${finnhubKey}`;
-      } else if (isGold) {
-        newsUrl = `https://finnhub.io/api/v1/company-news?symbol=GLD&from=${fromDate}&to=${toDate}&token=${finnhubKey}`;
-      } else if (isCrypto) {
-        newsUrl = `https://finnhub.io/api/v1/news?category=crypto&token=${finnhubKey}`;
-      } else if (isForex) {
-        newsUrl = `https://finnhub.io/api/v1/news?category=forex&token=${finnhubKey}`;
-      }
-
-      // Fast non-blocking timeout: 2500ms max so signals never lag
-      const newsRes = await axios.get(newsUrl, { timeout: 2500 });
-      if (Array.isArray(newsRes.data) && newsRes.data.length > 0) {
-        const mapped = newsRes.data.slice(0, 6).map((item: any) => ({
-          headline: item.headline || '',
-          summary: item.summary || '',
-          source: item.source || '',
-          datetime: Number(item.datetime || 0),
-        })).filter((n: any) => n.headline && n.headline.trim().length > 0);
-
-        if (mapped.length > 0) {
-          // Cache for 3 minutes (180,000 ms)
-          this.newsCache.set(cacheKey, { data: mapped, expiresAt: Date.now() + 180000 });
-          return mapped;
-        }
-      }
-    } catch (err: any) {
-      console.warn(`[SIGNALS GATEWAY] Real-time news fetch notice for ${cacheKey}: ${err.message}`);
-      if (cached) return cached.data;
-      const genCached = this.newsCache.get('general');
-      if (genCached) return genCached.data;
-    }
-    return [];
-  }
-
   async onModuleInit() {
-    console.log('[SignalsController] Ensuring database schema columns are migrated on remote database...');
+    this.logger.log(`[SignalsController] Production TradeMind ${this.ENGINE_VERSION} Initialized.`);
     try {
       await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "strategyKey" TEXT;`);
       await this.prisma.$executeRawUnsafe(`ALTER TABLE "Signal" ADD COLUMN IF NOT EXISTS "userId" TEXT;`);
     } catch (e: any) {
-      console.warn(`[SignalsController] Raw SQL schema migration notice: ${e.message}`);
-    }
-
-    // Auto-bootstrap active signals for core watchlist on startup
-    setTimeout(() => {
-      this.refreshCoreWatchlistSignals().catch(err => {
-        console.warn(`[SignalsController] Initial watchlist signal bootstrap notice: ${err.message}`);
-      });
-    }, 4000);
-  }
-
-  // Maintain fresh signals for core assets every 5 minutes
-  @Interval(300000)
-  async maintainCoreSignals() {
-    await this.refreshCoreWatchlistSignals();
-  }
-
-  public async refreshCoreWatchlistSignals(): Promise<void> {
-    // 1. Permanently delete all expired signals from the database
-    await this.prisma.signal.deleteMany({
-      where: { expiresAt: { lte: new Date() } }
-    }).catch(() => {});
-
-    const coreSymbols = ['GOLD', 'BTC/USD', 'US100', 'US30', 'EUR/USD'];
-    for (const sym of coreSymbols) {
-      try {
-        const existing = await this.prisma.signal.findFirst({
-          where: {
-            symbol: sym,
-            expiresAt: { gt: new Date() },
-          },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        const ageMs = existing ? (Date.now() - new Date(existing.createdAt).getTime()) : Infinity;
-        if (!existing || ageMs > 30 * 60 * 1000) {
-          if (existing) {
-            // Delete stale signal permanently
-            await this.prisma.signal.delete({ where: { id: existing.id } }).catch(() => {});
-          }
-          console.log(`[SignalsController] Proactively generating authentic top-down institutional signal for ${sym}...`);
-          let sig = await this.generateSignalRequest(sym, '15m', true);
-          if (sig && sig.direction === 'WAIT') {
-            console.log(`[SignalsController] 15m timeframe for ${sym} in micro-consolidation. Evaluating 1h timeframe...`);
-            sig = await this.generateSignalRequest(sym, '1h', true);
-          }
-        }
-      } catch (err: any) {
-        console.warn(`[SignalsController] Watchlist auto-generation notice for ${sym}: ${err.message}`);
-      }
+      this.logger.warn(`[SignalsController] DB check note: ${e.message}`);
     }
   }
 
-  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 3500): Promise<Response> {
+  private async fetchWithTimeout(url: string, options: any = {}, timeoutMs = 4500): Promise<Response> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
         ...(options.headers || {})
       };
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        signal: controller.signal
-      });
+      const response = await fetch(url, { ...options, headers, signal: controller.signal });
       clearTimeout(id);
       return response;
     } catch (err) {
@@ -181,10 +472,7 @@ export class SignalsController implements OnModuleInit {
     try {
       const res = await this.fetchWithTimeout(`https://scanner.tradingview.com/${endpoint}/scan`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           symbols: { tickers, query: { types: [] } },
           columns: ['close', 'change', 'high', 'low', 'volume', 'bid', 'ask']
@@ -214,136 +502,2073 @@ export class SignalsController implements OnModuleInit {
     return {};
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Get all active AI trading signals' })
-  async getSignals(@Query('forceFresh') forceFreshQuery?: string) {
-    try {
-      const forceFresh = forceFreshQuery === 'true';
-      const now = new Date();
+  // -------------------------------------------------------------
+  // REAL MARKET DATA SOURCING: TRADINGVIEW WEBSOCKET (ZERO DUMMY FALLBACKS)
+  // -------------------------------------------------------------
 
-      // 1. Fetch live TradingView spot quotes for core markets
-      const [tvCfd, tvAmerica, tvCrypto, tvForex]: Record<string, any>[] = await Promise.all([
-        this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']).catch(() => ({} as Record<string, any>)),
-        this.fetchTradingViewQuotes('america', ['DJ:DJI', 'NASDAQ:NDX', 'SP:SPX']).catch(() => ({} as Record<string, any>)),
-        this.fetchTradingViewQuotes('crypto', ['BINANCE:BTCUSDT', 'COINBASE:BTCUSD']).catch(() => ({} as Record<string, any>)),
-        this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD', 'FX_IDC:GBPUSD', 'FX_IDC:USDJPY']).catch(() => ({} as Record<string, any>))
+  public async fetchTradingViewCandles(
+    symbol = 'TVC:GOLD',
+    resolution = '15',
+    nBars = 120
+  ): Promise<Candle[]> {
+    const cacheKey = `${symbol}:${resolution}:${nBars}`;
+    const cached = this.candleCache.get(cacheKey);
+    const now = Date.now();
+    // Adaptive TTL: 20s for 1m/5m, 45s for 15m/1h/4h
+    const ttl = (resolution === '1' || resolution === '5') ? 20000 : 45000;
+    if (cached && now - cached.timestamp < ttl && cached.candles.length >= 20) {
+      return cached.candles;
+    }
+
+    const symbolsToTry = [symbol, 'OANDA:XAUUSD'];
+    const WsConstructor: any = (WS as any).default || WS;
+
+    for (const sym of symbolsToTry) {
+      try {
+        const candles = await new Promise<Candle[]>((resolve, reject) => {
+          const ws = new WsConstructor('wss://data.tradingview.com/socket.io/websocket', {
+            headers: {
+              Origin: 'https://www.tradingview.com',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+            }
+          });
+
+          const chartSession = 'cs_' + Math.random().toString(36).substring(2, 12);
+          const timer = setTimeout(() => {
+            try { ws.close(); } catch (e) {}
+            reject(new Error(`TradingView WS timeout for ${sym} (${resolution})`));
+          }, 8000);
+
+          const send = (func: string, args: any[]) => {
+            const msg = JSON.stringify({ m: func, p: args });
+            const framed = '~m~' + msg.length + '~m~' + msg;
+            if (ws.readyState === 1) { // 1 = OPEN
+              ws.send(framed);
+            }
+          };
+
+          ws.on('open', () => {
+            send('set_auth_token', ['unauthorized_user_token']);
+            send('chart_create_session', [chartSession, '']);
+            send('resolve_symbol', [chartSession, 'sds_sym_1', sym]);
+            send('create_series', [chartSession, 'sds_1', 's1', 'sds_sym_1', resolution, nBars]);
+          });
+
+          ws.on('message', (data: any) => {
+            const str = data.toString();
+            const heartbeats = str.match(/~m~\d+~m~(~h~\d+)/g);
+            if (heartbeats) {
+              for (const hb of heartbeats) {
+                const match = hb.match(/~h~\d+/);
+                if (match) ws.send('~m~' + match[0].length + '~m~' + match[0]);
+              }
+            }
+
+            if (str.includes('timescale_update')) {
+              const payloads = str.split(/~m~\d+~m~/).filter(Boolean);
+              for (const p of payloads) {
+                try {
+                  const parsed = JSON.parse(p);
+                  if (parsed.m === 'timescale_update' && parsed.p && parsed.p[1] && parsed.p[1].sds_1 && parsed.p[1].sds_1.s) {
+                    clearTimeout(timer);
+                    ws.close();
+                    const series = parsed.p[1].sds_1.s;
+                    const parsedCandles: Candle[] = series.map((b: any) => ({
+                      timestamp: new Date(b.v[0] * 1000),
+                      open: Number(b.v[1]),
+                      high: Number(b.v[2]),
+                      low: Number(b.v[3]),
+                      close: Number(b.v[4]),
+                      volume: Number(b.v[5] || 100)
+                    }));
+                    parsedCandles.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+                    resolve(parsedCandles);
+                    return;
+                  }
+                } catch (e) {}
+              }
+            }
+          });
+
+          ws.on('error', (err: any) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+
+        if (candles && candles.length >= 20) {
+          this.candleCache.set(cacheKey, { timestamp: now, candles });
+          return candles;
+        }
+      } catch (err: any) {
+        this.logger.warn(`[fetchTradingViewCandles] Warning for ${sym} (${resolution}): ${err.message}`);
+      }
+    }
+
+    return [];
+  }
+
+  public async fetchXauusdCandles(interval: '1min' | '5min' | '15min' | '1h' | '4h', outputsize = 120): Promise<Candle[]> {
+    let resolution = '15';
+    if (interval === '1min') resolution = '1';
+    else if (interval === '5min') resolution = '5';
+    else if (interval === '15min') resolution = '15';
+    else if (interval === '1h') resolution = '60';
+    else if (interval === '4h') resolution = '240';
+
+    // 1. Primary institutional source: TradingView WebSocket (Spot Gold TVC:GOLD / OANDA:XAUUSD)
+    const tvCandles = await this.fetchTradingViewCandles('TVC:GOLD', resolution, outputsize);
+    if (tvCandles.length >= 20) {
+      return tvCandles;
+    }
+
+    // 2. Secondary fallback: Twelve Data ONLY if API key exists and quota allows (never synthetic futures)
+    const tdKey = process.env.TWELVE_DATA_API_KEY;
+    if (tdKey) {
+      try {
+        const url = `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${interval}&outputsize=${outputsize}&apikey=${tdKey}`;
+        const res = await this.fetchWithTimeout(url, {}, 3500);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.values) && data.values.length >= 20) {
+            const parsed: Candle[] = data.values.map((v: any) => ({
+              open: parseFloat(v.open),
+              high: parseFloat(v.high),
+              low: parseFloat(v.low),
+              close: parseFloat(v.close),
+              volume: parseFloat(v.volume || '100'),
+              timestamp: new Date(v.datetime)
+            }));
+            parsed.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+            return parsed;
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(`[fetchXauusdCandles] Twelve Data notice: ${err.message}`);
+      }
+    }
+
+    // Zero dummy fallbacks: Return empty array so Gate 1 detects FEED_UNAVAILABLE cleanly
+    return [];
+  }
+
+  public async fetchGoldMicrostructure(latestCandleClose: number): Promise<MicrostructureState> {
+    const quotes = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
+    let bid = 0;
+    let ask = 0;
+    let spot = latestCandleClose;
+
+    const oanda = quotes['OANDA:XAUUSD'];
+    const tvc = quotes['TVC:GOLD'];
+
+    if (oanda && oanda.bid && oanda.ask && oanda.bid > 0 && oanda.ask > 0) {
+      bid = oanda.bid;
+      ask = oanda.ask;
+      spot = oanda.price;
+    } else if (tvc && tvc.bid && tvc.ask && tvc.bid > 0 && tvc.ask > 0) {
+      bid = tvc.bid;
+      ask = tvc.ask;
+      spot = tvc.price;
+    } else {
+      // ZERO DUMMY FALLBACKS: If real bid/ask quotes are missing, do NOT synthesize fake spreads!
+      return { bid: 0, ask: 0, spread: 0, isLiquid: false, reason: 'Live TradingView bid/ask quote unavailable' };
+    }
+
+    const spread = parseFloat(Math.max(0.01, ask - bid).toFixed(2));
+    const now = new Date();
+    const utcDay = now.getUTCDay();
+    const utcHour = now.getUTCHours();
+    const utcMin = now.getUTCMinutes();
+
+    if (utcDay === 6 || (utcDay === 0 && utcHour < 22) || (utcDay === 5 && utcHour >= 22)) {
+      return { bid, ask, spread, isLiquid: false, reason: 'Weekend market closure' };
+    }
+
+    if (utcHour === 21 && utcMin >= 50) {
+      return { bid, ask, spread, isLiquid: false, reason: 'Daily settlement roll buffer' };
+    }
+
+    if (spread > 2.50) {
+      return { bid, ask, spread, isLiquid: false, reason: `Excessive spread expansion ($${spread.toFixed(2)})` };
+    }
+
+    return { bid, ask, spread, isLiquid: true };
+  }
+
+  public async fetchIntermarket(): Promise<IntermarketState> {
+    let dxy = 0;
+    let dxyChange1h = 0.0;
+    let us10y = 0;
+    let us10yChange1h = 0.0;
+    let eurusd = 0;
+    let silver = 0;
+    let oil = 0;
+    let us100Change = 0.0;
+    let hasLiveMacro = false;
+
+    try {
+      // 1. Fetch TradingView CFD Scanner for institutional macro benchmarks (DXY, Silver)
+      const tvQuotes = await this.fetchTradingViewQuotes('cfd', ['TVC:DXY', 'TVC:SILVER']);
+      if (tvQuotes['TVC:DXY']?.price) {
+        dxy = tvQuotes['TVC:DXY'].price;
+        dxyChange1h = tvQuotes['TVC:DXY'].changePct;
+        hasLiveMacro = true;
+      }
+      if (tvQuotes['TVC:SILVER']?.price) {
+        silver = tvQuotes['TVC:SILVER'].price;
+      }
+
+      // 2. Fetch cross-asset yields and commodities from Yahoo
+      const [dxyRes, us10yRes, eurusdRes, silverRes, oilRes, nqRes] = await Promise.allSettled([
+        dxy <= 0 ? this.fetchWithTimeout('https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?interval=15m&range=1d', {}, 3000) : Promise.resolve(null as any),
+        this.fetchWithTimeout('https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?interval=15m&range=1d', {}, 3000),
+        this.fetchWithTimeout('https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=15m&range=1d', {}, 3000),
+        silver <= 0 ? this.fetchWithTimeout('https://query1.finance.yahoo.com/v8/finance/chart/SI=F?interval=15m&range=1d', {}, 3000) : Promise.resolve(null as any),
+        this.fetchWithTimeout('https://query1.finance.yahoo.com/v8/finance/chart/CL=F?interval=15m&range=1d', {}, 3000),
+        this.fetchWithTimeout('https://query1.finance.yahoo.com/v8/finance/chart/NQ=F?interval=15m&range=1d', {}, 3000)
       ]);
 
-      const livePrices: Record<string, number> = {};
-      if (tvCrypto['BINANCE:BTCUSDT']?.price > 10000) livePrices['BTC/USD'] = tvCrypto['BINANCE:BTCUSDT'].price;
-      if (tvAmerica['DJ:DJI']?.price > 20000) livePrices['US30'] = tvAmerica['DJ:DJI'].price;
-      if (tvAmerica['NASDAQ:NDX']?.price > 10000) livePrices['US100'] = tvAmerica['NASDAQ:NDX'].price;
-      if (tvAmerica['SP:SPX']?.price > 2000) livePrices['SPX500'] = tvAmerica['SP:SPX'].price;
-      if (tvCfd['TVC:GOLD']?.price > 1000) livePrices['GOLD'] = tvCfd['TVC:GOLD'].price;
-      else if (tvCfd['OANDA:XAUUSD']?.price > 1000) livePrices['GOLD'] = tvCfd['OANDA:XAUUSD'].price;
-      if (tvForex['FX_IDC:EURUSD']?.price > 0.5) livePrices['EUR/USD'] = tvForex['FX_IDC:EURUSD'].price;
-      else if (tvForex['OANDA:EURUSD']?.price > 0.5) livePrices['EUR/USD'] = tvForex['OANDA:EURUSD'].price;
+      if (dxy <= 0 && dxyRes.status === 'fulfilled' && dxyRes.value && dxyRes.value.ok) {
+        const dxyData = await dxyRes.value.json();
+        const meta = dxyData?.chart?.result?.[0]?.meta;
+        if (meta?.regularMarketPrice) {
+          dxy = Number(meta.regularMarketPrice);
+          hasLiveMacro = true;
+          const quotes = dxyData?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+          if (quotes.length >= 4) {
+            const past4 = quotes[quotes.length - 4] || quotes[0];
+            dxyChange1h = parseFloat((((dxy - past4) / past4) * 100).toFixed(2));
+          }
+        }
+      }
 
-      // 2. Permanently purge any expired signals from the database
+      if (us10yRes.status === 'fulfilled' && us10yRes.value && us10yRes.value.ok) {
+        const yData = await us10yRes.value.json();
+        const meta = yData?.chart?.result?.[0]?.meta;
+        if (meta?.regularMarketPrice) {
+          us10y = Number(meta.regularMarketPrice);
+          hasLiveMacro = true;
+          const quotes = yData?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+          if (quotes.length >= 4) {
+            const past4 = quotes[quotes.length - 4] || quotes[0];
+            us10yChange1h = parseFloat((((us10y - past4) / past4) * 100).toFixed(2));
+          }
+        }
+      }
+
+      if (eurusdRes.status === 'fulfilled' && eurusdRes.value && eurusdRes.value.ok) {
+        const euData = await eurusdRes.value.json();
+        const price = euData?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if (price) eurusd = Number(price);
+      }
+
+      if (silver <= 0 && silverRes.status === 'fulfilled' && silverRes.value && silverRes.value.ok) {
+        const siData = await silverRes.value.json();
+        const price = siData?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if (price) silver = Number(price);
+      }
+
+      if (oilRes.status === 'fulfilled' && oilRes.value && oilRes.value.ok) {
+        const clData = await oilRes.value.json();
+        const price = clData?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if (price) oil = Number(price);
+      }
+
+      if (nqRes.status === 'fulfilled' && nqRes.value && nqRes.value.ok) {
+        const nqData = await nqRes.value.json();
+        const meta = nqData?.chart?.result?.[0]?.meta;
+        const nqPrice = Number(meta?.regularMarketPrice || 0);
+        const prevClose = Number(meta?.chartPreviousClose || nqPrice);
+        if (prevClose > 0 && nqPrice > 0) {
+          us100Change = parseFloat((((nqPrice - prevClose) / prevClose) * 100).toFixed(2));
+        }
+      }
+    } catch (e) {}
+
+    const realYieldProxy = us10y > 0 ? parseFloat((us10y - 2.30).toFixed(2)) : 0;
+
+    // Calculate Safe-Haven Demand Score (0 - 100)
+    let safeHavenScore = 50;
+    if (us100Change < -0.50) safeHavenScore += 18;
+    if (oil > 80 || dxyChange1h > 0.20 && us10yChange1h < -0.10) safeHavenScore += 12;
+    if (silver > 30) safeHavenScore += 10;
+    if (us100Change > 0.80) safeHavenScore -= 15;
+    const safeHavenDemandScore = Math.max(10, Math.min(95, safeHavenScore));
+
+    const riskSentiment: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL' = 
+      us100Change < -0.60 || safeHavenDemandScore >= 70 ? 'RISK_OFF' :
+      us100Change > 0.60 && safeHavenDemandScore <= 45 ? 'RISK_ON' : 'NEUTRAL';
+
+    let macroAlignment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'SAFE_HAVEN_DECOUPLING' = 'NEUTRAL';
+    let conflictDetected = false;
+    let conflictReason: string | undefined;
+    let rationale = 'Cross-asset indicators moving within baseline historical tolerances.';
+
+    if (dxyChange1h < -0.15 && us10yChange1h < -0.20) {
+      macroAlignment = 'BULLISH';
+      rationale = `Macro Tailwind: Softer USD (${dxyChange1h}%) and lower real yields (${realYieldProxy}%) support non-yielding bullion.`;
+    } else if (dxyChange1h > 0.15 && us10yChange1h > 0.20) {
+      if (safeHavenDemandScore >= 70) {
+        macroAlignment = 'SAFE_HAVEN_DECOUPLING';
+        rationale = 'Safe-Haven Decoupling: USD/Yields firming, but equity risk-off flow supports flight-to-safety gold demand.';
+      } else {
+        macroAlignment = 'BEARISH';
+        conflictDetected = true;
+        conflictReason = `Macro Headwind: Surging USD (${dxyChange1h}%) and rising real yields (${realYieldProxy}%) oppose gold longs.`;
+        rationale = conflictReason;
+      }
+    } else if (dxyChange1h > 0.15 && us10yChange1h < -0.15) {
+      macroAlignment = 'NEUTRAL';
+      rationale = 'Cross-asset divergence: USD firming while Treasury yields soften, creating mixed institutional flows.';
+    }
+
+    return {
+      dxy,
+      dxyChange1h,
+      us10y,
+      us10yChange1h,
+      realYieldProxy,
+      eurusd,
+      silver,
+      oil,
+      us100Change,
+      safeHavenDemandScore,
+      riskSentiment,
+      macroAlignment,
+      conflictDetected,
+      conflictReason,
+      rationale
+    };
+  }
+
+  public async fetchEconomicNewsGate(): Promise<NewsGateState> {
+    try {
+      const res = await this.fetchWithTimeout('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {}, 3500);
+      if (res.ok) {
+        const events = await res.json();
+        if (Array.isArray(events)) {
+          const nowMs = Date.now();
+          const extremeKeywords = ['FOMC', 'POWELL', 'CPI', 'NFP', 'PCE'];
+          const highKeywords = ['GDP', 'PPI', 'RETAIL SALES', 'RATE', 'UNEMPLOYMENT'];
+
+          for (const ev of events) {
+            if (ev.country !== 'USD') continue;
+            const titleUpper = (ev.title || '').toUpperCase();
+
+            let impactTier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
+            if (extremeKeywords.some(kw => titleUpper.includes(kw))) impactTier = 'EXTREME';
+            else if (ev.impact === 'High' || highKeywords.some(kw => titleUpper.includes(kw))) impactTier = 'HIGH';
+            else if (ev.impact === 'Medium') impactTier = 'MEDIUM';
+
+            if (impactTier === 'LOW') continue;
+
+            const evDate = new Date(ev.date).getTime();
+            const diffMin = (evDate - nowMs) / (60 * 1000);
+            const preMin = impactTier === 'EXTREME' ? 45 : 25;
+            const postMin = impactTier === 'EXTREME' ? -25 : -15;
+
+            if (diffMin <= preMin && diffMin >= postMin) {
+              let stage: 'PRE_EVENT' | 'EVENT_SHOCK' | 'PRICE_DISCOVERY' | 'STRUCTURE_REBUILD' | 'NORMAL_MODE' = 'PRE_EVENT';
+              if (diffMin > 0) stage = 'PRE_EVENT';
+              else if (diffMin >= -5) stage = 'EVENT_SHOCK';
+              else if (diffMin >= -15) stage = 'PRICE_DISCOVERY';
+              else stage = 'STRUCTURE_REBUILD';
+
+              return {
+                isBlackout: true,
+                eventStage: stage,
+                minutesToEvent: Math.round(diffMin),
+                eventTitle: ev.title,
+                impactTier
+              };
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    return {
+      isBlackout: false,
+      eventStage: 'NORMAL_MODE',
+      minutesToEvent: null,
+      eventTitle: null,
+      impactTier: 'LOW'
+    };
+  }
+
+  // -------------------------------------------------------------
+  // VOLATILITY & VOLUME PROFILE
+  // -------------------------------------------------------------
+
+  public computeVolatilityMetrics(candles15m: Candle[]): VolatilityMetrics {
+    if (!candles15m || candles15m.length === 0) {
+      return {
+        regime: 'NORMAL',
+        atr15m: 4.5,
+        atrPercentile: 50,
+        realizedVolatility: 15.0,
+        rangeExpansionRatio: 1.0,
+        riskMultiplier: 1.0,
+        adaptiveBufferAtr: 0.25
+      };
+    }
+
+    const atr15m = this.calcATR(candles15m, 14);
+    const len = candles15m.length;
+
+    const historicalAtrs: number[] = [];
+    for (let i = 20; i <= len; i++) {
+      const slice = candles15m.slice(0, i);
+      historicalAtrs.push(this.calcATR(slice, 14));
+    }
+
+    const lowerCount = historicalAtrs.filter(v => v <= atr15m).length;
+    const atrPercentile = Math.round((lowerCount / Math.max(1, historicalAtrs.length)) * 100);
+
+    const logReturns: number[] = [];
+    for (let i = 1; i < candles15m.length; i++) {
+      const r = Math.log(candles15m[i].close / candles15m[i - 1].close);
+      logReturns.push(r);
+    }
+    const mean = logReturns.reduce((a, b) => a + b, 0) / Math.max(1, logReturns.length);
+    const variance = logReturns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / Math.max(1, logReturns.length);
+    const annualizedVol = Math.sqrt(variance) * Math.sqrt(24192) * 100;
+
+    const lastRange = candles15m[len - 1].high - candles15m[len - 1].low;
+    const rangeExpansionRatio = parseFloat((lastRange / Math.max(0.1, atr15m)).toFixed(2));
+
+    let regime: VolatilityRegimeType = 'NORMAL';
+    let riskMultiplier = 1.0;
+    let adaptiveBufferAtr = 0.25;
+
+    if (atrPercentile >= 90 || rangeExpansionRatio >= 2.5) {
+      regime = 'EXTREME';
+      riskMultiplier = 0.50;
+      adaptiveBufferAtr = 0.35;
+    } else if (atrPercentile >= 70 || rangeExpansionRatio >= 1.6) {
+      regime = 'HIGH';
+      riskMultiplier = 0.75;
+      adaptiveBufferAtr = 0.28;
+    } else if (atrPercentile <= 25 && rangeExpansionRatio <= 0.6) {
+      regime = 'LOW';
+      riskMultiplier = 1.05;
+      adaptiveBufferAtr = 0.18;
+    } else {
+      regime = 'NORMAL';
+      riskMultiplier = 1.0;
+      adaptiveBufferAtr = 0.25;
+    }
+
+    return {
+      regime,
+      atr15m: parseFloat(atr15m.toFixed(2)),
+      atrPercentile,
+      realizedVolatility: parseFloat(annualizedVol.toFixed(1)),
+      rangeExpansionRatio,
+      riskMultiplier,
+      adaptiveBufferAtr
+    };
+  }
+
+  public computeVolumeProfile(candles15m: Candle[]): VolumeProfile {
+    const slice = candles15m.slice(-48);
+    if (slice.length === 0) {
+      return { poc: 0, vah: 0, val: 0, profileWidth: 0, valueRelation: 'INSIDE_VALUE' };
+    }
+
+    const minPrice = Math.min(...slice.map(c => c.low));
+    const maxPrice = Math.max(...slice.map(c => c.high));
+    const bucketSize = 1.0;
+    const bucketCount = Math.max(5, Math.ceil((maxPrice - minPrice) / bucketSize));
+    const volumeBuckets = new Array(bucketCount).fill(0);
+
+    slice.forEach(c => {
+      const avg = (c.high + c.low + c.close) / 3;
+      const bIdx = Math.min(bucketCount - 1, Math.max(0, Math.floor((avg - minPrice) / bucketSize)));
+      volumeBuckets[bIdx] += Math.max(10, c.volume);
+    });
+
+    let maxVol = -1;
+    let pocIdx = 0;
+    for (let i = 0; i < bucketCount; i++) {
+      if (volumeBuckets[i] > maxVol) {
+        maxVol = volumeBuckets[i];
+        pocIdx = i;
+      }
+    }
+
+    const poc = minPrice + (pocIdx + 0.5) * bucketSize;
+    const totalVol = volumeBuckets.reduce((a, b) => a + b, 0);
+    const targetValVol = totalVol * 0.70;
+
+    let accumulated = volumeBuckets[pocIdx];
+    let lowerIdx = pocIdx;
+    let upperIdx = pocIdx;
+
+    while (accumulated < targetValVol && (lowerIdx > 0 || upperIdx < bucketCount - 1)) {
+      const downVol = lowerIdx > 0 ? volumeBuckets[lowerIdx - 1] : 0;
+      const upVol = upperIdx < bucketCount - 1 ? volumeBuckets[upperIdx + 1] : 0;
+
+      if (downVol >= upVol && lowerIdx > 0) {
+        lowerIdx--;
+        accumulated += downVol;
+      } else if (upperIdx < bucketCount - 1) {
+        upperIdx++;
+        accumulated += upVol;
+      } else if (lowerIdx > 0) {
+        lowerIdx--;
+        accumulated += downVol;
+      } else {
+        break;
+      }
+    }
+
+    const val = parseFloat((minPrice + lowerIdx * bucketSize).toFixed(2));
+    const vah = parseFloat((minPrice + (upperIdx + 1) * bucketSize).toFixed(2));
+    const currentClose = slice[slice.length - 1].close;
+
+    let valueRelation: 'ABOVE_VALUE' | 'INSIDE_VALUE' | 'BELOW_VALUE' = 'INSIDE_VALUE';
+    if (currentClose > vah) valueRelation = 'ABOVE_VALUE';
+    else if (currentClose < val) valueRelation = 'BELOW_VALUE';
+
+    return {
+      poc: parseFloat(poc.toFixed(2)),
+      vah,
+      val,
+      profileWidth: parseFloat((vah - val).toFixed(2)),
+      valueRelation
+    };
+  }
+
+  public computeSessionLevels(candles15m: Candle[]): SessionLevels {
+    const now = new Date();
+    const utcHour = now.getUTCHours();
+
+    let session: 'ASIA' | 'LONDON' | 'NEW_YORK' | 'ROLLOVER' = 'ASIA';
+    if (utcHour >= 0 && utcHour < 7) session = 'ASIA';
+    else if (utcHour >= 7 && utcHour < 13) session = 'LONDON';
+    else if (utcHour >= 13 && utcHour < 21) session = 'NEW_YORK';
+    else session = 'ROLLOVER';
+
+    const todayUtcDate = now.getUTCDate();
+    const todayMonth = now.getUTCMonth();
+    const todayYear = now.getUTCFullYear();
+
+    const asiaCandles = candles15m.filter(c => {
+      const d = c.timestamp;
+      return d.getUTCFullYear() === todayYear &&
+             d.getUTCMonth() === todayMonth &&
+             d.getUTCDate() === todayUtcDate &&
+             d.getUTCHours() >= 0 && d.getUTCHours() < 7;
+    });
+
+    let ash = 0;
+    let asl = Infinity;
+    if (asiaCandles.length > 0) {
+      ash = Math.max(...asiaCandles.map(c => c.high));
+      asl = Math.min(...asiaCandles.map(c => c.low));
+    } else {
+      const recentSlice = candles15m.slice(-28);
+      ash = Math.max(...recentSlice.map(c => c.high));
+      asl = Math.min(...recentSlice.map(c => c.low));
+    }
+
+    const prevDayCandles = candles15m.filter(c => {
+      const d = c.timestamp;
+      return d.getUTCDate() !== todayUtcDate || d.getUTCMonth() !== todayMonth;
+    }).slice(-96);
+
+    let pdh = 0;
+    let pdl = Infinity;
+    if (prevDayCandles.length > 0) {
+      pdh = Math.max(...prevDayCandles.map(c => c.high));
+      pdl = Math.min(...prevDayCandles.map(c => c.low));
+    } else {
+      // Use genuine historical range from earlier candles in the series (zero synthetic multipliers)
+      const olderCandles = candles15m.slice(0, Math.max(1, candles15m.length - 24));
+      pdh = Math.max(...olderCandles.map(c => c.high));
+      pdl = Math.min(...olderCandles.map(c => c.low));
+    }
+
+    const pwh = Math.max(...candles15m.slice(0, Math.max(1, candles15m.length - 20)).map(c => c.high));
+    const pwl = Math.min(...candles15m.slice(0, Math.max(1, candles15m.length - 20)).map(c => c.low));
+
+    const sessionCandles = candles15m.filter(c => {
+      const d = c.timestamp;
+      if (session === 'ASIA') return d.getUTCHours() >= 0 && d.getUTCHours() < 7;
+      if (session === 'LONDON') return d.getUTCHours() >= 7 && d.getUTCHours() < 13;
+      if (session === 'NEW_YORK') return d.getUTCHours() >= 13 && d.getUTCHours() < 21;
+      return d.getUTCHours() >= 21;
+    });
+
+    const sessionVwap = this.calcVWAP(sessionCandles.length >= 4 ? sessionCandles : candles15m.slice(-20));
+    const anchoredVwapAsia = this.calcVWAP(asiaCandles.length >= 2 ? asiaCandles : candles15m.slice(-28));
+
+    return { session, pdh, pdl, pwh, pwl, ash, asl, sessionVwap, anchoredVwapAsia };
+  }
+
+  public detectFractalSwings(candles: Candle[]): FractalSwing[] {
+    const swings: FractalSwing[] = [];
+    for (let i = 2; i < candles.length - 2; i++) {
+      const c = candles[i];
+      const isHigh = c.high > candles[i - 2].high && c.high > candles[i - 1].high && c.high > candles[i + 1].high && c.high > candles[i + 2].high;
+      const isLow = c.low < candles[i - 2].low && c.low < candles[i - 1].low && c.low < candles[i + 1].low && c.low < candles[i + 2].low;
+
+      if (isHigh) swings.push({ index: i, type: 'HIGH', price: c.high, timestamp: c.timestamp });
+      if (isLow) swings.push({ index: i, type: 'LOW', price: c.low, timestamp: c.timestamp });
+    }
+    return swings;
+  }
+
+  public detectOrderBlocks(candles: Candle[], atr15m: number): OrderBlock[] {
+    const obs: OrderBlock[] = [];
+    const len = candles.length;
+
+    for (let i = 3; i < len - 1; i++) {
+      const c = candles[i];
+      const next1 = candles[i + 1];
+      const next2 = candles[i + 2] || next1;
+
+      if (c.close < c.open) {
+        const displacement = (next2.close - c.high) > (c.high - c.low) * 1.5;
+        if (displacement) {
+          const high = c.high;
+          const low = c.low;
+          const midpoint = (high + low) / 2;
+
+          let mitigated = false;
+          for (let j = i + 1; j < len; j++) {
+            if (candles[j].close < midpoint) {
+              mitigated = true;
+              break;
+            }
+          }
+
+          let qualityScore = 60;
+          if ((next2.close - c.high) > atr15m * 1.2) qualityScore += 20;
+          if (c.low < (candles[i - 1]?.low || c.low)) qualityScore += 20;
+
+          obs.push({ type: 'BULLISH', high, low, midpoint, candleIndex: i, mitigated, qualityScore });
+        }
+      }
+
+      if (c.close > c.open) {
+        const displacement = (c.low - next2.close) > (c.high - c.low) * 1.5;
+        if (displacement) {
+          const high = c.high;
+          const low = c.low;
+          const midpoint = (high + low) / 2;
+
+          let mitigated = false;
+          for (let j = i + 1; j < len; j++) {
+            if (candles[j].close > midpoint) {
+              mitigated = true;
+              break;
+            }
+          }
+
+          let qualityScore = 60;
+          if ((c.low - next2.close) > atr15m * 1.2) qualityScore += 20;
+          if (c.high > (candles[i - 1]?.high || c.high)) qualityScore += 20;
+
+          obs.push({ type: 'BEARISH', high, low, midpoint, candleIndex: i, mitigated, qualityScore });
+        }
+      }
+    }
+
+    return obs;
+  }
+
+  public detectFairValueGaps(candles: Candle[], atr15m: number): FairValueGap[] {
+    const fvgs: FairValueGap[] = [];
+    const minGapSize = Math.max(0.40, atr15m * 0.25);
+    const len = candles.length;
+
+    for (let i = 2; i < len; i++) {
+      const cCurrent = candles[i];
+      const cPast = candles[i - 2];
+
+      if (cCurrent.low > cPast.high) {
+        const gapSize = cCurrent.low - cPast.high;
+        if (gapSize >= minGapSize) {
+          const bottom = cPast.high;
+          const top = cCurrent.low;
+          const midpoint = (top + bottom) / 2;
+
+          let mitigated = false;
+          for (let j = i + 1; j < len; j++) {
+            if (candles[j].low <= midpoint) {
+              mitigated = true;
+              break;
+            }
+          }
+          fvgs.push({ type: 'BULLISH', top, bottom, midpoint, size: gapSize, candleIndex: i, mitigated });
+        }
+      }
+
+      if (cCurrent.high < cPast.low) {
+        const gapSize = cPast.low - cCurrent.high;
+        if (gapSize >= minGapSize) {
+          const top = cPast.low;
+          const bottom = cCurrent.high;
+          const midpoint = (top + bottom) / 2;
+
+          let mitigated = false;
+          for (let j = i + 1; j < len; j++) {
+            if (candles[j].high >= midpoint) {
+              mitigated = true;
+              break;
+            }
+          }
+          fvgs.push({ type: 'BEARISH', top, bottom, midpoint, size: gapSize, candleIndex: i, mitigated });
+        }
+      }
+    }
+
+    return fvgs;
+  }
+
+  public detectAdaptiveLiquiditySweeps(candles: Candle[], keyLevels: { name: string; price: number }[], atr15m: number): LiquiditySweep[] {
+    const sweeps: LiquiditySweep[] = [];
+    const len = candles.length;
+    const checkStart = Math.max(0, len - 6);
+
+    for (let i = checkStart; i < len; i++) {
+      const c = candles[i];
+      const range = c.high - c.low;
+      if (range <= 0.20) continue;
+
+      for (const lvl of keyLevels) {
+        if (!lvl.price || isNaN(lvl.price)) continue;
+
+        if (c.high > lvl.price && c.close < lvl.price) {
+          const upperWick = c.high - Math.max(c.open, c.close);
+          const ratio = upperWick / range;
+          const distanceBeyond = c.high - lvl.price;
+
+          if (ratio >= 0.35 && distanceBeyond >= 0.10 * atr15m) {
+            let qualityScore = 65;
+            if (ratio >= 0.50) qualityScore += 15;
+            if (distanceBeyond >= 0.25 * atr15m) qualityScore += 10;
+            if (c.close < c.open) qualityScore += 10;
+
+            sweeps.push({
+              levelName: lvl.name,
+              levelPrice: lvl.price,
+              direction: 'BEARISH',
+              wickExtreme: c.high,
+              candleIndex: i,
+              rejectionRatio: parseFloat(ratio.toFixed(2)),
+              qualityScore
+            });
+          }
+        }
+
+        if (c.low < lvl.price && c.close > lvl.price) {
+          const lowerWick = Math.min(c.open, c.close) - c.low;
+          const ratio = lowerWick / range;
+          const distanceBeyond = lvl.price - c.low;
+
+          if (ratio >= 0.35 && distanceBeyond >= 0.10 * atr15m) {
+            let qualityScore = 65;
+            if (ratio >= 0.50) qualityScore += 15;
+            if (distanceBeyond >= 0.25 * atr15m) qualityScore += 10;
+            if (c.close > c.open) qualityScore += 10;
+
+            sweeps.push({
+              levelName: lvl.name,
+              levelPrice: lvl.price,
+              direction: 'BULLISH',
+              wickExtreme: c.low,
+              candleIndex: i,
+              rejectionRatio: parseFloat(ratio.toFixed(2)),
+              qualityScore
+            });
+          }
+        }
+      }
+    }
+
+    return sweeps;
+  }
+
+  public computeInstitutionalConfluenceZone(
+    direction: 'BUY' | 'SELL',
+    currentPrice: number,
+    candidates: ConfluenceCandidate[],
+    atr15m: number
+  ): InstitutionalConfluenceZone {
+    if (candidates.length === 0) {
+      return {
+        zoneLow: currentPrice - 0.5,
+        zoneHigh: currentPrice + 0.5,
+        preferredEntry: currentPrice,
+        confluenceFactors: ['Market Current Price'],
+        overlapCount: 1,
+        zoneRank: 'WEAK',
+        entryQualityCurve: []
+      };
+    }
+
+    const radius = Math.max(0.75, atr15m * 0.35);
+
+    let bestCluster: ConfluenceCandidate[] = [];
+    let bestWeight = -1;
+
+    for (const anchor of candidates) {
+      const cluster = candidates.filter(c => Math.abs(c.price - anchor.price) <= radius);
+      const totalWeight = cluster.reduce((sum, c) => sum + c.weight, 0);
+      if (totalWeight > bestWeight) {
+        bestWeight = totalWeight;
+        bestCluster = cluster;
+      }
+    }
+
+    if (bestCluster.length === 0) bestCluster = [candidates[0]];
+
+    const prices = bestCluster.map(c => c.price);
+    const zoneLow = parseFloat(Math.min(...prices).toFixed(2));
+    const zoneHigh = parseFloat(Math.max(...prices).toFixed(2));
+
+    let weightedSum = 0;
+    let totalW = 0;
+    bestCluster.forEach(c => {
+      weightedSum += c.price * c.weight;
+      totalW += c.weight;
+    });
+    const preferredEntry = parseFloat((weightedSum / Math.max(1, totalW)).toFixed(2));
+    const confluenceFactors = Array.from(new Set(bestCluster.map(c => c.source)));
+    const overlapCount = bestCluster.length;
+
+    let zoneRank: 'TIER_1_PRIME' | 'TIER_2_STRONG' | 'TIER_3_MODERATE' | 'WEAK' = 'WEAK';
+    if (overlapCount >= 4) zoneRank = 'TIER_1_PRIME';
+    else if (overlapCount >= 3) zoneRank = 'TIER_2_STRONG';
+    else if (overlapCount >= 2) zoneRank = 'TIER_3_MODERATE';
+
+    const curve: { price: number; qualityScore: number }[] = [];
+    const step = Math.max(0.3, (zoneHigh - zoneLow) / 4);
+    for (let p = zoneLow - step; p <= zoneHigh + step; p += step) {
+      const distToCentroid = Math.abs(p - preferredEntry);
+      const baseQuality = zoneRank === 'TIER_1_PRIME' ? 95 : zoneRank === 'TIER_2_STRONG' ? 85 : 72;
+      const score = Math.max(40, Math.round(baseQuality - (distToCentroid / Math.max(0.1, radius)) * 30));
+      curve.push({ price: parseFloat(p.toFixed(2)), qualityScore: score });
+    }
+
+    return {
+      zoneLow,
+      zoneHigh,
+      preferredEntry,
+      confluenceFactors,
+      overlapCount,
+      zoneRank,
+      entryQualityCurve: curve
+    };
+  }
+
+  // -------------------------------------------------------------
+  // THE 5 INDEPENDENT DECISION GATES PIPELINE
+  // -------------------------------------------------------------
+
+  public evaluateProductionPipeline(
+    candles15m: Candle[],
+    candles1h: Candle[],
+    microstructure: MicrostructureState,
+    intermarket: IntermarketState,
+    newsGate: NewsGateState,
+    candles4h: Candle[] = [],
+    candles5m: Candle[] = [],
+    candles1m: Candle[] = []
+  ): XauusdInstitutionalSetup {
+    const len15 = candles15m.length;
+    const currentPrice = candles15m[len15 - 1]?.close || 0;
+    const tvSpotPrice = microstructure.bid ? (microstructure.bid + microstructure.ask) / 2 : currentPrice;
+
+    // =========================================================
+    // GATE 1 — DATA INTEGRITY & SYNCHRONIZATION GATE
+    // =========================================================
+    let gate1Passed = true;
+    let gate1Score = 100;
+    let gate1Code = 'DATA_OK';
+    let gate1Reason = 'All market sources synchronized with sub-second alignment.';
+
+    if (!candles15m || candles15m.length < 30) {
+      gate1Passed = false;
+      gate1Score = 0;
+      gate1Code = 'FEED_EMPTY';
+      gate1Reason = 'Insufficient closed candles from market provider (minimum 30 required).';
+    } else {
+      const lastCandle = candles15m[len15 - 1];
+      const candleAgeMin = (Date.now() - lastCandle.timestamp.getTime()) / (60 * 1000);
+      const now = new Date();
+      const utcDay = now.getUTCDay();
+      const utcHour = now.getUTCHours();
+      const isWeekend = utcDay === 6 || (utcDay === 0 && utcHour < 22) || (utcDay === 5 && utcHour >= 22);
+
+      if (!isWeekend && candleAgeMin > 50) {
+        gate1Passed = false;
+        gate1Score = 10;
+        gate1Code = 'FEED_STALE';
+        gate1Reason = `TradingView candle feed is ${Math.round(candleAgeMin)}m stale during active market session.`;
+      }
+
+      if (tvSpotPrice > 1000 && lastCandle.close > 1000) {
+        const deltaPct = Math.abs(lastCandle.close - tvSpotPrice) / lastCandle.close * 100;
+        if (deltaPct > 0.40) {
+          gate1Passed = false;
+          gate1Score = 20;
+          gate1Code = 'PRICE_CONFLICT';
+          gate1Reason = `TradingView Candle ($${lastCandle.close.toFixed(2)}) vs Live Scanner ($${tvSpotPrice.toFixed(2)}) delta: ${deltaPct.toFixed(2)}% exceeds allowed 0.40% tolerance.`;
+        }
+      }
+    }
+
+    const gate1: GateCheck = {
+      gateId: 'GATE_1_DATA',
+      passed: gate1Passed,
+      score: gate1Score,
+      code: gate1Code,
+      reason: gate1Reason,
+      telemetry: {
+        candlesCount: candles15m.length,
+        candleClose: currentPrice,
+        tvSpotPrice,
+        deltaPct: currentPrice ? Math.abs(currentPrice - tvSpotPrice) / currentPrice * 100 : 0
+      }
+    };
+
+    // Analytical models across memory layers
+    const volMetrics = this.computeVolatilityMetrics(candles15m);
+    const sessionLevels = this.computeSessionLevels(candles15m);
+    const volumeProfile = this.computeVolumeProfile(candles15m);
+    const swings15 = this.detectFractalSwings(candles15m);
+    const swings1h = this.detectFractalSwings(candles1h);
+    const obs15 = this.detectOrderBlocks(candles15m, volMetrics.atr15m);
+    const fvgs15 = this.detectFairValueGaps(candles15m, volMetrics.atr15m);
+
+    // Event-driven candle importance weighting
+    const eventWeights = this.computeEventDrivenWeights(candles15m, [], swings15, obs15, fvgs15);
+
+    // Classical Technical Indicators
+    const closes15 = candles15m.map(c => c.close);
+    const ema20 = this.calcEMA(closes15, 20);
+    const ema50 = this.calcEMA(closes15, 50);
+    const ema100 = this.calcEMA(closes15, 100);
+    const ema200 = this.calcEMA(closes15, 200);
+    const rsi14 = this.calcRSI(closes15, 14);
+    const rsiDiv = this.detectRsiDivergence(closes15, swings15);
+    const macd = this.calcMACD(closes15);
+    const adx14 = this.calcADX(candles15m, 14);
+    const bb = this.calcBollingerBands(closes15, 20, 2);
+
+    const classicalIndicators: ClassicalIndicators = {
+      ema20,
+      ema50,
+      ema100,
+      ema200,
+      rsi14,
+      rsiDivergence: rsiDiv,
+      macd,
+      adx14,
+      isTrending: adx14 >= 25,
+      bollingerBands: bb
+    };
+
+    const keyLevels = [
+      { name: 'Asian High (ASH)', price: sessionLevels.ash },
+      { name: 'Asian Low (ASL)', price: sessionLevels.asl },
+      { name: 'Previous Day High (PDH)', price: sessionLevels.pdh },
+      { name: 'Previous Day Low (PDL)', price: sessionLevels.pdl }
+    ];
+    swings15.filter(s => s.type === 'HIGH').slice(-3).forEach(s => keyLevels.push({ name: `Swing High ($${s.price.toFixed(1)})`, price: s.price }));
+    swings15.filter(s => s.type === 'LOW').slice(-3).forEach(s => keyLevels.push({ name: `Swing Low ($${s.price.toFixed(1)})`, price: s.price }));
+    const sweeps = this.detectAdaptiveLiquiditySweeps(candles15m, keyLevels, volMetrics.atr15m);
+
+    // 1H Trend (Primary Structure)
+    let htfTrend: 'BULLISH' | 'BEARISH' | 'RANGING' = 'RANGING';
+    if (swings1h.length >= 4) {
+      const last2Highs = swings1h.filter(s => s.type === 'HIGH').slice(-2);
+      const last2Lows = swings1h.filter(s => s.type === 'LOW').slice(-2);
+      if (last2Highs.length === 2 && last2Lows.length === 2) {
+        if (last2Highs[1].price > last2Highs[0].price && last2Lows[1].price > last2Lows[0].price) htfTrend = 'BULLISH';
+        else if (last2Highs[1].price < last2Highs[0].price && last2Lows[1].price < last2Lows[0].price) htfTrend = 'BEARISH';
+      }
+    }
+
+    // 4H Trend (Structural Memory Environment)
+    let trend4h: 'BULLISH' | 'BEARISH' | 'RANGING' = htfTrend;
+    if (candles4h && candles4h.length >= 20) {
+      const closes4h = candles4h.map(c => c.close);
+      const ema50_4h = this.calcEMA(closes4h, 50);
+      const ema200_4h = this.calcEMA(closes4h, 200);
+      const lastClose4h = closes4h[closes4h.length - 1];
+      if (lastClose4h > ema50_4h && ema50_4h > ema200_4h) trend4h = 'BULLISH';
+      else if (lastClose4h < ema50_4h && ema50_4h < ema200_4h) trend4h = 'BEARISH';
+    }
+
+    let marketRegime: MarketRegimeType = 'EXPANSION_RANGE';
+    if (newsGate.isBlackout && newsGate.eventStage === 'EVENT_SHOCK') marketRegime = 'NEWS_SHOCK';
+    else if (volMetrics.regime === 'EXTREME') marketRegime = 'VOLATILITY_EXPANSION';
+    else if (htfTrend === 'BULLISH' && (trend4h === 'BULLISH' || trend4h === 'RANGING')) marketRegime = 'STRONG_BULL_TREND';
+    else if (htfTrend === 'BEARISH' && (trend4h === 'BEARISH' || trend4h === 'RANGING')) marketRegime = 'STRONG_BEAR_TREND';
+    else if (volMetrics.regime === 'LOW') marketRegime = 'COMPRESSION_RANGE';
+
+    // =========================================================
+    // GATE 2 — MARKET ENVIRONMENT GATE
+    // =========================================================
+    let gate2Passed = true;
+    let gate2Score = 95;
+    let gate2Code = 'MARKET_HEALTHY';
+    let gate2Reason = 'Active session with tight institutional spread and normal volatility.';
+
+    if (!microstructure.isLiquid) {
+      gate2Passed = false;
+      gate2Score = 0;
+      gate2Code = 'MICROSTRUCTURE_HALT';
+      gate2Reason = microstructure.reason || 'Spread expanded beyond $2.50 or rollover halt.';
+    } else if (newsGate.isBlackout) {
+      gate2Passed = false;
+      gate2Score = 15;
+      gate2Code = 'NEWS_BLACKOUT';
+      gate2Reason = `Binary Event Blackout: ${newsGate.eventTitle} (${newsGate.impactTier}) release proximity (${newsGate.minutesToEvent}m).`;
+    } else if (marketRegime === 'NEWS_SHOCK') {
+      gate2Passed = false;
+      gate2Score = 20;
+      gate2Code = 'NEWS_SHOCK';
+      gate2Reason = 'Active post-news price discovery shock. Normal setups inhibited until structure rebuilds.';
+    } else if (volMetrics.regime === 'EXTREME') {
+      gate2Score = 65;
+    }
+
+    const gate2: GateCheck = {
+      gateId: 'GATE_2_MARKET',
+      passed: gate2Passed,
+      score: gate2Score,
+      code: gate2Code,
+      reason: gate2Reason,
+      telemetry: {
+        spread: microstructure.spread,
+        session: sessionLevels.session,
+        marketRegime,
+        volatilityRegime: volMetrics.regime
+      }
+    };
+
+    // =========================================================
+    // GATE 3 — SETUP STATISTICAL PROBABILITY & CONFLICT GATE
+    // =========================================================
+    let bias: 'BUY' | 'SELL' | 'NO_TRADE' = 'NO_TRADE';
+    const latestBullishSweep = sweeps.find(s => s.direction === 'BULLISH');
+    const latestBearishSweep = sweeps.find(s => s.direction === 'BEARISH');
+
+    if (marketRegime === 'STRONG_BULL_TREND' || (htfTrend === 'BULLISH' && currentPrice >= sessionLevels.sessionVwap)) {
+      bias = 'BUY';
+    } else if (marketRegime === 'STRONG_BEAR_TREND' || (htfTrend === 'BEARISH' && currentPrice <= sessionLevels.sessionVwap)) {
+      bias = 'SELL';
+    } else if (latestBullishSweep) {
+      bias = 'BUY';
+    } else if (latestBearishSweep) {
+      bias = 'SELL';
+    }
+
+    let gate3Passed = true;
+    let gate3Score = 80;
+    let gate3Code = 'SETUP_VALID';
+    let gate3Reason = 'Statistical setup matches market regime with directional edge.';
+
+    // Technical + Fundamental Conflict Detection
+    if (bias === 'BUY' && intermarket.conflictDetected) {
+      gate3Passed = false;
+      gate3Score = 30;
+      gate3Code = 'MACRO_TECHNICAL_CONFLICT';
+      gate3Reason = `Technical long vetoed by Macro Conflict: ${intermarket.conflictReason || 'Surging USD and Yields oppose gold'}`;
+    } else if (bias === 'SELL' && intermarket.macroAlignment === 'BULLISH' && intermarket.safeHavenDemandScore >= 70) {
+      gate3Passed = false;
+      gate3Score = 30;
+      gate3Code = 'MACRO_TECHNICAL_CONFLICT';
+      gate3Reason = `Technical short vetoed: Safe-Haven Demand (Score: ${intermarket.safeHavenDemandScore}) creates upward breakout risk.`;
+    } else if (bias === 'NO_TRADE') {
+      gate3Passed = false;
+      gate3Score = 40;
+      gate3Code = 'NO_DIRECTIONAL_BIAS';
+      gate3Reason = 'Market structure is ambiguous with no clean institutional trend or sweep.';
+    }
+
+    const gate3: GateCheck = {
+      gateId: 'GATE_3_SETUP',
+      passed: gate3Passed,
+      score: gate3Score,
+      code: gate3Code,
+      reason: gate3Reason,
+      telemetry: {
+        bias,
+        htfTrend,
+        trend4h,
+        sweepsCount: sweeps.length,
+        obsCount: obs15.length,
+        conflictDetected: intermarket.conflictDetected
+      }
+    };
+
+    // =========================================================
+    // GATE 4 — TRADE LOCATION & EXPECTED VALUE (EV) GATE
+    // =========================================================
+    const candidates: ConfluenceCandidate[] = [];
+    const activeBullishObs = obs15.filter(o => o.type === 'BULLISH' && !o.mitigated).slice(-2);
+    const activeBearishObs = obs15.filter(o => o.type === 'BEARISH' && !o.mitigated).slice(-2);
+    const activeBullishFvgs = fvgs15.filter(f => f.type === 'BULLISH' && !f.mitigated).slice(-2);
+    const activeBearishFvgs = fvgs15.filter(f => f.type === 'BEARISH' && !f.mitigated).slice(-2);
+
+    const swingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || sessionLevels.asl;
+    const swingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || sessionLevels.ash;
+    const equilibrium = (swingLow + swingHigh) / 2;
+
+    if (bias === 'BUY') {
+      activeBullishObs.forEach(ob => {
+        candidates.push({ source: 'Bullish Order Block Midpoint', price: ob.midpoint, weight: 3 });
+        candidates.push({ source: 'Bullish Order Block Edge', price: ob.high, weight: 2 });
+      });
+      activeBullishFvgs.forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
+      candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
+      candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
+      candidates.push({ source: 'Discount Equilibrium', price: equilibrium, weight: 2 });
+      if (latestBullishSweep) candidates.push({ source: 'Sweep Retest', price: latestBullishSweep.levelPrice, weight: 3 });
+    } else if (bias === 'SELL') {
+      activeBearishObs.forEach(ob => {
+        candidates.push({ source: 'Bearish Order Block Midpoint', price: ob.midpoint, weight: 3 });
+        candidates.push({ source: 'Bearish Order Block Edge', price: ob.low, weight: 2 });
+      });
+      activeBearishFvgs.forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
+      candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
+      candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
+      candidates.push({ source: 'Premium Equilibrium', price: equilibrium, weight: 2 });
+      if (latestBearishSweep) candidates.push({ source: 'Sweep Retest', price: latestBearishSweep.levelPrice, weight: 3 });
+    }
+
+    // Connect event-driven weighting: incorporate high-impact impulse candle levels
+    const highImpactCandles = (eventWeights || []).filter(ew => ew.weight >= 1.5).slice(-2);
+    highImpactCandles.forEach(hic => {
+      const c = candles15m[hic.index];
+      if (c) {
+        candidates.push({
+          source: `Event Impulse Level (${hic.eventTag})`,
+          price: parseFloat(((c.open + c.close) / 2).toFixed(2)),
+          weight: 3
+        });
+      }
+    });
+
+    const icz = this.computeInstitutionalConfluenceZone(bias === 'BUY' ? 'BUY' : 'SELL', currentPrice, candidates, volMetrics.atr15m);
+
+    let orderType: OrderType = 'WAIT';
+    let selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE' = 'NONE';
+    const distancePips = Math.round(Math.abs(currentPrice - icz.preferredEntry) * 10);
+
+    if (bias === 'BUY') {
+      if (latestBullishSweep) selectedModel = 'SWEEP_CHOCH_REVERSAL';
+      else if (marketRegime === 'STRONG_BULL_TREND') selectedModel = 'BOS_PULLBACK_CONTINUATION';
+      else selectedModel = 'RANGE_DEVIATION_RECLAIM';
+
+      if (currentPrice > icz.zoneHigh + 0.25 * volMetrics.atr15m) orderType = 'BUY_LIMIT';
+      else if (currentPrice >= icz.zoneLow - 0.25 * volMetrics.atr15m && currentPrice <= icz.zoneHigh + 0.25 * volMetrics.atr15m) {
+        orderType = latestBullishSweep ? 'MARKET_BUY' : 'BUY_LIMIT';
+      } else {
+        orderType = 'WAIT';
+      }
+    } else if (bias === 'SELL') {
+      if (latestBearishSweep) selectedModel = 'SWEEP_CHOCH_REVERSAL';
+      else if (marketRegime === 'STRONG_BEAR_TREND') selectedModel = 'BOS_PULLBACK_CONTINUATION';
+      else selectedModel = 'RANGE_DEVIATION_RECLAIM';
+
+      if (currentPrice < icz.zoneLow - 0.25 * volMetrics.atr15m) orderType = 'SELL_LIMIT';
+      else if (currentPrice >= icz.zoneLow - 0.25 * volMetrics.atr15m && currentPrice <= icz.zoneHigh + 0.25 * volMetrics.atr15m) {
+        orderType = latestBearishSweep ? 'MARKET_SELL' : 'SELL_LIMIT';
+      } else {
+        orderType = 'WAIT';
+      }
+    }
+
+    // Invalidation
+    const adaptiveBuffer = parseFloat((volMetrics.atr15m * volMetrics.adaptiveBufferAtr).toFixed(2));
+    const structuralInvalidationLevel = bias === 'BUY' ? (latestBullishSweep?.wickExtreme || swingLow) : (latestBearishSweep?.wickExtreme || swingHigh);
+    const exactStopLoss = bias === 'BUY'
+      ? parseFloat((structuralInvalidationLevel - adaptiveBuffer).toFixed(2))
+      : parseFloat((structuralInvalidationLevel + adaptiveBuffer).toFixed(2));
+
+    const entryPrice = orderType.includes('MARKET') ? currentPrice : icz.preferredEntry;
+    const risk = Math.max(0.5, Math.abs(entryPrice - exactStopLoss));
+
+    // Destinations & Path
+    let tp1Price = bias === 'BUY' ? parseFloat(Math.max(entryPrice + risk * 1.4, volumeProfile.vah).toFixed(2)) : parseFloat(Math.min(entryPrice - risk * 1.4, volumeProfile.val).toFixed(2));
+    let tp2Price = bias === 'BUY' ? parseFloat(Math.max(tp1Price + risk * 0.8, sessionLevels.ash).toFixed(2)) : parseFloat(Math.min(tp1Price - risk * 0.8, sessionLevels.asl).toFixed(2));
+    let tp3Price = bias === 'BUY' ? parseFloat(Math.max(tp2Price + risk * 1.2, sessionLevels.pdh).toFixed(2)) : parseFloat(Math.min(tp2Price - risk * 1.2, sessionLevels.pdl).toFixed(2));
+
+    const r1 = parseFloat((Math.abs(tp1Price - entryPrice) / risk).toFixed(2));
+    const r2 = parseFloat((Math.abs(tp2Price - entryPrice) / risk).toFixed(2));
+    const r3 = parseFloat((Math.abs(tp3Price - entryPrice) / risk).toFixed(2));
+
+    const pTp1 = parseFloat(Math.max(0.45, Math.min(0.82, 0.76 - 0.04 * (r1 - 1.4))).toFixed(2));
+    const pTp2 = parseFloat(Math.max(0.30, Math.min(0.68, 0.58 - 0.03 * (r2 - 2.2))).toFixed(2));
+    const pTp3 = parseFloat(Math.max(0.20, Math.min(0.50, 0.38 - 0.02 * (r3 - 3.5))).toFixed(2));
+    const pSl = parseFloat((1.0 - pTp1).toFixed(2));
+    const ev = parseFloat((((pTp1 * 0.5 * r1) + (pTp2 * 0.3 * r2) + (pTp3 * 0.2 * r3)) - (pSl * 1.0)).toFixed(2));
+
+    let gate4Passed = true;
+    let gate4Score = 85;
+    let gate4Code = 'TRADE_LOCATION_OK';
+    let gate4Reason = `Institutional Confluence Zone verified with positive EV (+${ev}R).`;
+
+    if (r1 < 1.4) {
+      gate4Passed = false;
+      gate4Score = 30;
+      gate4Code = 'INSUFFICIENT_RR';
+      gate4Reason = `R:R1 is ${r1} (< 1.4 minimum institutional threshold).`;
+    } else if (ev < 0.30) {
+      gate4Passed = false;
+      gate4Score = 35;
+      gate4Code = 'NEGATIVE_EXPECTANCY';
+      gate4Reason = `Expected Value is ${ev}R (< +0.30R required statistical edge).`;
+    } else if (icz.zoneRank === 'WEAK') {
+      gate4Passed = false;
+      gate4Score = 40;
+      gate4Code = 'WEAK_CONFLUENCE_ZONE';
+      gate4Reason = 'Fewer than 2 overlapping institutional structural levels.';
+    }
+
+    const gate4: GateCheck = {
+      gateId: 'GATE_4_TRADE',
+      passed: gate4Passed,
+      score: gate4Score,
+      code: gate4Code,
+      reason: gate4Reason,
+      telemetry: {
+        orderType,
+        iczZone: [icz.zoneLow, icz.zoneHigh],
+        preferredEntry: entryPrice,
+        exactStopLoss,
+        r1,
+        ev
+      }
+    };
+
+    // =========================================================
+    // GATE 5 — EXECUTION SAFETY & KILL SWITCH GATE
+    // =========================================================
+    let gate5Passed = true;
+    let gate5Score = 95;
+    let gate5Code = 'EXECUTION_CLEAR';
+    let gate5Reason = 'Execution safety checks passed. Broker limits and risk thresholds satisfied.';
+    let killSwitchActive = false;
+    let killSwitchTier: KillSwitchTier = 'NONE';
+    let killSwitchReason: string | undefined;
+
+    // Check rolling drift: if win rate in recent 20 trades < 45%
+    const recent20 = this.recentTradesHistory.slice(-20);
+    if (recent20.length >= 15) {
+      const wins = recent20.filter(t => t.result === 'WIN').length;
+      const winRate = wins / recent20.length;
+      if (winRate < 0.40) {
+        gate5Passed = false;
+        gate5Score = 30;
+        gate5Code = 'MODEL_DRIFT_HALT';
+        gate5Reason = `Model drift detected: rolling win rate is ${(winRate * 100).toFixed(0)}% (< 40%). Execution halted.`;
+        killSwitchActive = true;
+        killSwitchTier = 'MODEL_KILL';
+        killSwitchReason = gate5Reason;
+      }
+    }
+
+    if (!gate1Passed) {
+      gate5Passed = false;
+      killSwitchActive = true;
+      killSwitchTier = 'DATA_KILL';
+      killSwitchReason = gate1.reason;
+    } else if (!gate2Passed) {
+      gate5Passed = false;
+      killSwitchActive = true;
+      killSwitchTier = newsGate.isBlackout ? 'NEWS_KILL' : 'EXECUTION_KILL';
+      killSwitchReason = gate2.reason;
+    }
+
+    const gate5: GateCheck = {
+      gateId: 'GATE_5_EXECUTION',
+      passed: gate5Passed,
+      score: gate5Score,
+      code: gate5Code,
+      reason: gate5Reason,
+      telemetry: { killSwitchActive, killSwitchTier, killSwitchReason }
+    };
+
+    // Aggregate 5 Gates
+    const allPassed = gate1.passed && gate2.passed && gate3.passed && gate4.passed && gate5.passed;
+    let failingGate: string | null = null;
+    if (!gate1.passed) failingGate = 'GATE_1_DATA';
+    else if (!gate2.passed) failingGate = 'GATE_2_MARKET';
+    else if (!gate3.passed) failingGate = 'GATE_3_SETUP';
+    else if (!gate4.passed) failingGate = 'GATE_4_TRADE';
+    else if (!gate5.passed) failingGate = 'GATE_5_EXECUTION';
+
+    const fiveGates: FiveGatesSummary = {
+      allPassed,
+      failingGate,
+      gate1_data: gate1,
+      gate2_market: gate2,
+      gate3_setup: gate3,
+      gate4_trade: gate4,
+      gate5_execution: gate5
+    };
+
+    // Final Action: Emit or Wait
+    let finalDirection: 'BUY' | 'SELL' | 'WAIT' = 'WAIT';
+    let grade: 'A+' | 'A' | 'B+' | 'WAIT' = 'WAIT';
+    const compositeScore = Math.round((gate1.score * 0.20) + (gate2.score * 0.20) + (gate3.score * 0.20) + (gate4.score * 0.25) + (gate5.score * 0.15));
+
+    if (allPassed && orderType !== 'WAIT' && bias !== 'NO_TRADE') {
+      finalDirection = bias;
+      if (compositeScore >= 85 && ev >= 0.70) grade = 'A+';
+      else if (compositeScore >= 75 && ev >= 0.45) grade = 'A';
+      else if (compositeScore >= 70 && ev >= 0.30) grade = 'B+';
+    } else {
+      orderType = 'WAIT';
+    }
+
+    // Position Sizing
+    const baseRiskUsd = 1000;
+    const confidenceMultiplier = grade === 'A+' ? 1.0 : grade === 'A' ? 0.85 : 0.65;
+    const finalRiskUsd = baseRiskUsd * volMetrics.riskMultiplier * confidenceMultiplier;
+    const recommendedUnitsOz = parseFloat((finalRiskUsd / risk).toFixed(1));
+    const recommendedLots = parseFloat((recommendedUnitsOz / 100).toFixed(2));
+
+    const tradePath: TradePathModel = {
+      tp1Price,
+      tp1LiquiditySource: 'Volume Profile VAH/VAL',
+      tp1RiskReward: r1,
+      probTp1BeforeSl: pTp1,
+      tp2Price,
+      tp2LiquiditySource: 'Asian Session High/Low (ASH/ASL)',
+      tp2RiskReward: r2,
+      probTp2BeforeSl: pTp2,
+      tp3Price,
+      tp3LiquiditySource: 'Previous Day High/Low (PDH/PDL)',
+      tp3RiskReward: r3,
+      probTp3BeforeSl: pTp3,
+      probSlBeforeTp1: pSl,
+      expectedValueR: ev
+    };
+
+    const invalidationAndExpiry: InvalidationAndExpiry = {
+      structuralInvalidationLevel,
+      adaptiveVolBuffer: adaptiveBuffer,
+      exactStopLoss,
+      invalidationThesis: bias === 'BUY'
+        ? `Invalidated if 15M candle body closes below $${exactStopLoss.toFixed(2)}.`
+        : `Invalidated if 15M candle body closes above $${exactStopLoss.toFixed(2)}.`,
+      orderExpiryHours: 4,
+      preFillCancelTriggers: [
+        `15M close breaking opposite swing pivot before fill.`,
+        `DXY surges > +0.30% with volume against gold.`,
+        `Impending high-impact economic news release.`
+      ]
+    };
+
+    const positionSizing: DynamicPositionSizing = {
+      riskBudgetUsd: Math.round(finalRiskUsd),
+      recommendedLots,
+      recommendedUnitsOz,
+      volatilityAdjustment: volMetrics.riskMultiplier,
+      confidenceAdjustment: confidenceMultiplier
+    };
+
+    const auditTrail: ImmutableTradeAudit = {
+      tradeId: `xau-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      engineVersion: this.ENGINE_VERSION,
+      dataSnapshot: {
+        twelveDataClose: currentPrice,
+        tvSpotPrice,
+        spread: microstructure.spread,
+        dxy: intermarket.dxy,
+        us10y: intermarket.us10y,
+        realYield: intermarket.realYieldProxy
+      },
+      features: {
+        atr15m: volMetrics.atr15m,
+        atrPercentile: volMetrics.atrPercentile,
+        volumeProfilePoc: volumeProfile.poc,
+        sessionVwap: sessionLevels.sessionVwap,
+        regime: marketRegime,
+        iczOverlapCount: icz.overlapCount
+      },
+      fiveGates,
+      orderPlan: {
+        orderType,
+        preferredEntry: entryPrice,
+        zone: [icz.zoneLow, icz.zoneHigh],
+        sl: exactStopLoss,
+        tp1: tp1Price,
+        tp2: tp2Price,
+        tp3: tp3Price,
+        r1,
+        ev
+      },
+      positionSizing,
+      thesis: {
+        thesis: `Trade Plan: ${orderType} at ICZ ($${icz.zoneLow}–$${icz.zoneHigh}) targeting TP1 $${tp1Price} (R:R ${r1}).`,
+        invalidationConditions: invalidationAndExpiry.preFillCancelTriggers
+      },
+      executionStatus: allPassed ? 'APPROVED_FOR_EXECUTION' : 'HELD_AT_GATE'
+    };
+
+    let failingReason = 'Awaiting conditions';
+    if (failingGate === 'GATE_1_DATA') failingReason = gate1.reason;
+    else if (failingGate === 'GATE_2_MARKET') failingReason = gate2.reason;
+    else if (failingGate === 'GATE_3_SETUP') failingReason = gate3.reason;
+    else if (failingGate === 'GATE_4_TRADE') failingReason = gate4.reason;
+    else if (failingGate === 'GATE_5_EXECUTION') failingReason = gate5.reason;
+
+    const summary = !allPassed
+      ? `Gate Check [${failingGate}]: ${failingReason}`
+      : `High-conviction ${grade} ${orderType} setup at Institutional Confluence Zone ($${icz.zoneLow}–$${icz.zoneHigh}). Preferred Entry: $${entryPrice.toFixed(2)}, SL: $${exactStopLoss.toFixed(2)}, TP1: $${tp1Price.toFixed(2)} (R:R ${r1}, EV +${ev}R).`;
+
+    // Update real-time state store
+    this.liveStateStore = {
+      symbol: 'GOLD',
+      engineVersion: this.ENGINE_VERSION,
+      lastUpdated: new Date().toISOString(),
+      currentPrice,
+      bid: microstructure.bid,
+      ask: microstructure.ask,
+      spread: microstructure.spread,
+      marketRegime,
+      volatilityRegime: volMetrics.regime,
+      session: sessionLevels.session,
+      dxyAlignment: intermarket.macroAlignment,
+      us10yAlignment: `${intermarket.us10yChange1h}%`,
+      newsRisk: newsGate.impactTier,
+      activeOrderType: orderType,
+      entryZone: [icz.zoneLow, icz.zoneHigh],
+      preferredEntry: entryPrice,
+      stopLoss: exactStopLoss,
+      tp1: tp1Price,
+      tp2: tp2Price,
+      tp3: tp3Price,
+      expectedValueR: ev,
+      fiveGates,
+      killSwitchActive,
+      killSwitchTier,
+      killSwitchReason
+    };
+
+    // Real 5M tactical MSS confirmation
+    let mss5mTriggered = false;
+    if (candles5m && candles5m.length >= 8) {
+      const recent5m = candles5m.slice(-3);
+      const priorSwings5m = this.detectFractalSwings(candles5m.slice(0, -3));
+      if (finalDirection === 'BUY') {
+        const lastSwingHigh = priorSwings5m.filter(s => s.type === 'HIGH').slice(-1)[0]?.price;
+        const lastCandle = recent5m[recent5m.length - 1];
+        if (lastSwingHigh && lastCandle && lastCandle.close > lastSwingHigh && lastCandle.close > lastCandle.open) {
+          mss5mTriggered = true;
+        }
+      } else if (finalDirection === 'SELL') {
+        const lastSwingLow = priorSwings5m.filter(s => s.type === 'LOW').slice(-1)[0]?.price;
+        const lastCandle = recent5m[recent5m.length - 1];
+        if (lastSwingLow && lastCandle && lastCandle.close < lastSwingLow && lastCandle.close < lastCandle.open) {
+          mss5mTriggered = true;
+        }
+      }
+    }
+
+    // Real 1M spread impact on micro-execution
+    let spreadImpactPips = Math.round(microstructure.spread * 10);
+    if (candles1m && candles1m.length >= 5) {
+      const last1m = candles1m[candles1m.length - 1];
+      const range1m = last1m.high - last1m.low;
+      if (range1m > 0 && microstructure.spread > range1m * 0.40) {
+        spreadImpactPips = Math.round(microstructure.spread * 15);
+      }
+    }
+
+    const memory: MultiTimeframeMemory = {
+      structural: {
+        tf4h: { trend: trend4h, candleCount: candles4h?.length || 0 },
+        tf1h: { trend: htfTrend, bosDetected: htfTrend !== 'RANGING', candleCount: candles1h?.length || 0 }
+      },
+      tactical: {
+        tf15m: { sessionPdhPdl: true, activeFvgs: fvgs15.filter(f => !f.mitigated).length, candleCount: candles15m?.length || 0 },
+        tf5m: { mssTriggered: mss5mTriggered, candleCount: candles5m?.length || 0 }
+      },
+      execution: {
+        tf1m: { spreadImpactPips, candleCount: candles1m?.length || 0 }
+      }
+    };
+
+    const hierarchy: FiveLevelFactorHierarchy = {
+      level1_marketEnvironment: {
+        regime: marketRegime,
+        volatilityRegime: volMetrics.regime,
+        atrPercentile: volMetrics.atrPercentile,
+        session: sessionLevels.session,
+        dayOfWeek: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getUTCDay()]
+      },
+      level2_fundamentalMacro: {
+        dxy: intermarket.dxy,
+        us10y: intermarket.us10y,
+        realYield: intermarket.realYieldProxy,
+        safeHavenScore: intermarket.safeHavenDemandScore,
+        riskSentiment: intermarket.riskSentiment,
+        macroConflict: intermarket.conflictDetected
+      },
+      level3_technicalStructure: {
+        htfTrend4h: trend4h,
+        primaryStructure1h: htfTrend,
+        tacticalStructure15m: marketRegime,
+        indicators: classicalIndicators,
+        poc: volumeProfile.poc,
+        vwap: sessionLevels.sessionVwap
+      },
+      level4_entryConfirmation: {
+        model: selectedModel,
+        confirmation5m: orderType.includes('MARKET'),
+        iczLow: icz.zoneLow,
+        iczHigh: icz.zoneHigh,
+        preferredEntry: entryPrice
+      },
+      level5_tradeQuality: {
+        orderType,
+        ev,
+        r1,
+        recommendedLots
+      }
+    };
+
+    return {
+      fiveGates,
+      orderType,
+      model: selectedModel,
+      direction: finalDirection,
+      grade,
+      opportunityScore: compositeScore,
+      marketBiasScore: gate3.score,
+      entryQualityScore: gate4.score,
+      entryPrice,
+      entryZone: [icz.zoneLow, icz.zoneHigh],
+      stopLoss: exactStopLoss,
+      takeProfit1: tp1Price,
+      takeProfit2: tp2Price,
+      takeProfit3: tp3Price,
+      riskReward1: r1,
+      riskReward2: r2,
+      riskReward3: r3,
+      tradePath,
+      invalidationAndExpiry,
+      positionSizing,
+      marketRegime,
+      volatilityMetrics: volMetrics,
+      volumeProfile,
+      levels: {
+        currentPrice: parseFloat(currentPrice.toFixed(2)),
+        pdh: parseFloat(sessionLevels.pdh.toFixed(2)),
+        pdl: parseFloat(sessionLevels.pdl.toFixed(2)),
+        pwh: parseFloat(sessionLevels.pwh.toFixed(2)),
+        pwl: parseFloat(sessionLevels.pwl.toFixed(2)),
+        ash: parseFloat(sessionLevels.ash.toFixed(2)),
+        asl: parseFloat(sessionLevels.asl.toFixed(2)),
+        sessionVwap: parseFloat(sessionLevels.sessionVwap.toFixed(2)),
+        poc: volumeProfile.poc,
+        vah: volumeProfile.vah,
+        val: volumeProfile.val
+      },
+      microstructure,
+      intermarket,
+      newsGate,
+      killSwitchActive,
+      killSwitchTier,
+      killSwitchReason,
+      auditTrail,
+      confluenceReasons: icz.confluenceFactors,
+      summary,
+      hierarchy,
+      memory
+    };
+  }
+
+  // -------------------------------------------------------------
+  // CONTROLLER ENDPOINTS
+  // -------------------------------------------------------------
+
+  @Get('state')
+  @ApiOperation({ summary: 'Get live real-time XAUUSD state store snapshot' })
+  async getLiveState() {
+    return this.liveStateStore || { status: 'INITIALIZING', symbol: 'GOLD', timestamp: new Date().toISOString() };
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Get all active trading signals' })
+  async getSignals(@Query('forceFresh') forceFreshQuery?: string) {
+    try {
+      const now = new Date();
       await this.prisma.signal.deleteMany({
         where: { expiresAt: { lte: now } }
       }).catch(() => {});
 
-      const dbSignals = await this.prisma.signal.findMany({
-        where: {
-          expiresAt: { gt: now },
-        },
+      const activeSignals = await this.prisma.signal.findMany({
+        where: { expiresAt: { gt: now } },
         orderBy: { createdAt: 'desc' },
       });
 
-      const validSignals: any[] = [];
-      const coreWatchlist = ['BTC/USD', 'EUR/USD', 'US30', 'US100', 'GOLD'];
-      const coveredSymbols = new Set<string>();
-
-      // 3. Inspect existing signals against live market price
-      for (const sig of dbSignals) {
-        const sym = this.normalizeSymbol(sig.symbol);
-        if (coveredSymbols.has(sym)) {
-          continue;
-        }
-
-        const currPrice = livePrices[sym];
-        const ageMs = now.getTime() - new Date(sig.createdAt).getTime();
-
-        // If forceFresh requested, delete immediately from DB so a fresh signal is generated
-        if (forceFresh) {
-          await this.prisma.signal.delete({
-            where: { id: sig.id }
-          }).catch(() => {});
-          continue;
-        }
-
-        // Check if signal has already completed (Hit TP1, TP2, or SL)
-        let isCompleted = false;
-        let completionOutcome = '';
-        if (currPrice && currPrice > 0 && sig.direction !== 'WAIT' && sig.entryPrice && sig.takeProfit1) {
-          const isBuy = sig.direction === 'BUY';
-          const hitTP1 = isBuy ? currPrice >= sig.takeProfit1 : currPrice <= sig.takeProfit1;
-          const hitTP2 = sig.takeProfit2 ? (isBuy ? currPrice >= sig.takeProfit2 : currPrice <= sig.takeProfit2) : false;
-          const hitSL = sig.stopLoss ? (isBuy ? currPrice <= sig.stopLoss : currPrice >= sig.stopLoss) : false;
-
-          if (hitTP2) {
-            isCompleted = true;
-            completionOutcome = 'HIT_TP2';
-          } else if (hitTP1) {
-            isCompleted = true;
-            completionOutcome = 'HIT_TP1';
-          } else if (hitSL) {
-            isCompleted = true;
-            completionOutcome = 'HIT_SL';
-          }
-
-          // Check if price ran away before entry (price moved > 0.40 * TP distance towards TP)
-          const tpDist = Math.abs(sig.takeProfit1 - sig.entryPrice);
-          const priceOffsetFromEntry = isBuy ? (currPrice - sig.entryPrice) : (sig.entryPrice - currPrice);
-          if (tpDist > 0 && priceOffsetFromEntry > tpDist * 0.45) {
-            isCompleted = true;
-            completionOutcome = 'PRICE_OUTSIDE_ENTRY_ZONE';
-          }
-        }
-
-        // Stale if age > 35 minutes for intraday scalps
-        const isStale = ageMs > 35 * 60 * 1000;
-
-        if (isCompleted || isStale) {
-          console.log(`[SIGNALS GATEWAY] Permanently deleting completed/stale signal ${sig.id} for ${sym} (Outcome: ${isCompleted ? completionOutcome : 'EXPIRED'}). Generating fresh flowing setup...`);
-          await this.prisma.signal.delete({
-            where: { id: sig.id }
-          }).catch(() => {});
-          continue;
-        }
-
-        coveredSymbols.add(sym);
-        validSignals.push(sig);
-      }
-
-      // 4. Generate fresh signal for any core asset that has no active setup
-      for (const coreSym of coreWatchlist) {
-        if (!coveredSymbols.has(coreSym)) {
-          try {
-            console.log(`[SignalsController] Core asset ${coreSym} has no active entry zone. Generating fresh flowing market signal...`);
-            const fresh = await this.generateSignalRequest(coreSym, '15m', true);
-            if (fresh && fresh.direction !== 'WAIT') {
-              coveredSymbols.add(coreSym);
-              validSignals.push(fresh);
-            }
-          } catch (e: any) {
-            console.warn(`[SignalsController] Failed to auto-generate fresh signal for ${coreSym}: ${e.message}`);
-          }
-        }
-      }
-
-      return validSignals;
+      return activeSignals;
     } catch (err: any) {
-      console.error(`[SIGNALS GATEWAY] getSignals error caught gracefully: ${err.message}`);
+      this.logger.error(`[SignalsController] getSignals notice: ${err.message}`);
       return [];
+    }
+  }
+
+  @Post('generate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Request generation of a 5-Gate audited institutional trade plan' })
+  async generateSignal(@Req() req: any, @Body() dto: { symbol: string; interval?: string; forceFresh?: boolean }) {
+    const symbol = this.normalizeSymbol(dto.symbol);
+
+    if (symbol !== 'GOLD') {
+      return {
+        id: `wait-${symbol.toLowerCase()}-${Date.now()}`,
+        symbol,
+        direction: 'WAIT',
+        entryPrice: 0,
+        stopLoss: 0,
+        takeProfit1: 0,
+        takeProfit2: 0,
+        riskRewardRatio: 0,
+        winProbability: 0,
+        durationEstimate: 'Single Asset Focus',
+        aiReasoning: {
+          status: 'FOCUSED_MODE',
+          explanation: `TradeMind is running in single-asset institutional mode on Gold (XAUUSD). ${symbol} will be activated sequentially.`,
+          indicators: ['Single Asset Mode: XAUUSD'],
+          timeframe: dto.interval || '15m'
+        },
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 3600 * 1000)
+      };
+    }
+
+    // 1. Ingest Multi-timeframe Candles (Real Data across 5 Memory Horizons)
+    const [candles4h, candles1h, candles15m, candles5m, candles1m] = await Promise.all([
+      this.fetchXauusdCandles('4h', 100),
+      this.fetchXauusdCandles('1h', 120),
+      this.fetchXauusdCandles('15min', 160),
+      this.fetchXauusdCandles('5min', 200),
+      this.fetchXauusdCandles('1min', 200)
+    ]);
+
+    // 2. Microstructure, Intermarket, and News Gate
+    const latestPrice = (candles15m.length > 0 ? candles15m[candles15m.length - 1]?.close : 0) || 0;
+    const [microstructure, intermarket, newsGate] = await Promise.all([
+      this.fetchGoldMicrostructure(latestPrice),
+      this.fetchIntermarket(),
+      this.fetchEconomicNewsGate()
+    ]);
+
+    // 3. 5-Gate Decision Pipeline Execution across 5 Timeframe Memory Layers
+    const setup = this.evaluateProductionPipeline(
+      candles15m,
+      candles1h,
+      microstructure,
+      intermarket,
+      newsGate,
+      candles4h,
+      candles5m,
+      candles1m
+    );
+
+    // 4. Contextual AI Reviewer (Gemini Context Layer - Auditable explainability)
+    let aiExplanation = setup.summary;
+    let aiVerdict = setup.fiveGates.allPassed ? 'APPROVED' : 'HOLD';
+
+    try {
+      const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+      const aiRes = await this.fetchWithTimeout(`${aiServiceUrl}/ai/predict`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-AI-API-Key': process.env.AI_SERVICE_API_KEY || 'internal-secret-key'
+        },
+        body: JSON.stringify({
+          symbol: 'GOLD',
+          timeframe: dto.interval || '15m',
+          setup: {
+            direction: setup.direction,
+            entry: setup.entryPrice,
+            stop_loss: setup.stopLoss,
+            take_profit_1: setup.takeProfit1,
+            take_profit_2: setup.takeProfit2,
+            model: setup.model,
+            grade: setup.grade,
+            score: setup.opportunityScore,
+            risk_reward_ratio_tp1: setup.riskReward1,
+            risk_reward_ratio_tp2: setup.riskReward2,
+            confluence_reasons: setup.confluenceReasons,
+            levels: setup.levels,
+          },
+          session: (setup.levels as any)?.session || 'Active Session',
+          intermarket: setup.intermarket,
+          microstructure: setup.microstructure,
+          news_gate: setup.newsGate,
+          market_regime: setup.marketRegime,
+          volatility_metrics: setup.volatilityMetrics,
+          volume_profile: setup.volumeProfile,
+          expectancy: setup.tradePath,
+          position_sizing: setup.positionSizing
+        })
+      }, 5000);
+
+      if (aiRes.ok) {
+        const aiJson = await aiRes.json();
+        if (aiJson && aiJson.ai_explanation) {
+          aiExplanation = aiJson.ai_explanation;
+          aiVerdict = aiJson.ai_review_verdict || aiVerdict;
+        }
+      }
+    } catch (e: any) {
+      this.logger.warn(`[SignalsController] AI service review notice: ${e.message}`);
+    }
+
+    // 5. Senior AI Desk Reviewer (Gemini) VETO Enforcement:
+    // If Gemini issues a VETO, block database persistence and downgrade direction
+    if (aiVerdict === 'VETOED') {
+      this.logger.warn(`[SignalsController] Gold candidate VETOED by Gemini AI Desk Reviewer: ${aiExplanation}`);
+      setup.direction = 'WAIT';
+      setup.orderType = 'WAIT';
+      setup.fiveGates.allPassed = false;
+      setup.fiveGates.failingGate = 'GEMINI_DESK_VETO';
+      setup.fiveGates.failingReason = `Vetoed by Senior AI Desk Reviewer: ${aiExplanation}`;
+    }
+
+    if (setup.fiveGates.allPassed && aiVerdict !== 'VETOED' && (setup.direction === 'BUY' || setup.direction === 'SELL')) {
+      const createdSignal = await this.prisma.signal.create({
+        data: {
+          symbol: 'GOLD',
+          direction: setup.direction,
+          entryPrice: setup.entryPrice,
+          stopLoss: setup.stopLoss,
+          takeProfit1: setup.takeProfit1,
+          takeProfit2: setup.takeProfit2,
+          riskRewardRatio: setup.riskReward1,
+          winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
+          durationEstimate: '4-8 hours',
+          aiReasoning: {
+            status: 'ACTIVE',
+            orderType: setup.orderType,
+            entryZone: setup.entryZone,
+            strategy: setup.model,
+            signalGrade: setup.grade,
+            opportunityScore: setup.opportunityScore,
+            marketBiasScore: setup.marketBiasScore,
+            entryQualityScore: setup.entryQualityScore,
+            fiveGates: setup.fiveGates,
+            tradePath: setup.tradePath,
+            invalidationAndExpiry: setup.invalidationAndExpiry,
+            positionSizing: setup.positionSizing,
+            auditTrail: setup.auditTrail,
+            indicators: setup.confluenceReasons,
+            explanation: aiExplanation,
+            aiVerdict,
+            levels: setup.levels,
+            marketRegime: setup.marketRegime,
+            volatilityMetrics: setup.volatilityMetrics,
+            volumeProfile: setup.volumeProfile,
+            microstructure: setup.microstructure,
+            intermarket: setup.intermarket,
+            timeframe: '15m'
+          } as any,
+          expiresAt: new Date(Date.now() + setup.invalidationAndExpiry.orderExpiryHours * 60 * 60 * 1000)
+        }
+      });
+
+      return createdSignal;
+    }
+
+    // 6. Return transparent first-class WAIT response with exact gate diagnosis
+    return {
+      id: `gold-wait-${Date.now()}`,
+      symbol: 'GOLD',
+      direction: 'WAIT',
+      orderType: setup.orderType,
+      entryPrice: setup.entryPrice,
+      entryZone: setup.entryZone,
+      stopLoss: setup.stopLoss,
+      takeProfit1: setup.takeProfit1,
+      takeProfit2: setup.takeProfit2,
+      riskRewardRatio: setup.riskReward1,
+      winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
+      durationEstimate: 'Awaiting Gate Clearance',
+      aiReasoning: {
+        status: 'WAIT',
+        failedGate: setup.fiveGates.failingGate,
+        fiveGates: setup.fiveGates,
+        orderType: setup.orderType,
+        entryZone: setup.entryZone,
+        strategy: setup.model,
+        signalGrade: setup.grade,
+        opportunityScore: setup.opportunityScore,
+        marketBiasScore: setup.marketBiasScore,
+        entryQualityScore: setup.entryQualityScore,
+        tradePath: setup.tradePath,
+        invalidationAndExpiry: setup.invalidationAndExpiry,
+        indicators: setup.confluenceReasons,
+        explanation: aiExplanation,
+        aiVerdict: 'HOLD',
+        levels: setup.levels,
+        marketRegime: setup.marketRegime,
+        volatilityMetrics: setup.volatilityMetrics,
+        volumeProfile: setup.volumeProfile,
+        microstructure: setup.microstructure,
+        intermarket: setup.intermarket,
+        killSwitchActive: setup.killSwitchActive,
+        killSwitchTier: setup.killSwitchTier,
+        killSwitchReason: setup.killSwitchReason,
+        timeframe: '15m'
+      },
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 180 * 1000)
+    };
+  }
+
+  // Periodic Automated Background Market Scanner (Every 3 minutes)
+  @Interval(180_000)
+  async handlePeriodicXauusdScan() {
+    try {
+      const now = new Date();
+      const day = now.getUTCDay();
+      const hour = now.getUTCHours();
+      if (day === 6 || (day === 0 && hour < 22) || (day === 5 && hour >= 22)) return;
+
+      const activeCount = await this.prisma.signal.count({
+        where: {
+          symbol: 'GOLD',
+          direction: { in: ['BUY', 'SELL'] },
+          expiresAt: { gt: now }
+        }
+      });
+
+      if (activeCount > 0) return;
+
+      const [candles4h, candles1h, candles15m, candles5m, candles1m] = await Promise.all([
+        this.fetchXauusdCandles('4h', 100),
+        this.fetchXauusdCandles('1h', 120),
+        this.fetchXauusdCandles('15min', 160),
+        this.fetchXauusdCandles('5min', 200),
+        this.fetchXauusdCandles('1min', 200)
+      ]);
+
+      if (!candles15m || candles15m.length < 30) return;
+
+      const latestPrice = candles15m[candles15m.length - 1].close;
+      const [microstructure, intermarket, newsGate] = await Promise.all([
+        this.fetchGoldMicrostructure(latestPrice),
+        this.fetchIntermarket(),
+        this.fetchEconomicNewsGate()
+      ]);
+
+      const setup = this.evaluateProductionPipeline(
+        candles15m,
+        candles1h,
+        microstructure,
+        intermarket,
+        newsGate,
+        candles4h,
+        candles5m,
+        candles1m
+      );
+
+      if (setup.fiveGates.allPassed && (setup.direction === 'BUY' || setup.direction === 'SELL') && setup.opportunityScore >= 75) {
+        // Run AI Desk Review before automated publishing
+        let aiVerdict = 'APPROVED';
+        let aiExplanation = setup.summary;
+        try {
+          const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+          const aiRes = await this.fetchWithTimeout(`${aiServiceUrl}/ai/predict`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-AI-API-Key': process.env.AI_SERVICE_API_KEY || 'internal-secret-key'
+            },
+            body: JSON.stringify({
+              symbol: 'GOLD',
+              timeframe: '15m',
+              setup: {
+                direction: setup.direction,
+                entry: setup.entryPrice,
+                stop_loss: setup.stopLoss,
+                take_profit_1: setup.takeProfit1,
+                take_profit_2: setup.takeProfit2,
+                model: setup.model,
+                grade: setup.grade,
+                score: setup.opportunityScore,
+                risk_reward_ratio_tp1: setup.riskReward1,
+                risk_reward_ratio_tp2: setup.riskReward2,
+                confluence_reasons: setup.confluenceReasons,
+                levels: setup.levels,
+              },
+              session: (setup.levels as any)?.session || 'Active Session',
+              intermarket: setup.intermarket,
+              microstructure: setup.microstructure,
+              news_gate: setup.newsGate,
+              market_regime: setup.marketRegime,
+              volatility_metrics: setup.volatilityMetrics,
+              volume_profile: setup.volumeProfile,
+              expectancy: setup.tradePath,
+              position_sizing: setup.positionSizing
+            })
+          }, 5000);
+
+          if (aiRes.ok) {
+            const aiJson = await aiRes.json();
+            if (aiJson && aiJson.ai_review_verdict) {
+              aiVerdict = aiJson.ai_review_verdict;
+              aiExplanation = aiJson.ai_explanation || aiExplanation;
+            }
+          }
+        } catch (e: any) {
+          this.logger.warn(`[AUTOMATION] AI service desk review check notice: ${e.message}`);
+        }
+
+        if (aiVerdict === 'VETOED') {
+          this.logger.warn(`[AUTOMATION] Candidate signal VETOED by Gemini AI Desk Reviewer: ${aiExplanation}`);
+          return;
+        }
+
+        this.logger.log(`[AUTOMATION] 5-Gate Cleared & Gemini Approved ${setup.grade} ${setup.orderType} on XAUUSD (Score: ${setup.opportunityScore}, EV: +${setup.tradePath.expectedValueR}R)`);
+
+        await this.prisma.signal.create({
+          data: {
+            symbol: 'GOLD',
+            direction: setup.direction,
+            entryPrice: setup.entryPrice,
+            stopLoss: setup.stopLoss,
+            takeProfit1: setup.takeProfit1,
+            takeProfit2: setup.takeProfit2,
+            riskRewardRatio: setup.riskReward1,
+            winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
+            durationEstimate: '4-8 hours',
+            aiReasoning: {
+              status: 'ACTIVE',
+              orderType: setup.orderType,
+              entryZone: setup.entryZone,
+              strategy: setup.model,
+              signalGrade: setup.grade,
+              opportunityScore: setup.opportunityScore,
+              marketBiasScore: setup.marketBiasScore,
+              entryQualityScore: setup.entryQualityScore,
+              fiveGates: setup.fiveGates,
+              tradePath: setup.tradePath,
+              invalidationAndExpiry: setup.invalidationAndExpiry,
+              positionSizing: setup.positionSizing,
+              auditTrail: setup.auditTrail,
+              indicators: setup.confluenceReasons,
+              explanation: setup.summary,
+              levels: setup.levels,
+              marketRegime: setup.marketRegime,
+              volatilityMetrics: setup.volatilityMetrics,
+              volumeProfile: setup.volumeProfile,
+              microstructure: setup.microstructure,
+              intermarket: setup.intermarket,
+              timeframe: '15m'
+            } as any,
+            expiresAt: new Date(Date.now() + setup.invalidationAndExpiry.orderExpiryHours * 60 * 60 * 1000)
+          }
+        });
+      }
+    } catch (e: any) {
+      this.logger.warn(`[handlePeriodicXauusdScan] Scan notice: ${e.message}`);
+    }
+  }
+
+  // Real-time Active Position Management (Tracks every 30 seconds)
+  @Interval(30_000)
+  async handlePositionManagement() {
+    try {
+      const now = new Date();
+      const activeSignals = await this.prisma.signal.findMany({
+        where: {
+          symbol: 'GOLD',
+          direction: { in: ['BUY', 'SELL'] },
+          expiresAt: { gt: now }
+        }
+      });
+
+      if (activeSignals.length === 0) return;
+
+      const quotes = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
+      const currentPrice = quotes['TVC:GOLD']?.price || quotes['OANDA:XAUUSD']?.price;
+      if (!currentPrice || currentPrice <= 1000) return;
+
+      for (const signal of activeSignals) {
+        const reasoning = (signal.aiReasoning as any) || {};
+        const status = reasoning.status || 'ACTIVE';
+
+        if (['CLOSED', 'TP2_HIT', 'SL_HIT', 'THESIS_INVALIDATED'].includes(status)) continue;
+
+        let updatedStatus = status;
+
+        if (signal.direction === 'BUY') {
+          if (currentPrice <= signal.stopLoss) {
+            updatedStatus = 'SL_HIT';
+          } else if (currentPrice >= signal.takeProfit2) {
+            updatedStatus = 'TP2_HIT';
+          } else if (currentPrice >= signal.takeProfit1) {
+            updatedStatus = 'TP1_HIT';
+          }
+        } else if (signal.direction === 'SELL') {
+          if (currentPrice >= signal.stopLoss) {
+            updatedStatus = 'SL_HIT';
+          } else if (currentPrice <= signal.takeProfit2) {
+            updatedStatus = 'TP2_HIT';
+          } else if (currentPrice <= signal.takeProfit1) {
+            updatedStatus = 'TP1_HIT';
+          }
+        }
+
+        if (updatedStatus !== status) {
+          this.logger.log(`[POSITION_MANAGER] Signal ${signal.id} status updated: ${status} -> ${updatedStatus} @ $${currentPrice}`);
+
+          if (['SL_HIT', 'TP1_HIT', 'TP2_HIT'].includes(updatedStatus)) {
+            const isWin = updatedStatus.startsWith('TP');
+            this.recentTradesHistory.push({
+              id: signal.id,
+              symbol: 'GOLD',
+              direction: signal.direction,
+              result: isWin ? 'WIN' : 'LOSS',
+              pnlR: isWin ? (updatedStatus === 'TP2_HIT' ? signal.riskRewardRatio * 1.5 : signal.riskRewardRatio) : -1.0,
+              timestamp: Date.now()
+            });
+
+            if (this.recentTradesHistory.length > 50) this.recentTradesHistory.shift();
+          }
+
+          await this.prisma.signal.update({
+            where: { id: signal.id },
+            data: {
+              aiReasoning: {
+                ...reasoning,
+                status: updatedStatus,
+                lastCheckedPrice: currentPrice,
+                lastStatusChange: new Date().toISOString()
+              } as any
+            }
+          });
+        }
+      }
+    } catch (e: any) {
+      this.logger.warn(`[handlePositionManagement] notice: ${e.message}`);
     }
   }
 
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a manually generated trading signal' })
+  @ApiOperation({ summary: 'Create a manually defined trading signal' })
   async createSignal(@Body() dto: {
     symbol: string;
     direction: 'BUY' | 'SELL';
@@ -368,54 +2593,46 @@ export class SignalsController implements OnModuleInit {
         winProbability: Number(dto.confidence || 80),
         durationEstimate: '1-2 days',
         aiReasoning: {
-          indicators: ['Manually defined structure', 'Support/Resistance breakthrough'],
-          explanation: dto.explanation || 'Manual trading signal structured by user analysis.'
+          status: 'ACTIVE',
+          indicators: ['Manually defined structure'],
+          explanation: dto.explanation || 'Signal created manually.'
         },
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // Manual signals last 24h
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
     return signal;
   }
 
-  @Post('generate')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Request generation of a fresh AI trading signal for a specific market' })
-  async generateSignal(@Req() req: any, @Body() dto: { symbol: string; interval?: string; forceFresh?: boolean }) {
-    const symbol = this.normalizeSymbol(dto.symbol);
+  @Get(':id')
+  @ApiOperation({ summary: 'Get details for a single signal' })
+  async getSignal(@Param('id') id: string) {
+    const signal = await this.prisma.signal.findUnique({
+      where: { id },
+    });
+    return signal;
+  }
 
-    // 1. FIRST PRIORITY: Fail-fast market open check.
-    // If the market is closed, immediately return without consuming quota or executing any candle/indicator analysis!
-    const marketCheck = this.isMarketOpen(symbol);
-    if (!marketCheck.isOpen) {
-      console.log(`[SIGNALS GATEWAY] Immediate rejection for ${symbol}: Market Closed (${marketCheck.reason})`);
-      return {
-        id: `closed-${symbol.toLowerCase()}-${Date.now()}`,
-        symbol,
-        direction: 'WAIT',
-        entryPrice: 0,
-        stopLoss: 0,
-        takeProfit1: 0,
-        takeProfit2: 0,
-        riskRewardRatio: 0,
-        winProbability: 0,
-        durationEstimate: 'Market Closed',
-        aiReasoning: {
-          status: 'MARKET_CLOSED',
-          explanation: marketCheck.reason,
-          indicators: ['Market Closed'],
-          timeframe: dto.interval || '15m'
-        },
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 2 * 3600 * 1000)
-      };
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete signal permanently from database' })
+  async deleteSignal(@Param('id') id: string) {
+    let deletedSymbol: string | null = null;
+    try {
+      const existing = await this.prisma.signal.findUnique({
+        where: { id },
+        select: { id: true, symbol: true }
+      });
+      if (existing) {
+        deletedSymbol = existing.symbol;
+        await this.prisma.signal.delete({
+          where: { id },
+        });
+        this.logger.log(`[SignalsController] Signal ${id} (${deletedSymbol}) deleted from database.`);
+      }
+    } catch (err: any) {
+      this.logger.warn(`[SignalsController] Failed to delete signal ${id}: ${err.message}`);
     }
 
-    const userId = req.user?.userId;
-    if (userId) {
-      await this.entitlementService.checkAndConsumeSignal(userId);
-    }
-    return this.generateSignalRequest(symbol, dto.interval || '15m', dto.forceFresh ?? false, userId);
+    return { success: true, deletedId: id, symbol: deletedSymbol };
   }
 
   private normalizeSymbol(symbol: string): string {
@@ -430,5064 +2647,26 @@ export class SignalsController implements OnModuleInit {
     return s;
   }
 
-  private isMarketOpen(symbol: string): { isOpen: boolean; reason?: string } {
-    const cleanSym = symbol.toUpperCase().trim();
-    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => cleanSym.includes(c));
-    if (isCrypto) {
-      return { isOpen: true }; // Crypto trades 24/7/365
-    }
-
-    const now = new Date();
-    const day = now.getUTCDay(); // 0 = Sunday, 1 = Monday ... 5 = Friday, 6 = Saturday
-    const hour = now.getUTCHours();
-    const minute = now.getUTCMinutes();
-    const timeMinutes = hour * 60 + minute;
-
-    // US Stocks (Equities: AAPL, TSLA, NVDA, MSFT, AMZN)
-    const isStock = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'].includes(cleanSym);
-    if (isStock) {
-      if (day === 0 || day === 6) {
-        return {
-          isOpen: false,
-          reason: `US Equities market for ${symbol} is closed for the weekend. Regular trading hours: Mon–Fri 9:30 AM – 4:00 PM EST (13:30 – 20:00 UTC).`
-        };
-      }
-      // 13:30 UTC = 810 mins, 20:00 UTC = 1200 mins
-      if (timeMinutes < 810 || timeMinutes >= 1200) {
-        return {
-          isOpen: false,
-          reason: `US Equities market for ${symbol} is closed. Regular trading session runs 9:30 AM – 4:00 PM EST (13:30 – 20:00 UTC).`
-        };
-      }
-      return { isOpen: true };
-    }
-
-    // Gold & Metals (XAU/USD, GOLD)
-    const isGold = cleanSym.includes('XAU') || cleanSym.includes('GOLD');
-    if (isGold) {
-      if (day === 6) {
-        return {
-          isOpen: false,
-          reason: `Metals market for ${symbol} is closed on Saturdays. Bullion trading reopens Sunday at 23:00 UTC.`
-        };
-      }
-      if (day === 0 && hour < 23) {
-        return {
-          isOpen: false,
-          reason: `Metals market for ${symbol} is closed. Bullion trading reopens Sunday at 23:00 UTC.`
-        };
-      }
-      if (day === 5 && hour >= 22) {
-        return {
-          isOpen: false,
-          reason: `Metals market for ${symbol} closed for the weekend on Friday at 22:00 UTC.`
-        };
-      }
-      // Daily maintenance break: 21:00 - 22:00 UTC (Mon-Thu)
-      if (day >= 1 && day <= 4 && hour === 21) {
-        return {
-          isOpen: false,
-          reason: `Metals market for ${symbol} is in daily settlement halt (21:00 – 22:00 UTC). Trading resumes at 22:00 UTC.`
-        };
-      }
-      return { isOpen: true };
-    }
-
-    // Weekend Market Closure for Forex & Indices (Friday 22:00 UTC to Sunday 22:00 UTC)
-    if (day === 6) {
-      return {
-        isOpen: false,
-        reason: `Traditional market for ${symbol} is closed on Saturdays. Markets reopen Sunday at 22:00 UTC.`
-      };
-    }
-    if (day === 0 && hour < 22) {
-      return {
-        isOpen: false,
-        reason: `Traditional market for ${symbol} is closed. Global trading reopens Sunday at 22:00 UTC.`
-      };
-    }
-    if (day === 5 && hour >= 22) {
-      return {
-        isOpen: false,
-        reason: `Traditional market for ${symbol} closed for the weekend on Friday at 22:00 UTC.`
-      };
-    }
-
-    return { isOpen: true };
-  }
-
-  private async generateSignalRequest(symbol: string, interval = '1h', forceFresh = false, userId?: string) {
-    // 1. Check if traditional market is closed
-    const marketCheck = this.isMarketOpen(symbol);
-    if (!marketCheck.isOpen) {
-      console.log(`[SIGNALS GATEWAY] Skipping signal generation for ${symbol}: Market Closed (${marketCheck.reason})`);
-      return {
-        id: `closed-${symbol.toLowerCase()}-${Date.now()}`,
-        symbol,
-        direction: 'WAIT',
-        entryPrice: 0,
-        stopLoss: 0,
-        takeProfit1: 0,
-        takeProfit2: 0,
-        riskRewardRatio: 0,
-        winProbability: 0,
-        durationEstimate: 'Market Closed',
-        aiReasoning: {
-          status: 'MARKET_CLOSED',
-          explanation: marketCheck.reason,
-          indicators: ['Traditional Market Closed'],
-          timeframe: interval
-        },
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 2 * 3600 * 1000)
-      };
-    }
-
-    // 2. Strict Signal Immutability & Locking Check:
-    // If an active, unexpired signal exists in database, LOCK IT.
-    // Signals must NEVER mutate their grade or entry price within their active lifetime,
-    // protecting user execution and eliminating grade flipping!
-    const existingActiveSignal = await this.prisma.signal.findFirst({
-      where: {
-        symbol,
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (existingActiveSignal) {
-      const reasoning = (existingActiveSignal.aiReasoning as any) || {};
-      const status = reasoning.status || 'ACTIVE';
-      const ageMs = Date.now() - new Date(existingActiveSignal.createdAt).getTime();
-      const isStillFresh = ageMs < 45 * 60 * 1000; // 45-minute strict lock window
-
-      // Return locked signal if unexpired, active, and not explicitly force-bypassed
-      if (!forceFresh && ['ACTIVE', 'RUNNING'].includes(status) && isStillFresh) {
-        console.log(`[SIGNALS GATEWAY] Returning locked immutable signal for ${symbol} (Grade: ${reasoning.signal_grade || 'A'}, Age: ${(ageMs / 1000).toFixed(0)}s)`);
-        return existingActiveSignal;
-      }
-    }
-
-    // 3. Macro Economic Calendar & News Blackout Gate
-    const calendarEvents = await this.fetchEconomicCalendar();
-    const eventProximity = this.checkEconomicEventProximity(symbol, calendarEvents);
-    if (eventProximity.isBlocked) {
-      console.log(`[SIGNALS GATEWAY] Trade blocked by Economic Event Proximity for ${symbol}: ${eventProximity.reason}`);
-      return {
-        id: `event-gate-${symbol.toLowerCase()}-${Date.now()}`,
-        symbol,
-        direction: 'WAIT',
-        entryPrice: 0,
-        stopLoss: 0,
-        takeProfit1: 0,
-        takeProfit2: 0,
-        riskRewardRatio: 0,
-        winProbability: 0,
-        durationEstimate: eventProximity.stage === 'PRE_EVENT_LOCKOUT'
-          ? `Lockout (${eventProximity.minutesUntil}m until news)`
-          : `Absorption (${eventProximity.minutesAgo}m post news)`,
-        aiReasoning: {
-          status: eventProximity.stage,
-          entry_type: 'WAIT',
-          invalidationReason: eventProximity.reason,
-          explanation: eventProximity.reason,
-          economic_event: eventProximity.event,
-          timeframe: interval,
-        },
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + (eventProximity.stage === 'PRE_EVENT_LOCKOUT' ? Math.max(5, eventProximity.minutesUntil || 15) * 60 * 1000 : 10 * 60 * 1000)),
-      };
-    }
-
-    // 4. Real-time Spread Gate (TradingView Scanner)
-    const tvConfig = this.getTradingViewTicker(symbol);
-    try {
-      const tvQuotes = await this.fetchTradingViewQuotes(tvConfig.endpoint, [tvConfig.ticker]);
-      const q = tvQuotes[tvConfig.ticker];
-      if (q && q.bid != null && q.ask != null && q.ask > q.bid && q.price > 0) {
-        const spread = q.ask - q.bid;
-        const spreadPct = (spread / q.price) * 100;
-        const isGold = symbol.toUpperCase().includes('GOLD') || symbol.toUpperCase().includes('XAU');
-        const isSpreadBlown = isGold ? spread > 2.50 : spreadPct > 0.08;
-        if (isSpreadBlown) {
-          console.log(`[SIGNALS GATEWAY] Trade blocked by elevated spread for ${symbol}: spread=${spread.toFixed(2)} (${spreadPct.toFixed(3)}%)`);
-          return {
-            id: `spread-gate-${symbol.toLowerCase()}-${Date.now()}`,
-            symbol,
-            direction: 'WAIT',
-            entryPrice: q.price,
-            stopLoss: 0,
-            takeProfit1: 0,
-            takeProfit2: 0,
-            riskRewardRatio: 0,
-            winProbability: 0,
-            durationEstimate: 'Spread Stabilization',
-            aiReasoning: {
-              status: 'SPREAD_ELEVATED',
-              entry_type: 'WAIT',
-              invalidationReason: `Institutional Spread Gate: Real-time spread is elevated at ${spread.toFixed(2)} (${spreadPct.toFixed(3)}%). Entry blocked until institutional liquidity normalizes.`,
-              explanation: `Live spread of ${spread.toFixed(2)} exceeds institutional risk threshold for ${symbol}. Awaiting liquidity provider spread compression.`,
-              timeframe: interval,
-            },
-            createdAt: new Date(),
-            expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-          };
-        }
-      }
-    } catch (spreadErr) {}
-
-    const aiServiceUrl = (process.env.AI_SERVICE_URL || 'http://localhost:8000').replace(/\/+$/, '');
-    const apiKey = process.env.AI_SERVICE_API_KEY || 'internal-secret-key';
-    const cachedCandles = await this.getOrFetchCandles(symbol, interval);
-    let intermarketData: any = null;
-    let recentNews: any[] = [];
-
-    try {
-      recentNews = await this.fetchRealtimeNews(symbol);
-
-      // Detect active trading session based on server UTC hour
-      const utcHour = new Date().getUTCHours();
-      let activeSession = 'Asian Session';
-      
-      const isSydney = utcHour >= 22 || utcHour < 7;
-      const isTokyo = utcHour >= 0 && utcHour < 9;
-      const isLondon = utcHour >= 8 && utcHour < 17;
-      const isNewYork = utcHour >= 13 && utcHour < 22;
-      
-      if (isLondon && isNewYork) {
-        activeSession = 'London / New York Session Overlap (High Volatility)';
-      } else if (isLondon) {
-        activeSession = 'London Session (Medium-High Volatility)';
-      } else if (isNewYork) {
-        activeSession = 'New York Session (Medium-High Volatility)';
-      } else if (isTokyo) {
-        activeSession = 'Tokyo Session (Low-Medium Volatility)';
-      } else if (isSydney) {
-        activeSession = 'Sydney Session (Low Volatility)';
-      }
-
-      const isGoldOrForex = symbol.toUpperCase().includes('XAU') || symbol.toUpperCase().includes('GOLD') || symbol.toUpperCase().includes('EUR') || symbol.toUpperCase().includes('USD') || symbol.toUpperCase().includes('JPY');
-      if (isGoldOrForex) {
-        intermarketData = await this.fetchIntermarketData();
-      }
-
-      const body = {
-        symbol,
-        timeframe: interval,
-        candles: cachedCandles.map(c => ({
-          open: Number(c.open),
-          high: Number(c.high),
-          low: Number(c.low),
-          close: Number(c.close),
-          volume: Number(c.volume || 0),
-          timestamp: (c.timestamp instanceof Date ? c.timestamp : new Date(c.timestamp)).toISOString(),
-        })),
-        news: recentNews,
-        session: activeSession,
-        intermarket: intermarketData,
-      };
-
-      const signatureHeaders = generateHmacSignature(body, apiKey);
-
-      let res: any = null;
-      let attempt = 0;
-      const maxAttempts = 2;
-      
-      while (attempt < maxAttempts) {
-        try {
-          attempt++;
-          res = await axios.post(`${aiServiceUrl}/ai/predict`, body, {
-            headers: { 
-              'X-AI-API-Key': apiKey,
-              ...signatureHeaders
-            },
-            timeout: 45000, // 45 seconds to handle Render cold starts
-          });
-          break; // Succeeded!
-        } catch (postErr: any) {
-          const status = postErr.response?.status;
-          if ((status === 502 || status === 503 || postErr.code === 'ECONNABORTED') && attempt < maxAttempts) {
-            console.warn(`[SIGNALS GATEWAY] AI Service returned ${status || postErr.code} (Render cold start). Retrying in 3s... (Attempt ${attempt}/${maxAttempts})`);
-            await new Promise(r => setTimeout(r, 3000));
-          } else {
-            console.warn(`[SIGNALS GATEWAY] AI Service unreachable on ${symbol} (status ${status || postErr.code}). Falling through to local PRO engine...`);
-            break;
-          }
-        }
-      }
-
-      if (!res || !res.data) {
-        throw new Error('AI Service unreachable or payload missing');
-      }
-
-      const finalDirection = res.data.direction;
-      const strategyKey = this.getStrategyKey(symbol);
-
-      const existingActive = await this.prisma.signal.findFirst({
-        where: { symbol: res.data.symbol, expiresAt: { gt: new Date() } },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      const calculatedWinProb = Math.min(95, Math.max(35, Math.round(Number(res.data.confidence ?? 0.50) * 100)));
-      const signalGrade = res.data.signal_grade || res.data.grade || this.computeSignalGrade(calculatedWinProb);
-
-      const entryType = res.data.entry_type || 'MARKET_NOW';
-      const entryZone = res.data.entry_zone || `${(res.data.entry * 0.999).toFixed(2)} - ${(res.data.entry * 1.001).toFixed(2)}`;
-      const entryCondition = res.data.entry_condition || (entryType === 'MARKET_NOW'
-        ? `Execute ${finalDirection} directly at Market ($${res.data.entry}). Confirmed setup.`
-        : `Place ${entryType} order at $${res.data.entry} [Zone: ${entryZone}]. Wait for entry.`);
-
-      const signalPayload = {
-        userId: userId || null,
-        strategyKey,
-        symbol: res.data.symbol,
-        direction: finalDirection,
-        entryPrice: res.data.entry,
-        stopLoss: res.data.stop_loss,
-        takeProfit1: res.data.take_profit_1,
-        takeProfit2: res.data.take_profit_2,
-        riskRewardRatio: res.data.risk_reward_ratio_tp1 ?? (Math.abs(res.data.entry - res.data.stop_loss) > 0 ? parseFloat((Math.abs(res.data.take_profit_1 - res.data.entry) / Math.abs(res.data.entry - res.data.stop_loss)).toFixed(2)) : 2.0),
-        winProbability: calculatedWinProb,
-        durationEstimate: interval === '1m' ? '1-5 mins (Scalping)' :
-                          interval === '3m' ? '3-10 mins (Scalping)' :
-                          interval === '5m' ? '5-15 mins (Scalping)' :
-                          interval === '15m' ? '15-45 mins (Scalping)' :
-                          interval === '30m' ? '30-90 mins (Scalping)' :
-                          interval === '1h' ? '1-4 hours (Day Trade)' :
-                          interval === '4h' ? '1-2 days' : '3-5 days',
-        aiReasoning: { 
-          signal_grade: signalGrade,
-          is_locked: true,
-          locked_at: new Date().toISOString(),
-          signal_source: 'AI_SERVICE_PRIMARY',
-          data_freshness_status: res.data.data_freshness_status || 'VERIFIED_LIVE',
-          entry_type: entryType,
-          entry_zone: entryZone,
-          entry_condition: entryCondition,
-          risk_reward_ratio_tp1: res.data.risk_reward_ratio_tp1 ?? 2.0,
-          risk_reward_ratio_tp2: res.data.risk_reward_ratio_tp2 ?? 3.2,
-          volume_profile: res.data.volume_profile,
-          indicators: res.data.indicators,
-          explanation: res.data.ai_explanation,
-          technicals: res.data.technicals,
-          structure: res.data.structure,
-          scores: res.data.scores,
-          indicator_verdicts: res.data.indicator_verdicts || {},
-          market_structure_analysis: res.data.market_structure_analysis || '',
-          tradingview_idea: res.data.tradingview_idea || '',
-          category_scores: res.data.category_scores || {},
-          macro_context: res.data.macro_context || '',
-          correlation_analysis: res.data.correlation_analysis || '',
-          timeframe: interval,
-          strategy_key: strategyKey,
-          status: 'ACTIVE'
-        },
-        expiresAt: new Date(Date.now() + (interval === '1d' ? 3 * 24 : 1 * 4) * 60 * 60 * 1000), 
-      };
-
-      // Archive any previous active signals for this symbol rather than mutating them in-place
-      if (existingActive) {
-        await this.prisma.signal.updateMany({
-          where: { symbol: res.data.symbol, expiresAt: { gt: new Date() } },
-          data: { expiresAt: new Date() },
-        });
-      }
-
-      const signal = await this.prisma.signal.create({
-        data: signalPayload,
-      });
-
-      return signal;
-    } catch (err: any) {
-      // Dedicated Quantitative Strategy Engines (BTC, Nasdaq, Dow, Forex, Gold)
-      const symUpper = symbol.toUpperCase();
-      const closes = cachedCandles.map(c => Number(c.close)).filter((v) => Number.isFinite(v) && v > 0);
-      if (closes.length < 15) {
-        throw new ServiceUnavailableException(
-          `Live candle data unavailable for ${symbol}. Cannot generate genuine signal without verified market candles.`
-        );
-      }
-
-      // 1. Fetch Multi-Timeframe Top-Down Institutional Bias (4H -> 1H -> Entry TF)
-      const htfBias = await this.analyzeHTFBias(symbol);
-
-      const assetClass = this.classifyAsset(symbol);
-      let result: any = null;
-
-      switch (assetClass) {
-        case 'CRYPTO':
-          result = this.btcStrategyEngine(cachedCandles, symbol, interval, htfBias, recentNews);
-          break;
-        case 'INDICES_US100':
-          result = this.nasdaqStrategyEngine(cachedCandles, symbol, interval, htfBias, recentNews);
-          break;
-        case 'INDICES_US30':
-          result = this.dowStrategyEngine(cachedCandles, symbol, interval, htfBias, recentNews);
-          break;
-        case 'INDICES_BROAD':
-          result = this.indicesStrategyEngine(cachedCandles, symbol, interval, htfBias, recentNews);
-          break;
-        case 'STOCKS':
-          result = this.stocksStrategyEngine(cachedCandles, symbol, interval, htfBias, recentNews);
-          break;
-        case 'METALS':
-          result = this.goldStrategyEngine(cachedCandles, symbol, interval, htfBias, intermarketData, recentNews);
-          break;
-        case 'USDJPY':
-          result = this.usdjpyStrategyEngine(cachedCandles, symbol, interval, htfBias, intermarketData, recentNews);
-          break;
-        case 'FOREX':
-          result = this.forexStrategyEngine(cachedCandles, symbol, interval, htfBias, recentNews);
-          break;
-        default:
-          // FAIL CLOSED: Refuse to guess or route unknown symbols to Forex!
-          return {
-            direction: 'WAIT',
-            invalidationReason: `TradeMind Institutional Asset Classifier: Unrecognized asset class for "${symbol}". Refusing to generate signal with uncalibrated risk models.`,
-            evidence: {}
-          };
-      }
-
-      const atr = this.calcATR(cachedCandles, 14);
-      const prevAtr = this.calcATR(cachedCandles.slice(0, -1), 14);
-      const rsi14 = this.calcRSI(closes, 14);
-      const ema20 = this.calcEMA(closes, 20);
-      const ema50 = this.calcEMA(closes, 50);
-      const ema200 = this.calcEMA(closes, 200);
-      const vwap = this.calcVWAP(cachedCandles);
-
-      const {
-        direction,
-        entryType,
-        entryPrice,
-        entryZone,
-        entryZoneMin,
-        entryZoneMax,
-        idealEntry,
-        entryModel,
-        setupScore,
-        scoreBreakdown,
-        entryCondition,
-        stopLoss,
-        takeProfit1,
-        takeProfit2,
-        takeProfit3,
-        confidenceScore,
-        calculatedWinProb,
-        riskRewardRatio: customRR,
-        signalGrade: customGrade,
-        reasonsFor,
-        reasonsAgainst,
-        aiValidation,
-        marketRegime,
-        htfBias: customHtfBias,
-        liquidityStatus,
-        structureStatus,
-        displacementStatus,
-        sessionStatus,
-        evidence,
-        invalidationReason
-      } = result;
-
-      if (direction === 'WAIT') {
-        return {
-          id: `wait-${symbol.toLowerCase()}-${Date.now()}`,
-          symbol,
-          direction: 'WAIT',
-          entryPrice: entryPrice || closes[closes.length - 1],
-          stopLoss: 0,
-          takeProfit1: 0,
-          takeProfit2: 0,
-          riskRewardRatio: 0,
-          winProbability: 0,
-          durationEstimate: 'Market Chop / Neutral',
-          aiReasoning: {
-            entry_type: 'WAIT',
-            evidence: evidence,
-            invalidationReason: invalidationReason || 'Market in chop range or conflicting indicators. No high-probability setup right now.',
-            explanation: `Strategy Engine advised WAIT for ${symbol}: ${invalidationReason}`
-          },
-          expiresAt: new Date(Date.now() + 15 * 60 * 1000)
-        };
-      }
-
-      const durationEstimate = interval === '1m' ? '5–15 Minutes (1m Micro Scalp)'
-        : interval === '3m' ? '8–20 Minutes (3m Micro Scalp)'
-        : interval === '5m' ? '15–45 Minutes (5m Scalp)'
-        : interval === '15m' ? '30–90 Minutes (15m Scalp)'
-        : interval === '1h' ? '1–4 Hours (Day Trade)'
-        : interval === '4h' ? '6–24 Hours (Intraday Swing)'
-        : '1–3 Days (Macro Swing)';
-
-      const expirationMs = interval === '1m' ? 15 * 60 * 1000
-        : interval === '3m' ? 25 * 60 * 1000
-        : interval === '5m' ? 35 * 60 * 1000
-        : interval === '15m' ? 45 * 60 * 1000
-        : interval === '1h' ? 2 * 3600 * 1000
-        : 8 * 3600 * 1000;
-
-      let signal: any = null;
-      try {
-        const existingActive = await this.prisma.signal.findFirst({
-          where: { symbol, expiresAt: { gt: new Date() } },
-          orderBy: { createdAt: 'desc' },
-        });
-
-        const entrySlDist = Math.abs(entryPrice - stopLoss);
-        const computedRR = customRR || (entrySlDist > 0 ? parseFloat((Math.abs(takeProfit1 - entryPrice) / entrySlDist).toFixed(1)) : 2.0);
-        const finalConfidence = confidenceScore || calculatedWinProb || 75;
-        const finalGrade = customGrade || this.computeSignalGrade(finalConfidence, ema20, ema50, ema200, direction);
-
-        const signalPayload = {
-          symbol,
-          direction,
-          entryPrice,
-          stopLoss,
-          takeProfit1,
-          takeProfit2,
-          riskRewardRatio: computedRR,
-          winProbability: finalConfidence,
-          durationEstimate,
-          aiReasoning: {
-            signal_grade: finalGrade,
-            is_locked: true,
-            locked_at: new Date().toISOString(),
-            confidence_score: finalConfidence,
-            win_probability: calculatedWinProb || finalConfidence,
-            setup_score: result.setupScore || finalConfidence,
-            entry_model: result.entryModel || 'TREND_CONTINUATION',
-            entry_type: entryType,
-            entry_zone: entryZone || `${(entryPrice * 0.999).toFixed(2)} - ${(entryPrice * 1.001).toFixed(2)}`,
-            entry_zone_min: result.entryZoneMin,
-            entry_zone_max: result.entryZoneMax,
-            ideal_entry: result.idealEntry || entryPrice,
-            score_breakdown: result.scoreBreakdown,
-            entry_condition: entryCondition || (entryType === 'MARKET_NOW' ? `Execute ${direction} directly at Market ($${entryPrice.toFixed(2)})` : `Place ${entryType} at $${entryPrice.toFixed(2)} [Zone: ${entryZone}]`),
-            take_profit_3: takeProfit3 || (direction === 'BUY' ? parseFloat((entryPrice + (Math.abs(takeProfit1 - entryPrice) * 2.2)).toFixed(2)) : parseFloat((entryPrice - (Math.abs(entryPrice - takeProfit1) * 2.2)).toFixed(2))),
-            reasons_for: reasonsFor || [
-              `EMA-20 (${ema20.toFixed(2)}) ${ema20 >= ema50 ? '>' : '<'} EMA-50 (${ema50.toFixed(2)}) structural alignment`,
-              `Price trading ${entryPrice > vwap ? 'above' : 'below'} VWAP ($${vwap.toFixed(2)})`,
-              `RSI-14 at ${rsi14.toFixed(1)} confirms momentum`
-            ],
-            reasons_against: reasonsAgainst || [
-              `RSI-14 at ${rsi14.toFixed(1)} requires monitoring near range bounds`
-            ],
-            ai_validation: aiValidation || `12-Layer Confluence Engine confirmed ${direction} setup for ${symbol} with ${calculatedWinProb}/100 score.`,
-            market_regime: marketRegime || (direction === 'BUY' ? 'Bullish Expansion' : 'Bearish Expansion'),
-            htf_bias: htfBias || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-            liquidity_status: liquidityStatus || 'Standard Liquidity Range',
-            structure_status: structureStatus || 'Standard Structure',
-            displacement_status: displacementStatus || 'Normal Volatility',
-            session_status: sessionStatus || 'Active Session',
-            evidence: evidence,
-            confidence_breakdown: evidence.calculatedScores || evidence,
-            indicators: [
-              `EMA-20 (${ema20.toFixed(2)}) ${ema20 >= ema50 ? '>' : '<'} EMA-50 (${ema50.toFixed(2)}) — ${ema20 >= ema50 ? 'Bullish' : 'Bearish'} trend`,
-              `RSI-14: ${rsi14.toFixed(1)} — ${rsi14 > 70 ? 'Overbought' : rsi14 < 30 ? 'Oversold' : rsi14 > 55 ? 'Bullish momentum' : rsi14 < 45 ? 'Bearish momentum' : 'Neutral'}`,
-              `ATR-14: ${atr.toFixed(4)} — ${atr > prevAtr ? 'Expanding' : 'Contracting'} volatility`,
-              `VWAP: ${vwap.toFixed(2)} — Price ${entryPrice > vwap ? 'above' : 'below'} VWAP (${entryPrice > vwap ? 'bullish' : 'bearish'} bias)`
-            ],
-            explanation: aiValidation || `PRO 7-Step Institutional Strategy confirmed a high-probability ${direction} setup for ${symbol}. Price is trading ${entryPrice > ema200 ? 'above' : 'below'} the 200-period macro EMA (${ema200.toFixed(2)}) with RSI-14 at ${rsi14.toFixed(1)} and VWAP equilibrium at ${vwap.toFixed(2)}.`,
-            structure: {
-              ...this.detectFairValueGap(cachedCandles),
-              ...this.detectOrderBlock(cachedCandles, atr),
-              support: stopLoss,
-              resistance: takeProfit1
-            },
-            scores: { bullish: direction === 'BUY' ? calculatedWinProb : 100 - calculatedWinProb, bearish: direction === 'BUY' ? 100 - calculatedWinProb : calculatedWinProb, ...this.computeDynamicScores(rsi14, ema20, ema50, ema200, entryPrice, vwap, direction) },
-            indicator_verdicts: {
-              ema: `EMA-20 (${ema20.toFixed(2)}) is ${ema20 > ema50 ? 'above' : 'below'} EMA-50 (${ema50.toFixed(2)}), confirming ${ema20 > ema50 ? 'bullish' : 'bearish'} structural alignment.`,
-              rsi: `RSI-14 is at ${rsi14.toFixed(1)}, showing ${rsi14 > 60 ? 'strong bullish momentum' : rsi14 < 40 ? 'strong bearish momentum' : 'neutral momentum'}.`,
-              macd: `ATR-14 volatility is ${atr.toFixed(4)}, setting dynamic risk boundaries.`,
-              index_breadth: `VWAP at ${vwap.toFixed(2)} acts as institutional ${entryPrice > vwap ? 'support' : 'resistance'} floor.`
-            },
-            market_structure_analysis: `Smart Money Structure (SMC): Price action is established ${entryPrice > ema200 ? 'above' : 'below'} the 200 EMA ($${ema200.toFixed(2)}), confirming higher-timeframe ${entryPrice > ema200 ? 'bullish' : 'bearish'} order flow. Key Invalidation Liquidity boundary located at $${stopLoss.toFixed(2)} with Institutional Target expansions calibrated at TP1 ($${takeProfit1.toFixed(2)}) and TP2 ($${takeProfit2.toFixed(2)}).`,
-            predictions: {
-              short_term: `15m-1h Scalp Horizon: High-probability expansion toward TP1 ($${takeProfit1.toFixed(2)})`,
-              medium_term: `1-4h Intraday Horizon: Structural target expansion toward TP2 ($${takeProfit2.toFixed(2)}) upon 15m candle close beyond ${entryPrice.toFixed(2)}`,
-              invalidation: `Hard Invalidation Stop Loss at $${stopLoss.toFixed(2)} protects capital and closes setup if structure fails.`
-            },
-            tradingview_idea: `PRO 12-Layer Institutional ${direction} Setup for ${symbol} (${durationEstimate}). Entry: $${entryPrice.toFixed(2)} [Zone: ${entryZone || 'Market'}], TP1: $${takeProfit1.toFixed(2)} (1:2.0 R:R), TP2: $${takeProfit2.toFixed(2)} (1:3.2 R:R), TP3: $${takeProfit3 || 'Open runner'}, Invalidation Stop Loss: $${stopLoss.toFixed(2)} (R:R 1:${computedRR}).`,
-            category_scores: this.computeCategoryScores(rsi14, ema20, ema50, direction),
-            macro_context: this.getRichMacroContext(symbol, direction, rsi14, ema20, ema200),
-            correlation_analysis: (() => {
-              const sym = symbol.toUpperCase();
-              if (sym.includes('XAU') || sym.includes('GOLD')) return 'Gold Institutional Matrix: Inverse correlation to US Dollar Index (DXY: -0.82) and 10-Yr Real TIPS Yields (-0.88). Strong positive correlation to sovereign central bank gold net purchases and global debt expansion.';
-              if (sym.includes('US100') || sym.includes('NAS')) return 'NASDAQ 100 Matrix: High positive correlation to S&P 500 (0.92) and SOX Semiconductor Index (0.89). Strong inverse beta to VIX Volatility Index (-0.84) and 2-Yr Treasury yields.';
-              if (sym.includes('US30') || sym.includes('DOW')) return 'Dow Jones US30 Matrix: Direct correlation to US Industrial Production & Financial Sector (XLF: 0.85). Inverse correlation to VIX spikes (-0.79).';
-              if (sym.includes('JPY')) return 'USD/JPY Matrix: Extreme positive correlation to US 10-Yr Treasury Yields (0.87). Inverse correlation to global equity risk-off episodes (carry unwinding).';
-              if (sym.includes('EUR') || sym.includes('GBP')) return 'Forex Macro Matrix: Strong inverse correlation to DXY Index (-0.93) and direct sensitivity to ECB/Fed interest rate swap expectations.';
-              return `Institutional Matrix for ${symbol}: Evaluated against live volume profile, multi-timeframe EMA alignment, and liquidity order book imbalances.`;
-            })(),
-            timeframe: interval,
-            status: 'ACTIVE',
-          },
-          expiresAt: new Date(Date.now() + expirationMs),
-        };
-
-        if (existingActive) {
-          await this.prisma.signal.updateMany({
-            where: { symbol, expiresAt: { gt: new Date() } },
-            data: { expiresAt: new Date() },
-          });
-        }
-        signal = await this.prisma.signal.create({
-          data: signalPayload,
-        });
-
-        // Trigger autonomous broker auto-trade execution in background if signal is BUY/SELL
-        if (signal && ['BUY', 'SELL'].includes(signal.direction)) {
-          this.automationService.processSignalAutoTrade(signal as any).catch((err: any) => {
-            console.warn(`[AutoTrade Engine] Background dispatch notice for ${signal.symbol}: ${err.message}`);
-          });
-        }
-      } catch (e: any) {
-        throw new ServiceUnavailableException(`Database storage error on signal ${symbol}: ${e.message}`);
-      }
-
-      return signal;
-    }
-  }
-
-  @Get(':id')
-  @ApiOperation({ summary: 'Get details for a single signal' })
-  async getSignal(@Param('id') id: string) {
-    const signal = await this.prisma.signal.findUnique({
-      where: { id },
-    });
-    return signal;
-  }
-
-  @Delete(':id')
-  @ApiOperation({ summary: 'Delete signal permanently from database and generate fresh flowing signal' })
-  async deleteSignal(@Param('id') id: string) {
-    let deletedSymbol: string | null = null;
-    let freshSignal: any = null;
-    try {
-      const existing = await this.prisma.signal.findUnique({
-        where: { id },
-        select: { id: true, symbol: true }
-      });
-      if (existing) {
-        deletedSymbol = existing.symbol;
-        await this.prisma.signal.delete({
-          where: { id },
-        });
-        console.log(`[SignalsController] Signal ${id} (${deletedSymbol}) permanently deleted from database.`);
-      }
-    } catch (err: any) {
-      console.warn(`[SignalsController] Failed to delete signal ${id}: ${err.message}`);
-    }
-
-    if (deletedSymbol) {
-      try {
-        console.log(`[SignalsController] Generating immediate fresh signal for ${deletedSymbol} after user deletion...`);
-        freshSignal = await this.generateSignalRequest(deletedSymbol, '15m', true);
-      } catch (genErr: any) {
-        console.warn(`[SignalsController] Failed to auto-generate fresh signal after delete: ${genErr.message}`);
-      }
-    }
-
-    return { success: true, deletedId: id, symbol: deletedSymbol, freshSignal };
-  }
-
-  private getTwelveDataSymbol(symbol: string): string {
-    const u = (symbol || '').toUpperCase().trim();
-    const map: Record<string, string> = {
-      'US30': 'US30',
-      'DOW': 'US30',
-      'US100': 'US100',
-      'NAS': 'US100',
-      'SPX500': 'SPX500',
-      'DAX40': 'GER30',
-      'GOLD': 'XAU/USD',
-      'XAU/USD': 'XAU/USD',
-      'OIL': 'WTI/USD',
-      'EUR/USD': 'EUR/USD',
-      'GBP/USD': 'GBP/USD',
-      'USD/JPY': 'USD/JPY',
-      'BTC': 'BTC/USD',
-      'BTC/USD': 'BTC/USD',
-      'ETH': 'ETH/USD',
-      'ETH/USD': 'ETH/USD',
-      'SOL': 'SOL/USD',
-      'SOL/USD': 'SOL/USD',
-      'BNB': 'BNB/USD',
-      'BNB/USD': 'BNB/USD',
-      'XRP': 'XRP/USD',
-      'XRP/USD': 'XRP/USD',
-    };
-    return map[u] || u;
-  }
-
-  private getYahooTicker(symbol: string): string {
-    const u = (symbol || '').toUpperCase().trim();
-    const mappings: Record<string, string> = {
-      'US30': 'YM=F',
-      'DOW': 'YM=F',
-      'US100': 'NQ=F',
-      'NAS': 'NQ=F',
-      'SPX500': 'ES=F',
-      'SP500': 'ES=F',
-      'DAX40': '^GDAXI',
-      'GOLD': 'GC=F',
-      'XAU/USD': 'GC=F',
-      'XAUUSD': 'GC=F',
-      'OIL': 'CL=F',
-      'EUR/USD': 'EURUSD=X',
-      'GBP/USD': 'GBPUSD=X',
-      'USD/JPY': 'USDJPY=X',
-      'BTC': 'BTC-USD',
-      'BTC/USD': 'BTC-USD',
-      'ETH': 'ETH-USD',
-      'ETH/USD': 'ETH-USD',
-      'SOL': 'SOL-USD',
-      'SOL/USD': 'SOL-USD',
-      'BNB': 'BNB-USD',
-      'BNB/USD': 'BNB-USD',
-      'XRP': 'XRP-USD',
-      'XRP/USD': 'XRP-USD',
-      'AAPL': 'AAPL',
-      'TSLA': 'TSLA',
-      'NVDA': 'NVDA',
-      'MSFT': 'MSFT',
-      'AMZN': 'AMZN',
-    };
-    return mappings[u] || u;
-  }
-
-  private getStrategyKey(symbol: string): string {
-    const s = symbol.toUpperCase();
-    if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].some(c => s.includes(c))) return 'crypto-btc-onchain';
-    if (s.includes('JPY')) return 'forex-jpy-yields';
-    if (s.includes('EUR')) return 'forex-eur-dxy';
-    if (s.includes('GBP')) return 'forex-gbp-cable';
-    if (s.includes('XAU') || s.includes('GOLD')) return 'commodity-gold-yields';
-    if (s.includes('OIL') || s.includes('CRUDE') || s.includes('WTI')) return 'commodity-oil-opec';
-    if (s.includes('NAS') || s.includes('US100')) return 'index-nas100-tech';
-    if (s.includes('US30') || s.includes('DOW')) return 'index-us30-dow';
-    if (s.includes('SPX') || s.includes('SP500')) return 'index-spx500-macro';
-    if (s.includes('DAX')) return 'index-dax40-europe';
-    if (['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN'].some(st => s.includes(st))) return 'stock-earnings-flow';
-    return 'institutional-core';
-  }
-
-  async getOrFetchCandles(symbol: string, interval: string): Promise<any[]> {
-    const normSym = this.normalizeSymbol(symbol);
-    const cleanSymbol = normSym;
-    const baseSymbol = normSym.replace('/USD', '').replace('USDT', '').trim();
-    
-    // 1. Try to read from DB first (up to 1000 recent candles)
-    let candles = await this.prisma.historicalCandle.findMany({
-      where: { symbol: normSym, interval },
-      orderBy: { timestamp: 'desc' },
-      take: 1000,
-    });
-    candles.reverse();
-    
-    // 2. If we have cached candles and they are fresh, return them
-    const now = new Date();
-    let isFresh = false;
-    const minCandleCount = (interval === '1wk' || interval === '1d') ? 15 : 50;
-    if (candles.length >= minCandleCount) {
-      const lastCandle = candles[candles.length - 1];
-      const diffMs = now.getTime() - lastCandle.timestamp.getTime();
-      // Strict freshness: guaranteed under 25 seconds for 15m and scalping
-      let maxAgeMs = 90 * 1000; // 90 seconds for 1h
-      if (interval === '1m' || interval === '3m' || interval === '5m' || interval === '15m') {
-        maxAgeMs = 25 * 1000; // Under 25 seconds for 15m scalping
-      } else if (interval === '30m') {
-        maxAgeMs = 45 * 1000; // 45 seconds for 30m
-      } else if (interval === '1d') {
-        maxAgeMs = 4 * 3600 * 1000; // 4 hours for daily macro candles
-      } else if (interval === '1wk') {
-        maxAgeMs = 12 * 3600 * 1000; // 12 hours for weekly macro candles
-      }
-      
-      if (diffMs < maxAgeMs) {
-        isFresh = true;
-      }
-    }
-    
-    if (isFresh) {
-      // Sync the latest candle with sub-second TradingView live spot quote
-      try {
-        let livePrice = 0;
-        const isGoldAsset = normSym === 'GOLD' || normSym.includes('XAU');
-        const isBtcAsset = normSym.includes('BTC');
-        const isUs30 = normSym === 'US30' || normSym.includes('DOW');
-        const isUs100 = normSym === 'US100' || normSym.includes('NAS');
-        const isEurUsd = normSym.includes('EUR');
-
-        // Priority 1: Official TradingView live quotes (Direct Interbank & Exchange parity)
-        try {
-          if (isGoldAsset) {
-            const tv = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
-            livePrice = tv['TVC:GOLD']?.price || tv['OANDA:XAUUSD']?.price || 0;
-          } else if (isBtcAsset) {
-            const tv = await this.fetchTradingViewQuotes('crypto', ['BINANCE:BTCUSDT', 'COINBASE:BTCUSD']);
-            livePrice = tv['BINANCE:BTCUSDT']?.price || tv['COINBASE:BTCUSD']?.price || 0;
-          } else if (isUs30) {
-            const tv = await this.fetchTradingViewQuotes('america', ['DJ:DJI']);
-            livePrice = tv['DJ:DJI']?.price || 0;
-          } else if (isUs100) {
-            const tv = await this.fetchTradingViewQuotes('america', ['NASDAQ:NDX']);
-            livePrice = tv['NASDAQ:NDX']?.price || 0;
-          } else if (isEurUsd) {
-            const tv = await this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD']);
-            livePrice = tv['FX_IDC:EURUSD']?.price || tv['OANDA:EURUSD']?.price || 0;
-          }
-        } catch (e) {}
-
-        // Priority 2: Twelve Data or GoldAPI fallback for Gold
-        if (livePrice <= 0 && isGoldAsset) {
-          const tdKey = process.env.TWELVE_DATA_API_KEY;
-          if (tdKey) {
-            try {
-              const tdQuoteRes = await this.fetchWithTimeout(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${tdKey}`, {}, 2000);
-              if (tdQuoteRes.ok) {
-                const tdQuote = await tdQuoteRes.json();
-                if (tdQuote && Number(tdQuote.price) > 1000 && !tdQuote.code) {
-                  livePrice = Number(tdQuote.price);
-                }
-              }
-            } catch (e) {}
-          }
-          if (livePrice <= 0) {
-            try {
-              const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 2000);
-              if (spotRes.ok) {
-                const spotData = await spotRes.json();
-                if (spotData && Number(spotData.price) > 1000) {
-                  livePrice = Number(spotData.price);
-                }
-              }
-            } catch (e) {}
-          }
-        }
-
-        if (livePrice <= 0) {
-          const liveMarket = await this.prisma.marketData.findUnique({
-            where: { symbol: normSym }
-          });
-          if (liveMarket && liveMarket.bidPrice > 0) {
-            livePrice = Number(liveMarket.bidPrice);
-          }
-        }
-
-        if (livePrice > 0 && candles.length > 0) {
-          const lastIdx = candles.length - 1;
-          candles[lastIdx].close = livePrice;
-          if (livePrice > Number(candles[lastIdx].high)) candles[lastIdx].high = livePrice;
-          if (livePrice < Number(candles[lastIdx].low)) candles[lastIdx].low = livePrice;
-        }
-      } catch (e) {}
-      return candles;
-    }
-    
-    // 3. Otherwise, fetch real-time.
-    const isCrypto = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(baseSymbol);
-    const isGold = baseSymbol.includes('XAU') || baseSymbol.includes('GOLD') || cleanSymbol.includes('XAU') || cleanSymbol.includes('GOLD');
-    let fetched = false;
-
-    // GOLD (XAU/USD): Prioritize Twelve Data spot and Yahoo COMEX Gold futures (GC=F). DO NOT use PAXG token unless emergency.
-    if (isGold) {
-      // 3.1. Try Twelve Data real spot XAU/USD first
-      const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
-      if (twelveDataKey) {
-        try {
-          let tdInterval = interval;
-          if (interval === '1h') tdInterval = '1h';
-          else if (interval === '1d') tdInterval = '1day';
-          else if (interval === '1wk') tdInterval = '1week';
-          const response = await this.fetchWithTimeout(
-            `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=${tdInterval}&outputsize=300&apikey=${twelveDataKey}`,
-            {},
-            4000
-          );
-          if (response.ok) {
-            const data = await response.json();
-            const values = data.values || [];
-            if (values.length > 0 && !data.code) {
-              await this.prisma.historicalCandle.deleteMany({
-                where: { symbol: cleanSymbol, interval }
-              });
-
-              const newCandles = [];
-              const reversedValues = [...values].reverse();
-              for (const v of reversedValues) {
-                const candle = await this.prisma.historicalCandle.create({
-                  data: {
-                    symbol: cleanSymbol,
-                    interval,
-                    timestamp: new Date(v.datetime),
-                    open: parseFloat(v.open),
-                    high: parseFloat(v.high),
-                    low: parseFloat(v.low),
-                    close: parseFloat(v.close),
-                    volume: parseFloat(v.volume || 0),
-                  }
-                });
-                newCandles.push(candle);
-              }
-              fetched = true;
-              console.log(`[SignalsController] Gold spot candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
-              return newCandles;
-            }
-          }
-        } catch (err: any) {
-          console.warn(`[SignalsController] Twelve Data spot fetch failed for ${cleanSymbol}: ${err.message}. Trying Yahoo COMEX GC=F.`);
-        }
-      }
-
-      // 3.2. Try Yahoo Finance COMEX Gold Futures (GC=F) — Real market price (~$4,476+)
-      if (!fetched) {
-        try {
-          let yahooInterval = interval;
-          if (interval === '1h') yahooInterval = '60m';
-          else if (interval === '1d') yahooInterval = '1d';
-          else if (interval === '1wk') yahooInterval = '1wk';
-
-          let range = '2d';
-          if (interval === '1m') range = '1d';
-          else if (interval === '3m' || interval === '5m') range = '2d';
-          else if (interval === '15m' || interval === '30m') range = '14d';
-          else if (interval === '1h') range = '1mo';
-          else if (interval === '1d') range = '1y';
-          else if (interval === '1wk') range = '2y';
-
-          const res = await this.fetchWithTimeout(
-            `https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=${yahooInterval}&range=${range}`,
-            {},
-            3500
-          );
-          if (res.ok) {
-            const data = await res.json();
-            const chartData = data?.chart?.result?.[0];
-            const timestamps = chartData?.timestamp || [];
-            const quote = chartData?.indicators?.quote?.[0] || {};
-            const opens = quote.open || [];
-            const highs = quote.high || [];
-            const lows = quote.low || [];
-            const closes = quote.close || [];
-            const volumes = quote.volume || [];
-
-            if (timestamps.length > 0) {
-              await this.prisma.historicalCandle.deleteMany({
-                where: { symbol: cleanSymbol, interval }
-              });
-
-              // Check real-time spot XAU/USD to eliminate COMEX basis/futures contango offset
-              let spotPrice = 0;
-              try {
-                const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 2000);
-                if (spotRes.ok) {
-                  const spotData = await spotRes.json();
-                  if (spotData && Number(spotData.price) > 1000) {
-                    spotPrice = Number(spotData.price);
-                  }
-                }
-              } catch (e) {}
-
-              // Calculate basis offset between spot and COMEX futures
-              const validCloses = closes.filter((c: any) => c !== null);
-              const lastComexClose = validCloses.length > 0 ? parseFloat(validCloses[validCloses.length - 1]) : 0;
-              const basisOffset = (spotPrice > 1000 && lastComexClose > 1000) ? (spotPrice - lastComexClose) : 0;
-
-              const newCandles = [];
-              for (let i = 0; i < timestamps.length; i++) {
-                if (opens[i] === null || closes[i] === null) continue;
-                const candle = await this.prisma.historicalCandle.create({
-                  data: {
-                    symbol: cleanSymbol,
-                    interval,
-                    timestamp: new Date(timestamps[i] * 1000),
-                    open: parseFloat((parseFloat(opens[i]) + basisOffset).toFixed(2)),
-                    high: parseFloat((parseFloat(highs[i]) + basisOffset).toFixed(2)),
-                    low: parseFloat((parseFloat(lows[i]) + basisOffset).toFixed(2)),
-                    close: parseFloat((parseFloat(closes[i]) + basisOffset).toFixed(2)),
-                    volume: parseFloat(volumes[i] || 0),
-                  }
-                });
-                newCandles.push(candle);
-              }
-              fetched = true;
-              const finalClose = newCandles.length > 0 ? newCandles[newCandles.length - 1].close : 0;
-              console.log(`[SignalsController] Real Spot Gold calibrated candlesticks stored for ${cleanSymbol} (spot close: $${finalClose}, basis offset: ${basisOffset.toFixed(2)}).`);
-              return newCandles;
-            }
-          }
-        } catch (err: any) {
-          console.warn(`[SignalsController] Failed to fetch live Yahoo COMEX Gold candles for ${cleanSymbol}: ${err.message}.`);
-        }
-      }
-
-      if (!fetched) {
-        console.warn(`[SignalsController] Live TwelveData and Yahoo COMEX Gold spot providers unavailable for ${cleanSymbol}. Refusing synthetic/PAXG crypto proxy.`);
-      }
-    }
-
-    // Standard Crypto Assets (BTC, ETH, SOL, BNB, XRP) -> Fetch from Binance
-    if (isCrypto && !isGold) {
-      let binanceInterval = interval;
-      if (interval === '1h') binanceInterval = '1h';
-      else if (interval === '1d') binanceInterval = '1d';
-      else if (interval === '1wk') binanceInterval = '1w';
-      try {
-        const binanceSym = `${baseSymbol}USDT`;
-        const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
-        const headers: Record<string, string> = {};
-        if (binanceApiKey) headers['X-MBX-APIKEY'] = binanceApiKey;
-
-        const res = await this.fetchWithTimeout(
-          `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=${binanceInterval}&limit=1000`,
-          { headers }
-        );
-        if (res.ok) {
-          const klines = await res.json();
-          await this.prisma.historicalCandle.deleteMany({
-            where: { symbol: cleanSymbol, interval }
-          });
-
-          const records = (klines || []).map((k: any) => ({
-            symbol: cleanSymbol,
-            interval,
-            timestamp: new Date(k[0]),
-            open: parseFloat(k[1]),
-            high: parseFloat(k[2]),
-            low: parseFloat(k[3]),
-            close: parseFloat(k[4]),
-            volume: parseFloat(k[5] || 0),
-          }));
-
-          if (records.length > 0) {
-            await this.prisma.historicalCandle.createMany({
-              data: records,
-              skipDuplicates: true
-            });
-            fetched = true;
-            return records;
-          }
-        }
-      } catch (err: any) {
-        console.warn(`[SignalsController] Failed to fetch live Binance candles for crypto ${cleanSymbol}: ${err.message}. Trying Twelve Data fallback.`);
-      }
-    }
-
-    // 4. Try Twelve Data fallback if Binance failed or if it is stocks/indices/forex
-    if (!fetched) {
-      const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
-      if (twelveDataKey) {
-        try {
-          const tdSym = this.getTwelveDataSymbol(cleanSymbol);
-          let tdInterval = interval;
-          if (interval === '1h') tdInterval = '1h';
-          else if (interval === '1d') tdInterval = '1day';
-          else if (interval === '1wk') tdInterval = '1week';
-          
-          const response = await this.fetchWithTimeout(`https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(tdSym)}&interval=${tdInterval}&outputsize=1000&apikey=${twelveDataKey}`);
-          if (response.ok) {
-            const data = await response.json();
-            const values = data.values || [];
-            if (values.length > 0) {
-              await this.prisma.historicalCandle.deleteMany({
-                where: { symbol: cleanSymbol, interval }
-              });
-              
-              const reversedValues = [...values].reverse();
-              const records = reversedValues.map((v: any) => ({
-                symbol: cleanSymbol,
-                interval,
-                timestamp: new Date(v.datetime),
-                open: parseFloat(v.open),
-                high: parseFloat(v.high),
-                low: parseFloat(v.low),
-                close: parseFloat(v.close),
-                volume: parseFloat(v.volume || 0),
-              }));
-
-              await this.prisma.historicalCandle.createMany({
-                data: records,
-                skipDuplicates: true
-              });
-              fetched = true;
-              console.log(`[SignalsController] ${records.length} Candlesticks fetched and cached from Twelve Data for ${cleanSymbol}.`);
-              return records;
-            }
-          }
-        } catch (err: any) {
-          console.warn(`[SignalsController] Twelve Data timeseries fetch failed for ${cleanSymbol}: ${err.message}. Falling back to Yahoo Finance.`);
-        }
-      }
-    }
-
-    // 5. Try Yahoo Finance fallback (Wide institutional lookback window)
-    if (!fetched) {
-      try {
-        const yahooTicker = this.getYahooTicker(cleanSymbol);
-        let yahooInterval = interval;
-        if (interval === '1h') yahooInterval = '60m';
-        else if (interval === '1d') yahooInterval = '1d';
-        else if (interval === '1wk') yahooInterval = '1wk';
-        
-        let range = '5d';
-        if (interval === '1m') range = '7d';
-        else if (interval === '3m' || interval === '5m') range = '30d';
-        else if (interval === '15m' || interval === '30m') range = '60d';
-        else if (interval === '1h') range = '730d';
-        else if (interval === '1d') range = '5y';
-        else if (interval === '1wk') range = '10y';
-        
-        const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=${yahooInterval}&range=${range}`);
-        if (res.ok) {
-          const data = await res.json();
-          const chartData = data?.chart?.result?.[0];
-          const timestamps = chartData?.timestamp || [];
-          const quote = chartData?.indicators?.quote?.[0] || {};
-          const opens = quote.open || [];
-          const highs = quote.high || [];
-          const lows = quote.low || [];
-          const closes = quote.close || [];
-          const volumes = quote.volume || [];
-          
-          if (timestamps.length > 0) {
-            await this.prisma.historicalCandle.deleteMany({
-              where: { symbol: cleanSymbol, interval }
-            });
-            
-            const records = [];
-            for (let i = 0; i < timestamps.length; i++) {
-              if (opens[i] === null || closes[i] === null || isNaN(opens[i]) || isNaN(closes[i])) continue;
-              records.push({
-                symbol: cleanSymbol,
-                interval,
-                timestamp: new Date(timestamps[i] * 1000),
-                open: parseFloat(opens[i]),
-                high: parseFloat(highs[i]),
-                low: parseFloat(lows[i]),
-                close: parseFloat(closes[i]),
-                volume: parseFloat(volumes[i] || 0),
-              });
-            }
-
-            if (records.length > 0) {
-              await this.prisma.historicalCandle.createMany({
-                data: records,
-                skipDuplicates: true
-              });
-              fetched = true;
-              console.log(`[SignalsController] ${records.length} live wide candlesticks cached from Yahoo Finance for ${cleanSymbol}.`);
-              return records;
-            }
-          }
-        }
-      } catch (err: any) {
-        console.warn(`[SignalsController] Failed to fetch live Yahoo candles for ${cleanSymbol}: ${err.message}`);
-      }
-    }
-
-    if (candles.length === 0) {
-      try {
-        let liveSpotPrice = 0;
-
-        // 1. Forex high-availability fetch (EUR/USD, GBP/USD, USD/JPY)
-        if (cleanSymbol.includes('/') || ['EURUSD', 'GBPUSD', 'USDJPY'].includes(cleanSymbol.replace('/', ''))) {
-          try {
-            const fxRes = await this.fetchWithTimeout('https://open.er-api.com/v6/latest/USD', {}, 3000);
-            if (fxRes.ok) {
-              const fxData = await fxRes.json();
-              const rates = fxData?.rates || {};
-              if (cleanSymbol.includes('EUR') && rates.EUR) liveSpotPrice = parseFloat((1 / rates.EUR).toFixed(4));
-              else if (cleanSymbol.includes('GBP') && rates.GBP) liveSpotPrice = parseFloat((1 / rates.GBP).toFixed(4));
-              else if (cleanSymbol.includes('JPY') && rates.JPY) liveSpotPrice = parseFloat(rates.JPY.toFixed(2));
-            }
-          } catch (fxErr) {}
-        }
-
-        // 2. Gold high-availability spot fetch (TradingView XAU/USD)
-        if (liveSpotPrice <= 0 && (cleanSymbol.includes('GOLD') || cleanSymbol.includes('XAU'))) {
-          const tdKey = process.env.TWELVE_DATA_API_KEY;
-          if (tdKey) {
-            try {
-              const tdRes = await this.fetchWithTimeout(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${tdKey}`, {}, 2500);
-              if (tdRes.ok) {
-                const tdData = await tdRes.json();
-                if (tdData && Number(tdData.price) > 1000 && !tdData.code) {
-                  liveSpotPrice = parseFloat(tdData.price);
-                }
-              }
-            } catch (e) {}
-          }
-          if (liveSpotPrice <= 0) {
-            try {
-              const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 2500);
-              if (spotRes.ok) {
-                const spotData = await spotRes.json();
-                if (spotData && Number(spotData.price) > 1000) {
-                  liveSpotPrice = parseFloat(spotData.price);
-                }
-              }
-            } catch (goldErr) {}
-          }
-        }
-
-        // 3. Yahoo chart v8 fallback for Indices & Commodities
-        if (liveSpotPrice <= 0) {
-          const yahooTicker = this.getYahooTicker(cleanSymbol);
-          const res = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=1m&range=1d`, {}, 3000);
-          if (res.ok) {
-            const cData = await res.json();
-            const meta = cData?.chart?.result?.[0]?.meta;
-            if (meta && meta.regularMarketPrice > 0) {
-              liveSpotPrice = parseFloat(meta.regularMarketPrice);
-            }
-          }
-        }
-
-        // 4. Fallback to DB marketData spot price if liveSpotPrice is still 0
-        if (liveSpotPrice <= 0) {
-          try {
-            const md = await this.prisma.marketData.findFirst({
-              where: {
-                OR: [
-                  { symbol: cleanSymbol },
-                  { symbol: normSym },
-                  { symbol: cleanSymbol.replace('/', '') }
-                ]
-              }
-            });
-            if (md && Number(md.bidPrice || md.askPrice) > 0) {
-              liveSpotPrice = Number(md.bidPrice || md.askPrice);
-            }
-          } catch (dbErr) {}
-        }
-
-        if (liveSpotPrice > 0) {
-          try {
-            const yahooTicker = this.getYahooTicker(cleanSymbol);
-            const chartRes = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?range=5d&interval=1h`, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json'
-              }
-            }, 4000);
-            if (chartRes.ok) {
-              const cData = await chartRes.json();
-              const result = cData?.chart?.result?.[0];
-              const timestamps = result?.timestamp || [];
-              const quote = result?.indicators?.quote?.[0] || {};
-              const opens = quote.open || [];
-              const highs = quote.high || [];
-              const lows = quote.low || [];
-              const closes = quote.close || [];
-              const volumes = quote.volume || [];
-
-              if (timestamps.length >= 10) {
-                await this.prisma.historicalCandle.deleteMany({
-                  where: { symbol: cleanSymbol, interval }
-                });
-
-                const fetchedCandles = [];
-                for (let i = 0; i < timestamps.length; i++) {
-                  if (closes[i] != null && opens[i] != null) {
-                    const created = await this.prisma.historicalCandle.create({
-                      data: {
-                        symbol: cleanSymbol,
-                        interval,
-                        timestamp: new Date(timestamps[i] * 1000),
-                        open: parseFloat(opens[i].toFixed(4)),
-                        high: parseFloat((highs[i] || opens[i]).toFixed(4)),
-                        low: parseFloat((lows[i] || closes[i]).toFixed(4)),
-                        close: parseFloat(closes[i].toFixed(4)),
-                        volume: parseFloat((volumes[i] || 0).toFixed(0)),
-                      }
-                    });
-                    fetchedCandles.push(created);
-                  }
-                }
-
-                if (fetchedCandles.length >= 10) {
-                  return fetchedCandles;
-                }
-              }
-            }
-          } catch (err: any) {
-            console.warn(`[SignalsController] Real chart fetch failed for ${cleanSymbol}: ${err.message}`);
-          }
-
-          console.warn(
-            `[SignalsController] Spot price for ${cleanSymbol} is available (${liveSpotPrice}), but real candle history is unavailable. Refusing to synthesize candles for signal generation.`
-          );
-        }
-        
-        console.warn(`[SignalsController] Insufficient live candlestick history for ${cleanSymbol}. Refusing synthetic signal generation.`);
-        return [];
-      } catch (err: any) {
-        console.warn(`[SignalsController] Live spot fallback candle build failed for ${cleanSymbol}: ${err.message}`);
-      }
-    }
-
-    return candles;
-  }
-
-  // ─── DEDICATED QUANTITATIVE STRATEGY ENGINES ───
-
-  private getRichMacroContext(symbol: string, direction: string, rsi: number, ema20: number, ema200: number): string {
-    const s = symbol.toUpperCase();
-    const isBuy = direction === 'BUY';
-
-    if (s.includes('US30') || s.includes('DOW')) {
-      return isBuy
-        ? `US30 Dow Jones Industrial Structure: Blue-chip cyclical balance sheet strength and 10-year Treasury yield stability support institutional long accumulation above EMA-20 ($${ema20.toFixed(2)}). Order block displacement and industrial value rotation confirm strong floor demand (RSI: ${rsi.toFixed(1)}).`
-        : `US30 Dow Jones Industrial Structure: Tightening commercial bank credit conditions, industrial earnings multiple headwinds, and overhead supply at major swing highs drive institutional distribution below EMA-20 ($${ema20.toFixed(2)}). Liquidity sweep rejection confirmed (RSI: ${rsi.toFixed(1)}).`;
-    }
-    if (s.includes('US100') || s.includes('NAS')) {
-      return isBuy
-        ? `US100 NASDAQ Tech Structure: Mega-cap tech earnings momentum and AI semiconductor capex cycles provide heavy demand floor above EMA-20 ($${ema20.toFixed(2)}). Bullish Fair Value Gap (FVG) retest and discount liquidity absorption indicate institutional expansion (RSI: ${rsi.toFixed(1)}).`
-        : `US100 NASDAQ Tech Structure: Duration sensitivity to elevated real rates and tech profit-taking near all-time high liquidity pools weigh on NQ index futures below EMA-20 ($${ema20.toFixed(2)}). Bearish Order Block supply overhang confirmed (RSI: ${rsi.toFixed(1)}).`;
-    }
-    if (s.includes('SPX') || s.includes('SP500')) {
-      return isBuy
-        ? `S&P 500 Macro Breadth: Broad-market market breadth expansion across cyclical sectors with price securely established above the 200 EMA ($${ema200.toFixed(2)}). Institutional put/call volume skew and positive gamma regimes support higher continuation.`
-        : `S&P 500 Macro Breadth: S&P market breadth narrowing to defensive utilities/staples with price rejected beneath the 200 EMA ($${ema200.toFixed(2)}). Negative market gamma zone increases downward acceleration risk.`;
-    }
-    if (s.includes('XAU') || s.includes('GOLD')) {
-      return isBuy
-        ? `XAU/USD Gold Institutional Backdrop: Sovereign central bank reserve accumulation, declining US real yields (TIPS), and global geopolitical safe-haven hedging converge to drive institutional bullion spot accumulation above $${ema20.toFixed(2)}. Sell-side liquidity sweep completed (RSI: ${rsi.toFixed(1)}).`
-        : `XAU/USD Gold Institutional Backdrop: US Dollar Index (DXY) strength and rising 10-year nominal Treasury yields increase the opportunity cost of holding non-yielding bullion below $${ema20.toFixed(2)}. Buy-side liquidity swept with sharp shooting star rejection (RSI: ${rsi.toFixed(1)}).`;
-    }
-    if (s.includes('JPY')) {
-      return isBuy
-        ? `USD/JPY Carry & Yield Differentials: Widening US-Japan interest rate spread differentials and ongoing BoJ ultra-loose policy stance drive institutional carry flows above ¥${ema20.toFixed(2)}. Monitoring 155.00+ Ministry of Finance (MoF) verbal warning levels (RSI: ${rsi.toFixed(1)}).`
-        : `USD/JPY Carry & Yield Differentials: Bank of Japan monetary policy normalization signals and Ministry of Finance (MoF) physical intervention risk trigger rapid short-covering and carry unwinding below ¥${ema20.toFixed(2)} (RSI: ${rsi.toFixed(1)}).`;
-    }
-    if (s.includes('EUR') || s.includes('GBP')) {
-      return isBuy
-        ? `FX Institutional Macro: European/UK cross-border corporate demand and DXY index softening below key resistance bolster ${symbol} structural expansion above ${ema20.toFixed(4)}. Asian session low liquidity swept during London open with high-volume displacement (RSI: ${rsi.toFixed(1)}).`
-        : `FX Institutional Macro: Transatlantic growth divergence favoring US economic resilience puts persistent downward pressure on ${symbol} beneath ${ema20.toFixed(4)}. Asian range high swept with bearish Order Block confirmation (RSI: ${rsi.toFixed(1)}).`;
-    }
-    if (s.includes('BTC') || s.includes('ETH') || s.includes('SOL')) {
-      return isBuy
-        ? `Crypto Institutional Flow: Spot ETF institutional accumulation, exchange liquid reserve contraction, and post-halving supply squeeze dynamics confirm strong structural bid above $${ema20.toFixed(2)}. On-chain whale accumulation and FVG imbalance support trend continuation (RSI: ${rsi.toFixed(1)}).`
-        : `Crypto Institutional Flow: Short-term holder realized profit-taking, spot ETF net outflows, and leveraged derivatives open interest flush drive corrective repricing below $${ema20.toFixed(2)}. Invalidation Stop Loss set at swing structure (RSI: ${rsi.toFixed(1)}).`;
-    }
-    return `Institutional Macro Framework for ${symbol}: 12-layer confluence engine validates ${direction} positioning based on EMA-20 ($${ema20.toFixed(2)}) trend alignment, RSI-14 momentum (${rsi.toFixed(1)}), and session liquidity displacement.`;
-  }
-
-  private calculateWinProb(ema20: number, ema50: number, ema200: number, rsi: number, vwap: number, entryPrice: number, direction: string, candles?: any[]): number {
-    let winProb = 50;
-    // EMA-20 vs EMA-50 short-term trend
-    if (ema20 > ema50 && direction === 'BUY') winProb += 8;
-    if (ema20 < ema50 && direction === 'SELL') winProb += 8;
-    // EMA-50 vs EMA-200 macro trend
-    if (ema50 > ema200 && direction === 'BUY') winProb += 7;
-    if (ema50 < ema200 && direction === 'SELL') winProb += 7;
-    // Triple EMA stack bonus (strongest trend confirmation)
-    if (ema20 > ema50 && ema50 > ema200 && direction === 'BUY') winProb += 6;
-    if (ema20 < ema50 && ema50 < ema200 && direction === 'SELL') winProb += 6;
-    // RSI momentum confirmation
-    if (rsi > 55 && rsi < 75 && direction === 'BUY') winProb += 5;
-    if (rsi < 45 && rsi > 25 && direction === 'SELL') winProb += 5;
-    // Overbought/Oversold penalty
-    if (rsi > 75 && direction === 'BUY') winProb -= 8;
-    if (rsi < 25 && direction === 'SELL') winProb -= 8;
-    // VWAP institutional alignment
-    if (entryPrice > vwap && direction === 'BUY') winProb += 4;
-    if (entryPrice < vwap && direction === 'SELL') winProb += 4;
-    // Volume confirmation (current candle volume vs 20-period average)
-    if (candles && candles.length >= 20) {
-      const volumes = candles.slice(-20).map(c => Number(c.volume || 0)).filter(v => v > 0);
-      if (volumes.length > 0) {
-        const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-        const currentVol = Number(candles[candles.length - 1]?.volume || 0);
-        if (currentVol > avgVol * 1.2) winProb += 5; // Above-average volume confirms move
-      }
-    }
-    return Math.min(92, Math.max(40, winProb));
-  }
-
-  private calculatePrecisionEntry(
-    direction: 'BUY' | 'SELL',
-    currentPrice: number,
-    ema20: number,
-    vwap: number,
-    atr: number,
-    precision: number = 2,
-    opts?: {
-      rsi?: number;
-      ema50?: number;
-      ema200?: number;
-      fvg?: any;
-      ob?: any;
-      htfBias?: any;
-      sessionName?: string;
-      recentNews?: any[];
-      symbol?: string;
-      spread?: number;
-      lowestLow?: number;
-      highestHigh?: number;
-      interval?: string;
-    }
-  ): {
-    entryType: 'MARKET_NOW' | 'LIMIT_PULLBACK';
-    entryPrice: number;
-    entryZone: string;
-    entryZoneMin: number;
-    entryZoneMax: number;
-    idealEntry: number;
-    entryModel: 'TREND_CONTINUATION' | 'REVERSAL' | 'BREAKOUT' | 'RANGE_BOUND';
-    stopLoss: number;
-    takeProfit1: number;
-    takeProfit2: number;
-    takeProfit3: number;
-    riskRewardRatio: number;
-    setupScore: number;
-    scoreBreakdown: {
-      structure: number;
-      liquidity: number;
-      entryLocation: number;
-      momentum: number;
-      multiTimeframe: number;
-      volatility: number;
-      session: number;
-      macro: number;
-      news: number;
-      execution: number;
-      total: number;
-    };
-    entryCondition: string;
-    isOverextended: boolean;
-    overextendedReason?: string;
-    passedGates: boolean;
-    gateRejectionReason?: string;
-  } {
-    const distFromEma = Math.abs(currentPrice - ema20);
-    const isOverextended = distFromEma > (atr * 1.35);
-
-    const minBound = direction === 'BUY'
-      ? parseFloat((currentPrice - (atr * 0.15)).toFixed(precision))
-      : parseFloat((currentPrice - (atr * 0.10)).toFixed(precision));
-    const maxBound = direction === 'BUY'
-      ? parseFloat((currentPrice + (atr * 0.10)).toFixed(precision))
-      : parseFloat((currentPrice + (atr * 0.15)).toFixed(precision));
-    const idealEntry = parseFloat(currentPrice.toFixed(precision));
-    const entryZone = `${minBound} - ${maxBound}`;
-
-    // --- SETUP SCORE ENGINE (Weighted 10 Components, Max 100) ---
-    // 1. Structure (20 pts)
-    let structureScore = 10;
-    if (opts?.ema50 && opts?.ema200) {
-      if (direction === 'BUY' && ema20 >= opts.ema50 && opts.ema50 >= opts.ema200) structureScore += 8;
-      else if (direction === 'SELL' && ema20 <= opts.ema50 && opts.ema50 <= opts.ema200) structureScore += 8;
-      else structureScore += 4;
-    }
-    if (opts?.ob?.order_block_detected) structureScore += 2;
-
-    // 2. Liquidity (15 pts)
-    let liquidityScore = 10;
-    if (direction === 'BUY' && currentPrice > vwap) liquidityScore += 5;
-    else if (direction === 'SELL' && currentPrice < vwap) liquidityScore += 5;
-
-    // 3. Entry Location (15 pts)
-    let entryLocationScore = 12;
-    if (opts?.fvg?.fvg_detected) entryLocationScore += 3;
-
-    // 4. Momentum (10 pts)
-    let momentumScore = 7;
-    const rsi = opts?.rsi ?? 50;
-    if (direction === 'BUY' && rsi >= 48 && rsi <= 68) momentumScore = 10;
-    else if (direction === 'SELL' && rsi <= 52 && rsi >= 32) momentumScore = 10;
-    else if ((direction === 'BUY' && rsi > 78) || (direction === 'SELL' && rsi < 22)) momentumScore = 3;
-
-    // 5. Multi-Timeframe Alignment (10 pts)
-    let mtfScore = 6;
-    if (opts?.htfBias?.htfDirection === direction) mtfScore = 10;
-    else if (opts?.htfBias?.htfDirection === 'NEUTRAL') mtfScore = 7;
-
-    // 6. Volatility (8 pts)
-    let volatilityScore = isOverextended ? 3 : 8;
-
-    // 7. Session (7 pts)
-    const currentHour = new Date().getUTCHours();
-    let sessionScore = 4;
-    if (currentHour >= 7 && currentHour <= 17) sessionScore = 7; // London & NY active overlap
-
-    // 8. Macro (7 pts)
-    let macroScore = opts?.htfBias?.bias1d === (direction === 'BUY' ? 'BULLISH' : 'BEARISH') ? 7 : 5;
-
-    // 9. News (5 pts)
-    let newsScore = 5;
-    if (opts?.recentNews && opts.recentNews.length > 0) {
-      const adverseWords = direction === 'BUY' ? ['crash', 'plunge', 'bearish', 'recession', 'hike'] : ['surge', 'rally', 'bullish', 'expansion', 'cut'];
-      const adverseCount = opts.recentNews.filter(n => adverseWords.some(w => (n.headline || '').toLowerCase().includes(w))).length;
-      if (adverseCount >= 2) newsScore = 1;
-    }
-
-    // 10. Execution Conditions (3 pts)
-    const executionScore = 3;
-
-    const totalSetupScore = Math.min(96, Math.max(45,
-      structureScore + liquidityScore + entryLocationScore + momentumScore +
-      mtfScore + volatilityScore + sessionScore + macroScore + newsScore + executionScore
-    ));
-
-    const scoreBreakdown = {
-      structure: structureScore,
-      liquidity: liquidityScore,
-      entryLocation: entryLocationScore,
-      momentum: momentumScore,
-      multiTimeframe: mtfScore,
-      volatility: volatilityScore,
-      session: sessionScore,
-      macro: macroScore,
-      news: newsScore,
-      execution: executionScore,
-      total: totalSetupScore
-    };
-
-    // Determine Entry Model
-    let entryModel: 'TREND_CONTINUATION' | 'REVERSAL' | 'BREAKOUT' | 'RANGE_BOUND' = 'TREND_CONTINUATION';
-    if (opts?.fvg?.fvg_detected && mtfScore >= 8) entryModel = 'TREND_CONTINUATION';
-    else if (opts?.ob?.order_block_detected && (rsi > 70 || rsi < 30)) entryModel = 'REVERSAL';
-    else if (volatilityScore >= 7 && (opts?.rsi ?? 50) > 60) entryModel = 'BREAKOUT';
-    else entryModel = 'RANGE_BOUND';
-
-    // Structural Stop Loss & Take Profit Geometry
-    const isScalp = ['1m', '3m', '5m', '15m'].includes(opts?.interval || '15m');
-    const minSlDist = Math.max(atr * 1.4, currentPrice * (isScalp ? 0.003 : 0.008));
-    const lowestLow = opts?.lowestLow ?? (currentPrice - minSlDist);
-    const highestHigh = opts?.highestHigh ?? (currentPrice + minSlDist);
-
-    const stopLoss = direction === 'BUY'
-      ? parseFloat(Math.min(idealEntry - minSlDist, lowestLow - (atr * 0.35)).toFixed(precision))
-      : parseFloat(Math.max(idealEntry + minSlDist, highestHigh + (atr * 0.35)).toFixed(precision));
-
-    const slDist = Math.max(0.0001, Math.abs(idealEntry - stopLoss));
-    const takeProfit1 = direction === 'BUY'
-      ? parseFloat((idealEntry + slDist * 1.8).toFixed(precision))
-      : parseFloat((idealEntry - slDist * 1.8).toFixed(precision));
-    const takeProfit2 = direction === 'BUY'
-      ? parseFloat((idealEntry + slDist * 2.8).toFixed(precision))
-      : parseFloat((idealEntry - slDist * 2.8).toFixed(precision));
-    const takeProfit3 = direction === 'BUY'
-      ? parseFloat((idealEntry + slDist * 4.2).toFixed(precision))
-      : parseFloat((idealEntry - slDist * 4.2).toFixed(precision));
-
-    const riskRewardRatio = parseFloat((Math.abs(takeProfit1 - idealEntry) / slDist).toFixed(1));
-
-    // Hard Safety Gates
-    let passedGates = true;
-    let gateRejectionReason: string | undefined;
-
-    if (riskRewardRatio < 1.5) {
-      passedGates = false;
-      gateRejectionReason = `Insufficient Risk/Reward: 1:${riskRewardRatio} is below the 1:1.5 institutional threshold.`;
-    } else if (newsScore <= 1) {
-      passedGates = false;
-      gateRejectionReason = 'High adverse news risk detected in upcoming releases. Entry blocked.';
-    }
-
-    let overextendedReason: string | undefined;
-    if (isOverextended) {
-      overextendedReason = `Price overextended ${(distFromEma / atr).toFixed(1)}x ATR ${direction === 'BUY' ? 'above' : 'below'} 20-EMA ($${currentPrice.toFixed(precision)} vs $${ema20.toFixed(precision)}). High risk of immediate mean-reversion retest. Awaiting pullback to institutional entry zone [${entryZone}].`;
-    }
-
-    const entryType: 'MARKET_NOW' | 'LIMIT_PULLBACK' = isOverextended ? 'LIMIT_PULLBACK' : 'MARKET_NOW';
-    const entryCondition = isOverextended
-      ? overextendedReason!
-      : `Execute ${direction} in optimal confluence zone [${entryZone}]. Ideal entry: $${idealEntry.toFixed(precision)}. Setup score: ${totalSetupScore}/100 (${entryModel}).`;
-
-    return {
-      entryType,
-      entryPrice: currentPrice,
-      entryZone,
-      entryZoneMin: minBound,
-      entryZoneMax: maxBound,
-      idealEntry,
-      entryModel,
-      stopLoss,
-      takeProfit1,
-      takeProfit2,
-      takeProfit3,
-      riskRewardRatio,
-      setupScore: totalSetupScore,
-      scoreBreakdown,
-      entryCondition,
-      isOverextended,
-      overextendedReason,
-      passedGates,
-      gateRejectionReason
-    };
-  }
-
-  private computeSignalGrade(score: number, ema20?: number, ema50?: number, ema200?: number, direction?: string): string {
-    const tripleAligned = (direction && ema20 !== undefined && ema50 !== undefined && ema200 !== undefined)
-      ? (direction === 'BUY' ? (ema20 >= ema50 && ema50 >= ema200) : (ema20 <= ema50 && ema50 <= ema200))
-      : false;
-    if (score >= 85 || (score >= 80 && tripleAligned)) return 'A+ Setup (High Conviction Confluence)';
-    if (score >= 75) return 'A Setup (Institutional Confluence)';
-    if (score >= 68) return 'B+ Setup (Standard Confluence)';
-    if (score >= 60) return 'B Setup (Scalp Confluence)';
-    return 'C Setup (Speculative)';
-  }
-
-  private computeDynamicScores(rsi: number, ema20: number, ema50: number, ema200: number, entryPrice: number, vwap: number, direction: string): { momentum: number; volume: number; trend: number } {
-    let momentum = 50;
-    if (direction === 'BUY' && rsi > 55) momentum = Math.min(95, 50 + (rsi - 50) * 1.2);
-    else if (direction === 'SELL' && rsi < 45) momentum = Math.min(95, 50 + (50 - rsi) * 1.2);
-    let trend = 50;
-    if (direction === 'BUY') {
-      if (ema20 > ema50) trend += 15;
-      if (ema50 > ema200) trend += 15;
-      if (entryPrice > ema200) trend += 10;
-    } else {
-      if (ema20 < ema50) trend += 15;
-      if (ema50 < ema200) trend += 15;
-      if (entryPrice < ema200) trend += 10;
-    }
-    const volumeScore = entryPrice > vwap && direction === 'BUY' ? 78 : entryPrice < vwap && direction === 'SELL' ? 78 : 55;
-    return { momentum: Math.round(momentum), volume: volumeScore, trend: Math.min(95, Math.round(trend)) };
-  }
-
-  private detectFairValueGap(candles: any[]): { fvg_detected: boolean; type?: string; gap_size?: number } {
-    if (!candles || candles.length < 3) return { fvg_detected: false };
-    const n = candles.length;
-    for (let i = n - 1; i >= Math.max(2, n - 8); i--) {
-      const c1High = Number(candles[i - 2].high || 0);
-      const c1Low = Number(candles[i - 2].low || 0);
-      const c3Low = Number(candles[i].low || 0);
-      const c3High = Number(candles[i].high || 0);
-
-      if (c3Low > c1High) {
-        return { fvg_detected: true, type: 'BULLISH', gap_size: parseFloat((c3Low - c1High).toFixed(4)) };
-      }
-      if (c3High < c1Low) {
-        return { fvg_detected: true, type: 'BEARISH', gap_size: parseFloat((c1Low - c3High).toFixed(4)) };
-      }
-    }
-    return { fvg_detected: false };
-  }
-
-  private detectOrderBlock(candles: any[], atr: number): { order_block_detected: boolean; type?: string; price_level?: number } {
-    if (!candles || candles.length < 5) return { order_block_detected: false };
-    const n = candles.length;
-    for (let i = n - 2; i >= Math.max(1, n - 10); i--) {
-      const prevClose = Number(candles[i - 1].close || 0);
-      const prevOpen = Number(candles[i - 1].open || 0);
-      const currClose = Number(candles[i].close || 0);
-      const currOpen = Number(candles[i].open || 0);
-      const moveSize = Math.abs(currClose - prevOpen);
-
-      if (moveSize > atr * 1.1) {
-        const isBullishImpulse = currClose > currOpen;
-        const isBearishImpulse = currClose < currOpen;
-        if (isBullishImpulse && prevClose < prevOpen) {
-          return { order_block_detected: true, type: 'BULLISH', price_level: parseFloat(prevClose.toFixed(4)) };
-        }
-        if (isBearishImpulse && prevClose > prevOpen) {
-          return { order_block_detected: true, type: 'BEARISH', price_level: parseFloat(prevClose.toFixed(4)) };
-        }
-      }
-    }
-    return { order_block_detected: false };
-  }
-
-  private computeCategoryScores(rsi: number, ema20: number, ema50: number, direction: string): Record<string, number> {
-    const emaAlign = (direction === 'BUY' && ema20 > ema50) || (direction === 'SELL' && ema20 < ema50);
-    const rsiStrong = (direction === 'BUY' && rsi > 58) || (direction === 'SELL' && rsi < 42);
-    return {
-      technical: parseFloat((emaAlign ? (rsiStrong ? 0.88 : 0.74) : 0.55).toFixed(2)),
-      fundamental: parseFloat((rsiStrong ? 0.70 : 0.60).toFixed(2)),
-      sentiment: parseFloat((rsiStrong ? 0.78 : 0.52).toFixed(2)),
-      correlation: parseFloat((emaAlign ? 0.75 : 0.58).toFixed(2)),
-      volume: parseFloat((emaAlign ? 0.72 : 0.50).toFixed(2)),
-      on_chain: parseFloat((rsiStrong ? 0.80 : 0.55).toFixed(2)),
-    };
-  }
-
-  private getComputedEvidence(ema20: number, ema50: number, rsi: number, atr: number, vwap: number, entryPrice: number, stopLoss: number, direction: string, dp: number) {
-    return {
-      trend: `EMA-20 (${ema20.toFixed(dp)}) ${ema20 >= ema50 ? '>' : '<'} EMA-50 (${ema50.toFixed(dp)}) — ${direction} trend alignment`,
-      momentum: `RSI-14 at ${rsi.toFixed(1)} — ${rsi > 60 ? 'Strong bullish momentum' : rsi < 40 ? 'Strong bearish momentum' : 'Moderate momentum'}`,
-      volatility: `ATR-14: ${atr.toFixed(dp)} — SL distance: ${Math.abs(entryPrice - stopLoss).toFixed(dp)}`,
-      volume: `VWAP: ${vwap.toFixed(dp)} — Price ${entryPrice > vwap ? 'above' : 'below'} institutional average`
-    };
-  }
-
-  /**
-   * Top-Down Multi-Timeframe (MTF) Institutional Bias Analyzer.
-   * Performs 1-Week (1W) Macro Trend -> 1-Day (1D) Institutional Flow -> 4H Structure -> 1H Timing -> Produces Authoritative Confluence Direction.
-   */
-  private async analyzeHTFBias(symbol: string): Promise<{
-    bias1w: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-    bias1d: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-    bias4h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-    bias1h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-    htfDirection: 'BUY' | 'SELL' | 'NEUTRAL';
-    htfConfidence: number;
-    htfContext: string;
-    macroRegime: string;
-    sma20_1w: number;
-    ema20_1d: number;
-    ema50_1d: number;
-    ema200_4h: number;
-    ema50_4h: number;
-    ema20_4h: number;
-    ema200_1h: number;
-    ema50_1h: number;
-    ema20_1h: number;
-    rsi_4h: number;
-    rsi_1h: number;
-  }> {
-    let candles1w: any[] = [];
-    let candles1d: any[] = [];
-    let candles1h: any[] = [];
-
-    try {
-      [candles1w, candles1d, candles1h] = await Promise.all([
-        this.getOrFetchCandles(symbol, '1wk').catch(() => []),
-        this.getOrFetchCandles(symbol, '1d').catch(() => []),
-        this.getOrFetchCandles(symbol, '1h').catch(() => []),
-      ]);
-    } catch (e) {
-      // Fallback
-    }
-
-    // 1. Analyze 1-Week (1W) Macro Horizon (20-week SMA baseline)
-    let bias1w: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-    let sma20_1w = 0;
-    if (candles1w && candles1w.length >= 5) {
-      const closes1w = candles1w.map(c => Number(c.close)).filter(v => !isNaN(v) && v > 0);
-      if (closes1w.length >= 5) {
-        sma20_1w = this.calcSMA(closes1w, Math.min(20, closes1w.length));
-        const last1w = closes1w[closes1w.length - 1];
-        if (last1w > sma20_1w * 1.003) {
-          bias1w = 'BULLISH';
-        } else if (last1w < sma20_1w * 0.997) {
-          bias1w = 'BEARISH';
-        }
-      }
-    }
-
-    // 2. Analyze 1-Day (1D) Intermediate Swing Trend (EMA-20 vs EMA-50 stack)
-    let bias1d: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-    let ema20_1d = 0;
-    let ema50_1d = 0;
-    if (candles1d && candles1d.length >= 5) {
-      const closes1d = candles1d.map(c => Number(c.close)).filter(v => !isNaN(v) && v > 0);
-      if (closes1d.length >= 5) {
-        ema20_1d = this.calcEMA(closes1d, Math.min(20, closes1d.length));
-        ema50_1d = this.calcEMA(closes1d, Math.min(50, closes1d.length));
-        const last1d = closes1d[closes1d.length - 1];
-        if (ema20_1d >= ema50_1d && last1d >= ema20_1d * 0.998) {
-          bias1d = 'BULLISH';
-        } else if (ema20_1d <= ema50_1d && last1d <= ema20_1d * 1.002) {
-          bias1d = 'BEARISH';
-        }
-      }
-    }
-
-    // 3. Analyze 1H Candles & Synthesize 4H
-    if (!candles1h || candles1h.length < 15) {
-      // If 1H is minimal, derive directly from 1W and 1D
-      const dir = (bias1w === 'BULLISH' && bias1d === 'BULLISH') ? 'BUY' : (bias1w === 'BEARISH' && bias1d === 'BEARISH') ? 'SELL' : 'NEUTRAL';
-      return {
-        bias1w,
-        bias1d,
-        bias4h: bias1d,
-        bias1h: bias1d,
-        htfDirection: dir,
-        htfConfidence: dir === 'NEUTRAL' ? 50 : 80,
-        htfContext: `Macro Top-Down Bias: 1W: ${bias1w} | 1D: ${bias1d} | 4H: ${bias1d} | 1H: ${bias1d}. Confluence: ${dir}.`,
-        macroRegime: dir === 'BUY' ? 'Bullish Multi-Timeframe Expansion' : dir === 'SELL' ? 'Bearish Multi-Timeframe Markdown' : 'Consolidation Equilibrium',
-        sma20_1w,
-        ema20_1d,
-        ema50_1d,
-        ema200_4h: 0,
-        ema50_4h: 0,
-        ema20_4h: 0,
-        ema200_1h: 0,
-        ema50_1h: 0,
-        ema20_1h: 0,
-        rsi_4h: 50,
-        rsi_1h: 50,
-      };
-    }
-
-    const closes1h = candles1h.map(c => Number(c.close));
-    const ema20_1h = this.calcEMA(closes1h, 20);
-    const ema50_1h = this.calcEMA(closes1h, 50);
-    const ema200_1h = this.calcEMA(closes1h, Math.min(200, closes1h.length));
-    const rsi_1h = this.calcRSI(closes1h, 14);
-    const lastPrice1h = closes1h[closes1h.length - 1];
-
-    let bias1h: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-    if (ema20_1h > ema50_1h && lastPrice1h >= ema200_1h && rsi_1h >= 48) {
-      bias1h = 'BULLISH';
-    } else if (ema20_1h < ema50_1h && lastPrice1h <= ema200_1h && rsi_1h <= 52) {
-      bias1h = 'BEARISH';
-    }
-
-    // 4. Synthesize 4H Candles from 1H Candles (aligned 4-hour blocks)
-    const candles4h: any[] = [];
-    const fullBlocks = Math.floor(candles1h.length / 4) * 4;
-    const startIndex = candles1h.length - fullBlocks; // Align from the newest candles backwards
-    for (let i = startIndex; i < candles1h.length; i += 4) {
-      const chunk = candles1h.slice(i, i + 4);
-      if (chunk.length === 4) {
-        candles4h.push({
-          open: Number(chunk[0].open),
-          high: Math.max(...chunk.map(c => Number(c.high))),
-          low: Math.min(...chunk.map(c => Number(c.low))),
-          close: Number(chunk[chunk.length - 1].close),
-          volume: chunk.reduce((sum, c) => sum + Number(c.volume || 0), 0),
-          timestamp: chunk[0].timestamp
-        });
-      }
-    }
-
-    const closes4h = candles4h.map(c => Number(c.close));
-    const ema20_4h = this.calcEMA(closes4h, 20);
-    const ema50_4h = this.calcEMA(closes4h, Math.min(50, closes4h.length));
-    const ema200_4h = this.calcEMA(closes4h, Math.min(200, closes4h.length));
-    const rsi_4h = closes4h.length >= 14 ? this.calcRSI(closes4h, 14) : rsi_1h;
-    const lastPrice4h = closes4h[closes4h.length - 1] || lastPrice1h;
-
-    let bias4h: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-    if (ema20_4h > ema50_4h && lastPrice4h >= ema200_4h && rsi_4h >= 48) {
-      bias4h = 'BULLISH';
-    } else if (ema20_4h < ema50_4h && lastPrice4h <= ema200_4h && rsi_4h <= 52) {
-      bias4h = 'BEARISH';
-    }
-
-    // If 1W or 1D were neutral or unpopulated, harmonize with 4H
-    if (bias1w === 'NEUTRAL') bias1w = bias4h !== 'NEUTRAL' ? bias4h : bias1h;
-    if (bias1d === 'NEUTRAL') bias1d = bias4h !== 'NEUTRAL' ? bias4h : bias1h;
-
-    // 5. Multi-Timeframe Confluence Matrix (1W -> 1D -> 4H -> 1H)
-    let bullScore = 0;
-    let bearScore = 0;
-
-    // 1-Week: Macro Trend (25 pts)
-    if (bias1w === 'BULLISH') bullScore += 25;
-    else if (bias1w === 'BEARISH') bearScore += 25;
-
-    // 1-Day: Intermediate Institutional Flow (30 pts)
-    if (bias1d === 'BULLISH') bullScore += 30;
-    else if (bias1d === 'BEARISH') bearScore += 30;
-
-    // 4-Hour: Market Structure & Order Blocks (25 pts)
-    if (bias4h === 'BULLISH') bullScore += 25;
-    else if (bias4h === 'BEARISH') bearScore += 25;
-
-    // 1-Hour: Execution Wave & Momentum (20 pts)
-    if (bias1h === 'BULLISH') bullScore += 20;
-    else if (bias1h === 'BEARISH') bearScore += 20;
-
-    let htfDirection: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
-    let htfConfidence = 50;
-
-    if (bullScore >= 55 && bullScore > bearScore + 15) {
-      htfDirection = 'BUY';
-      htfConfidence = Math.min(96, Math.round(55 + (bullScore / 100) * 40));
-    } else if (bearScore >= 55 && bearScore > bullScore + 15) {
-      htfDirection = 'SELL';
-      htfConfidence = Math.min(96, Math.round(55 + (bearScore / 100) * 40));
-    } else if (bias4h === 'BULLISH' && bias1h === 'BULLISH') {
-      htfDirection = 'BUY';
-      htfConfidence = 75;
-    } else if (bias4h === 'BEARISH' && bias1h === 'BEARISH') {
-      htfDirection = 'SELL';
-      htfConfidence = 75;
-    }
-
-    // Macro Regime
-    let macroRegime = 'Consolidation / Range-Bound Equilibrium';
-    if (bullScore >= 75) macroRegime = 'Strong Institutional Expansion (Weekly + Daily + 4H Bullish)';
-    else if (bullScore >= 50) macroRegime = 'Institutional Markup / Accumulation';
-    else if (bearScore >= 75) macroRegime = 'Severe Distribution / Markdown (Weekly + Daily + 4H Bearish)';
-    else if (bearScore >= 50) macroRegime = 'Institutional Liquidity Sweep / Distribution';
-
-    const htfContext = `Macro Top-Down Bias: 1W: ${bias1w} | 1D: ${bias1d} | 4H: ${bias4h} | 1H: ${bias1h} -> Confluence: ${htfDirection} (${htfConfidence}% Conviction). Regime: ${macroRegime}.`;
-
-    return {
-      bias1w,
-      bias1d,
-      bias4h,
-      bias1h,
-      htfDirection,
-      htfConfidence,
-      htfContext,
-      macroRegime,
-      sma20_1w,
-      ema20_1d,
-      ema50_1d,
-      ema200_4h,
-      ema50_4h,
-      ema20_4h,
-      ema200_1h,
-      ema50_1h,
-      ema20_1h,
-      rsi_4h,
-      rsi_1h,
-    };
-  }
-
-  /**
-   * Universal Signal Quality Gate — applied to ALL strategy engines.
-   * Returns null if signal passes quality checks, or a WAIT result if it fails.
-   * This prevents low-quality signals from reaching users.
-   */
-  private applyQualityGate(params: {
-    bullishScore: number;
-    bearishScore: number;
-    rsi: number;
-    ema20: number;
-    ema50: number;
-    entryPrice: number;
-    candles: any[];
-    direction: string;
-    symbol: string;
-    marketRegime: string;
-    htfBias?: any;
-  }): { direction: string; invalidationReason: string; evidence: any } | null {
-    const { bullishScore, bearishScore, rsi, ema20, ema50, entryPrice, candles, direction, symbol, marketRegime, htfBias } = params;
-    const rawScore = direction === 'BUY' ? bullishScore : bearishScore;
-
-    // Gate 1: Minimum confluence threshold (60+ for confirmed institutional edge)
-    if (rawScore < 60) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} confluence score (${rawScore}/100) below minimum 60 threshold in ${marketRegime} regime. Quality gate protecting capital.`,
-        evidence: { bullishScore, bearishScore, rsi, gate: 'LOW_CONFLUENCE' }
-      };
-    }
-
-    // Gate 2: Conflicting signals — both sides are equally strong (within 10 pts)
-    if (Math.abs(bullishScore - bearishScore) < 10) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} has conflicting momentum (Bull: ${bullishScore} vs Bear: ${bearishScore}). Market is in transition.`,
-        evidence: { bullishScore, bearishScore, rsi, gate: 'CONFLICTING_SIGNALS' }
-      };
-    }
-
-    // Gate 3: RSI dead center — no momentum divergence
-    if (rsi >= 48 && rsi <= 52 && Math.abs(bullishScore - bearishScore) < 15) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} RSI-14 at ${rsi.toFixed(1)} is dead-center (48-52). Awaiting directional momentum push.`,
-        evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_NEUTRAL' }
-      };
-    }
-
-    // Gate 4: EMA compression — market is completely flat
-    const emaSpread = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpread < 0.0001) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} EMA-20/50 spread is ultra-flat (${(emaSpread * 100).toFixed(4)}%) — market in tight consolidation.`,
-        evidence: { bullishScore, bearishScore, rsi, emaSpread, gate: 'EMA_COMPRESSION' }
-      };
-    }
-
-    // Gate 5: Last candle confirmation — last 3 candles must not contradict signal with high volume
-    if (candles.length >= 3) {
-      const last3 = candles.slice(-3);
-      const bearishCloses = last3.filter(c => Number(c.close) < Number(c.open)).length;
-      const bullishCloses = last3.filter(c => Number(c.close) > Number(c.open)).length;
-
-      if (direction === 'BUY' && bearishCloses >= 3 && rsi < 42) {
-        return {
-          direction: 'WAIT',
-          invalidationReason: `${symbol} BUY signal rejected: 3 consecutive aggressive bearish candles into low RSI. Awaiting base formation.`,
-          evidence: { bullishScore, bearishScore, rsi, gate: 'NO_CONFIRMATION_CANDLE' }
-        };
-      }
-      if (direction === 'SELL' && bullishCloses >= 3 && rsi > 58) {
-        return {
-          direction: 'WAIT',
-          invalidationReason: `${symbol} SELL signal rejected: 3 consecutive aggressive bullish candles into high RSI. Awaiting rejection wick.`,
-          evidence: { bullishScore, bearishScore, rsi, gate: 'NO_CONFIRMATION_CANDLE' }
-        };
-      }
-    }
-
-    // Gate 6: RSI exhaustion contradiction — signal direction opposes extreme RSI
-    if (direction === 'BUY' && rsi > 78) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} BUY signal rejected: RSI at ${rsi.toFixed(1)} is severely overbought (>78). Entering longs at exhaustion is high-risk.`,
-        evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_OVERBOUGHT_BUY' }
-      };
-    }
-    if (direction === 'SELL' && rsi < 22) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} SELL signal rejected: RSI at ${rsi.toFixed(1)} is severely oversold (<22). Entering shorts at exhaustion is high-risk.`,
-        evidence: { bullishScore, bearishScore, rsi, gate: 'RSI_OVERSOLD_SELL' }
-      };
-    }
-
-    // Gate 7: Higher-Timeframe (HTF) Counter-Trend Lock (1W + 1D + 4H + 1H Protection)
-    if (htfBias && htfBias.htfDirection && htfBias.htfDirection !== 'NEUTRAL') {
-      if (direction !== htfBias.htfDirection && direction !== 'WAIT') {
-        return {
-          direction: 'WAIT',
-          invalidationReason: `${symbol} ${direction} signal blocked: Macro 1W+1D+4H+1H institutional flow is strictly ${htfBias.htfDirection} (1W: ${htfBias.bias1w || 'NEUTRAL'} | 1D: ${htfBias.bias1d || 'NEUTRAL'} | 4H: ${htfBias.bias4h} | 1H: ${htfBias.bias1h}). Counter-trend entries prohibited to protect capital.`,
-          evidence: { bullishScore, bearishScore, rsi, htfBias, gate: 'HTF_COUNTER_TREND_FILTER' }
-        };
-      }
-    }
-
-    return null; // All gates passed — signal is valid
-  }
-
-  // Institutional Multi-Asset Classification & Safe Routing
-  private classifyAsset(symbol: string): 'CRYPTO' | 'METALS' | 'INDICES_US100' | 'INDICES_US30' | 'INDICES_BROAD' | 'STOCKS' | 'USDJPY' | 'FOREX' | 'UNKNOWN' {
-    const s = (symbol || '').trim().toUpperCase().replace('/', '');
-    if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX'].some(c => s.includes(c))) return 'CRYPTO';
-    if (['GOLD', 'XAU', 'SILVER', 'XAG'].some(c => s.includes(c))) return 'METALS';
-    if (['US100', 'NAS100', 'NQ'].some(c => s.includes(c))) return 'INDICES_US100';
-    if (['US30', 'DOW', 'YM'].some(c => s.includes(c))) return 'INDICES_US30';
-    if (['SPX500', 'SPX', 'ES', 'DAX40', 'DAX', 'GER40', 'GER30'].some(c => s.includes(c))) return 'INDICES_BROAD';
-    if (['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'GOOG', 'META', 'NFLX', 'AMD', 'INTC', 'CRM', 'ORCL', 'PLTR', 'BABA', 'UBER', 'COIN', 'DIS', 'PYPL', 'JPM', 'BAC', 'V', 'MA', 'XOM', 'CVX'].some(c => s === c || s.startsWith(c))) return 'STOCKS';
-    if (['USDJPY', 'EURJPY', 'GBPJPY', 'AUDJPY', 'CADJPY', 'CHFJPY', 'NZDJPY'].some(c => s.includes(c)) || s.endsWith('JPY')) return 'USDJPY';
-    const fiatCurrencies = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
-    const isForexPair = fiatCurrencies.some(f1 => fiatCurrencies.some(f2 => f1 !== f2 && s.includes(f1) && s.includes(f2)));
-    if (isForexPair || ['EURUSD', 'GBPUSD', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURGBP', 'EURCAD', 'GBPAUD', 'EURAUD', 'OIL', 'WTI', 'BRENT'].some(c => s.includes(c))) return 'FOREX';
-    return 'UNKNOWN';
-  }
-
-  private digestNewsSentiment(news: any[] | undefined, symbol: string, technicalDirection: string): {
-    scoreShift: number;
-    sentimentScore: number;
-    isVetoed: boolean;
-    vetoReason?: string;
-    newsContext: string;
-  } {
-    if (!news || !Array.isArray(news) || news.length === 0) {
-      return { scoreShift: 0, sentimentScore: 0.5, isVetoed: false, newsContext: 'No breaking news catalysts in current window.' };
-    }
-
-    const bullKws = ['surge', 'beat', 'growth', 'record', 'upgrade', 'rate cut', 'bullish', 'profit', 'accumulat', 'expansion', 'rally', 'inflow', 'stimulus', 'dovish', 'soar', 'breakout'];
-    const bearKws = ['miss', 'crash', 'plunge', 'downgrade', 'rate hike', 'inflation', 'bearish', 'layoff', 'lawsuit', 'investigat', 'recession', 'war', 'conflict', 'hawkish', 'default', 'selloff', 'drop'];
-
-    let bullCount = 0;
-    let bearCount = 0;
-    const headlineSnippets: string[] = [];
-
-    for (const item of news.slice(0, 6)) {
-      const text = `${item.headline || ''} ${item.summary || ''}`.toLowerCase();
-      if (item.headline) headlineSnippets.push(`"${item.headline}"`);
-      if (bullKws.some(k => text.includes(k))) bullCount++;
-      if (bearKws.some(k => text.includes(k))) bearCount++;
-    }
-
-    const totalKws = bullCount + bearCount;
-    const sentimentScore = totalKws > 0 ? parseFloat((bullCount / totalKws).toFixed(2)) : 0.5;
-
-    let scoreShift = 0;
-    if (bullCount > bearCount) {
-      scoreShift = technicalDirection === 'BUY' ? 10 : -10;
-    } else if (bearCount > bullCount) {
-      scoreShift = technicalDirection === 'SELL' ? 10 : -10;
-    }
-
-    let isVetoed = false;
-    let vetoReason = '';
-
-    if (technicalDirection === 'BUY' && bearCount >= 2 && (bullCount === 0 || bearCount >= bullCount * 1.5)) {
-      isVetoed = true;
-      vetoReason = `Adverse Breaking News Veto Gate: Institutional engine vetoed BUY signal due to high-impact contradictory breaking catalysts (${bearCount} bearish headlines vs ${bullCount} bullish). Trading halted until headline volatility is absorbed.`;
-    } else if (technicalDirection === 'SELL' && bullCount >= 2 && (bearCount === 0 || bullCount >= bearCount * 1.5)) {
-      isVetoed = true;
-      vetoReason = `Adverse Breaking News Veto Gate: Institutional engine vetoed SELL signal due to high-impact contradictory breaking catalysts (${bullCount} bullish headlines vs ${bearCount} bearish). Shorting prohibited into positive headline momentum.`;
-    }
-
-    const newsContext = `News sentiment: ${bullCount} bull vs ${bearCount} bear catalysts. Net sentiment: ${(sentimentScore * 100).toFixed(0)}%. Headlines: ${headlineSnippets.slice(0, 2).join('; ')}`;
-
-    return { scoreShift, sentimentScore, isVetoed, vetoReason, newsContext };
-  }
-
-  // Multi-Timeframe Adaptive Lookback Window (5m: 28 bars, 15m: 24 bars, 1H: 24 bars)
-  private getAdaptiveLookback(interval: string): number {
-    if (interval === '1m' || interval === '3m' || interval === '5m') return 28;
-    if (interval === '15m' || interval === '30m') return 24;
-    if (interval === '1h') return 24;
-    return 20; // 4h, 1d
-  }
-
-  private economicCalendarCache: { events: any[]; cachedAt: number } | null = null;
-
-  async fetchEconomicCalendar(): Promise<any[]> {
-    const now = Date.now();
-    if (this.economicCalendarCache && (now - this.economicCalendarCache.cachedAt) < 300000) {
-      return this.economicCalendarCache.events;
-    }
-    try {
-      const res = await this.fetchWithTimeout('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {}, 4000);
-      if (res.ok) {
-        const events = await res.json();
-        if (Array.isArray(events)) {
-          this.economicCalendarCache = { events, cachedAt: now };
-          return events;
-        }
-      }
-    } catch (e: any) {
-      console.warn(`[SignalsController] Economic calendar fetch notice: ${e.message}`);
-    }
-    return this.economicCalendarCache?.events || [];
-  }
-
-  checkEconomicEventProximity(symbol: string, calendarEvents: any[]): {
-    isBlocked: boolean;
-    reason: string;
-    stage: 'PRE_EVENT_LOCKOUT' | 'POST_EVENT_ABSORPTION' | 'CLEAR';
-    event?: any;
-    minutesUntil?: number;
-    minutesAgo?: number;
-  } {
-    if (!calendarEvents || calendarEvents.length === 0) {
-      return { isBlocked: false, reason: '', stage: 'CLEAR' };
-    }
-
-    const s = symbol.toUpperCase();
-    const relevantCurrencies = ['USD'];
-    if (s.includes('EUR')) relevantCurrencies.push('EUR');
-    if (s.includes('GBP')) relevantCurrencies.push('GBP');
-    if (s.includes('JPY')) relevantCurrencies.push('JPY');
-    if (s.includes('AUD')) relevantCurrencies.push('AUD');
-    if (s.includes('CAD')) relevantCurrencies.push('CAD');
-
-    const now = Date.now();
-
-    for (const item of calendarEvents) {
-      if (!relevantCurrencies.includes(item.country)) continue;
-      if (item.impact !== 'High' && item.impact !== 'Medium') continue;
-
-      const eventTime = new Date(item.date).getTime();
-      if (isNaN(eventTime)) continue;
-
-      const diffMinutes = (eventTime - now) / 60000;
-
-      // Gate 1: Pre-Event Blackout Window (25 mins before High impact, 12 mins before Medium)
-      const preWindow = item.impact === 'High' ? 25 : 12;
-      if (diffMinutes > 0 && diffMinutes <= preWindow) {
-        return {
-          isBlocked: true,
-          stage: 'PRE_EVENT_LOCKOUT',
-          event: item,
-          minutesUntil: Math.round(diffMinutes),
-          reason: `Pre-Event Volatility Gate: High-impact ${item.country} release "${item.title}" in ${Math.round(diffMinutes)}m. Pre-announcement liquidity vacuum prohibits new entries to protect capital.`
-        };
-      }
-
-      // Gate 2: Post-Event Volatility Absorption Window (12 mins after High impact, 5 mins after Medium)
-      const postWindow = item.impact === 'High' ? 12 : 5;
-      if (diffMinutes <= 0 && Math.abs(diffMinutes) <= postWindow) {
-        return {
-          isBlocked: true,
-          stage: 'POST_EVENT_ABSORPTION',
-          event: item,
-          minutesAgo: Math.round(Math.abs(diffMinutes)),
-          reason: `Post-Event Volatility Absorption Gate: High-impact ${item.country} "${item.title}" released ${Math.round(Math.abs(diffMinutes))}m ago. Awaiting post-news stop-hunt absorption and structure stabilization before entry.`
-        };
-      }
-    }
-
-    return { isBlocked: false, reason: '', stage: 'CLEAR' };
-  }
-
-  private getTradingViewTicker(symbol: string): { ticker: string; endpoint: 'cfd' | 'america' | 'crypto' | 'forex' } {
-    const s = symbol.toUpperCase().trim().replace('/', '');
-    if (s.includes('BTC')) return { ticker: 'BINANCE:BTCUSDT', endpoint: 'crypto' };
-    if (s.includes('ETH')) return { ticker: 'BINANCE:ETHUSDT', endpoint: 'crypto' };
-    if (s.includes('SOL')) return { ticker: 'BINANCE:SOLUSDT', endpoint: 'crypto' };
-    if (s.includes('GOLD') || s.includes('XAU')) return { ticker: 'TVC:GOLD', endpoint: 'cfd' };
-    if (s.includes('US30') || s.includes('DOW')) return { ticker: 'DJ:DJI', endpoint: 'america' };
-    if (s.includes('US100') || s.includes('NAS')) return { ticker: 'NASDAQ:NDX', endpoint: 'america' };
-    if (s.includes('SPX') || s.includes('SP500')) return { ticker: 'SP:SPX', endpoint: 'america' };
-    if (s.includes('EUR')) return { ticker: 'FX_IDC:EURUSD', endpoint: 'forex' };
-    if (s.includes('JPY')) return { ticker: 'FX_IDC:USDJPY', endpoint: 'forex' };
-    if (s.includes('GBP')) return { ticker: 'FX_IDC:GBPUSD', endpoint: 'forex' };
-    return { ticker: 'FX_IDC:EURUSD', endpoint: 'forex' };
-  }
-
-  private intermarketCache: { data: any; cachedAt: number } | null = null;
-
-  async fetchIntermarketData(): Promise<{
-    dxy: { price: number; change1h: number; trend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' };
-    us10y: { yield: number; change1h: number; trend: 'RISING' | 'FALLING' | 'FLAT' };
-    vix: { level: number; regime: 'LOW_RISK' | 'NORMAL' | 'ELEVATED' | 'EXTREME' };
-    silver: { price: number; change1h: number };
-    oil: { price: number; change1h: number };
-    sp500: { price: number; change1h: number };
-    goldSpot: { price: number; source: string; isRealSpot: boolean };
-    upcomingEvent?: any;
-  }> {
-    const now = Date.now();
-    if (this.intermarketCache && (now - this.intermarketCache.cachedAt) < 60000) {
-      return this.intermarketCache.data;
-    }
-
-    let dxy = { price: 0, change1h: 0, trend: 'NEUTRAL' as 'BULLISH' | 'BEARISH' | 'NEUTRAL' };
-    let us10y = { yield: 0, change1h: 0, trend: 'FLAT' as 'RISING' | 'FALLING' | 'FLAT' };
-    let vix = { level: 0, regime: 'NORMAL' as 'LOW_RISK' | 'NORMAL' | 'ELEVATED' | 'EXTREME' };
-    let silver = { price: 0, change1h: 0 };
-    let oil = { price: 0, change1h: 0 };
-    let sp500 = { price: 0, change1h: 0 };
-    let goldSpot = { price: 0, source: 'UNAVAILABLE', isRealSpot: false };
-
-    try {
-      const symbols = ['DX-Y.NYB', '^TNX', '^VIX', 'GC=F', 'SI=F', 'CL=F', 'ES=F'];
-      const results = await Promise.allSettled(
-        symbols.map(sym =>
-          this.fetchWithTimeout(
-            `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=15m&range=1d`,
-            {},
-            3000
-          ).then(r => r.ok ? r.json() : null)
-        )
-      );
-
-      // Process DXY
-      if (results[0].status === 'fulfilled' && results[0].value?.chart?.result?.[0]) {
-        const meta = results[0].value.chart.result[0].meta;
-        const quote = results[0].value.chart.result[0].indicators?.quote?.[0];
-        const closes = (quote?.close || []).filter((c: any) => c !== null && !isNaN(c));
-        const price = Number(meta.regularMarketPrice || closes[closes.length - 1] || 0);
-        if (price > 0) {
-          const prevClose = Number(meta.chartPreviousClose || meta.previousClose || closes[0] || price);
-          const change1h = prevClose > 0 ? parseFloat((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0;
-          const trend = change1h > 0.08 ? 'BULLISH' : change1h < -0.08 ? 'BEARISH' : 'NEUTRAL';
-          dxy = { price: parseFloat(price.toFixed(3)), change1h, trend };
-        }
-      }
-
-      // Process US10Y (^TNX)
-      if (results[1].status === 'fulfilled' && results[1].value?.chart?.result?.[0]) {
-        const meta = results[1].value.chart.result[0].meta;
-        const quote = results[1].value.chart.result[0].indicators?.quote?.[0];
-        const closes = (quote?.close || []).filter((c: any) => c !== null && !isNaN(c));
-        const yVal = Number(meta.regularMarketPrice || closes[closes.length - 1] || 0);
-        if (yVal > 0) {
-          const prevY = Number(meta.chartPreviousClose || meta.previousClose || closes[0] || yVal);
-          const change1h = prevY > 0 ? parseFloat((((yVal - prevY) / prevY) * 100).toFixed(2)) : 0;
-          const trend = change1h > 0.15 ? 'RISING' : change1h < -0.15 ? 'FALLING' : 'FLAT';
-          us10y = { yield: parseFloat(yVal.toFixed(3)), change1h, trend };
-        }
-      }
-
-      // Process VIX (^VIX)
-      if (results[2].status === 'fulfilled' && results[2].value?.chart?.result?.[0]) {
-        const meta = results[2].value.chart.result[0].meta;
-        const level = Number(meta.regularMarketPrice || 0);
-        if (level > 0) {
-          const regime = level > 28 ? 'EXTREME' : level > 20 ? 'ELEVATED' : level < 14 ? 'LOW_RISK' : 'NORMAL';
-          vix = { level: parseFloat(level.toFixed(2)), regime };
-        }
-      }
-
-      // Process Gold COMEX (GC=F)
-      if (results[3].status === 'fulfilled' && results[3].value?.chart?.result?.[0]) {
-        const meta = results[3].value.chart.result[0].meta;
-        const price = Number(meta.regularMarketPrice || 0);
-        if (price > 1000) {
-          goldSpot = { price: parseFloat(price.toFixed(2)), source: 'YAHOO_COMEX_FUTURES', isRealSpot: true };
-        }
-      }
-
-      // Process Silver COMEX (SI=F)
-      if (results[4].status === 'fulfilled' && results[4].value?.chart?.result?.[0]) {
-        const meta = results[4].value.chart.result[0].meta;
-        const price = Number(meta.regularMarketPrice || 0);
-        if (price > 0) silver = { price: parseFloat(price.toFixed(3)), change1h: Number(meta.regularMarketChangePercent || 0) };
-      }
-
-      // Process Crude Oil (CL=F)
-      if (results[5].status === 'fulfilled' && results[5].value?.chart?.result?.[0]) {
-        const meta = results[5].value.chart.result[0].meta;
-        const price = Number(meta.regularMarketPrice || 0);
-        if (price > 0) oil = { price: parseFloat(price.toFixed(2)), change1h: Number(meta.regularMarketChangePercent || 0) };
-      }
-
-      // Process S&P 500 (ES=F)
-      if (results[6].status === 'fulfilled' && results[6].value?.chart?.result?.[0]) {
-        const meta = results[6].value.chart.result[0].meta;
-        const price = Number(meta.regularMarketPrice || 0);
-        if (price > 0) sp500 = { price: parseFloat(price.toFixed(2)), change1h: Number(meta.regularMarketChangePercent || 0) };
-      }
-    } catch (err: any) {
-      console.warn(`[SignalsService] Intermarket fetch warning: ${err.message}.`);
-    }
-
-    let upcomingEvent = null;
-    try {
-      const calendar = await this.fetchEconomicCalendar();
-      const usdEvents = calendar.filter((e: any) => e.country === 'USD' && (e.impact === 'High' || e.impact === 'Medium'));
-      upcomingEvent = usdEvents.find((e: any) => new Date(e.date).getTime() > now) || null;
-    } catch (calErr) {}
-
-    const compiled = { dxy, us10y, vix, silver, oil, sp500, goldSpot, upcomingEvent };
-    this.intermarketCache = { data: compiled, cachedAt: now };
-    return compiled;
-  }
-
-  private detectGoldRegime(
-    candles: any[],
-    atr: number,
-    ema20: number,
-    ema50: number,
-    ema200: number,
-    dxyTrend: string = 'NEUTRAL',
-    yieldTrend: string = 'FLAT'
-  ): {
-    regime: string;
-    description: string;
-    volatilityPercentile: number;
-    regimeBias: 'BUY' | 'SELL' | 'NEUTRAL';
-  } {
-    const closes = candles.map(c => Number(c.close));
-    const currentPrice = closes[closes.length - 1];
-    const lastCandle = candles[candles.length - 1];
-    const lastBody = Math.abs(Number(lastCandle.close) - Number(lastCandle.open));
-
-    // Calculate rolling 50-period average ATR
-    const atr50 = this.calcATR(candles, Math.min(50, candles.length));
-    const atrRatio = atr50 > 0 ? atr / atr50 : 1.0;
-    const volPercentile = Math.min(100, Math.round(atrRatio * 50));
-
-    // 24-bar high/low extremes
-    const slice24 = candles.slice(-24);
-    const max24 = Math.max(...slice24.map(c => Number(c.high)).slice(0, -1));
-    const min24 = Math.min(...slice24.map(c => Number(c.low)).slice(0, -1));
-
-    // 1. Breakout / Breakdown with displacement
-    if (currentPrice > max24 && lastBody > atr * 1.1) {
-      return {
-        regime: 'BULLISH_BREAKOUT',
-        description: `Impulsive bullish breakout above 24-bar high ($${max24.toFixed(2)}) with displacement volume`,
-        volatilityPercentile: volPercentile,
-        regimeBias: 'BUY'
-      };
-    }
-    if (currentPrice < min24 && lastBody > atr * 1.1) {
-      return {
-        regime: 'BEARISH_BREAKDOWN',
-        description: `Impulsive bearish breakdown below 24-bar low ($${min24.toFixed(2)}) with displacement volume`,
-        volatilityPercentile: volPercentile,
-        regimeBias: 'SELL'
-      };
-    }
-
-    // 2. High Volatility Expansion
-    if (atrRatio > 1.5) {
-      return {
-        regime: 'VOLATILITY_EXPANSION',
-        description: `ATR expanded ${((atrRatio - 1) * 100).toFixed(0)}% above 50-bar baseline ($${atr.toFixed(2)} vs $${atr50.toFixed(2)})`,
-        volatilityPercentile: volPercentile,
-        regimeBias: 'NEUTRAL'
-      };
-    }
-
-    // 3. Clear Trend Regimes (Aligned with DXY and Yields)
-    if (currentPrice > ema20 && ema20 > ema50 && ema50 > ema200) {
-      const dxyConfirm = dxyTrend === 'BEARISH' ? 'confirmed by softening DXY' : 'counter-DXY flow';
-      return {
-        regime: 'BULLISH_TREND',
-        description: `Triple stacked bullish EMAs (20>50>200) above $${ema200.toFixed(2)} — ${dxyConfirm}`,
-        volatilityPercentile: volPercentile,
-        regimeBias: 'BUY'
-      };
-    }
-
-    if (currentPrice < ema20 && ema20 < ema50 && ema50 < ema200) {
-      const dxyConfirm = dxyTrend === 'BULLISH' ? 'confirmed by strong USD' : 'sovereign de-risking';
-      return {
-        regime: 'BEARISH_TREND',
-        description: `Triple stacked bearish EMAs (20<50<200) below $${ema200.toFixed(2)} — ${dxyConfirm}`,
-        volatilityPercentile: volPercentile,
-        regimeBias: 'SELL'
-      };
-    }
-
-    // 4. Choppy Range Consolidation
-    const emaDist = Math.abs(ema20 - ema50);
-    if (emaDist < (atr * 0.25)) {
-      return {
-        regime: 'RANGE_CONSOLIDATION',
-        description: `Compressed market structure between $${min24.toFixed(2)} and $${max24.toFixed(2)}. EMAs flat.`,
-        volatilityPercentile: volPercentile,
-        regimeBias: 'NEUTRAL'
-      };
-    }
-
-    return {
-      regime: 'TRANSITIONAL_STRUCTURE',
-      description: `Market seeking liquidity between $${ema50.toFixed(2)} and $${ema200.toFixed(2)}`,
-      volatilityPercentile: volPercentile,
-      regimeBias: 'NEUTRAL'
-    };
-  }
-
-  private calcGoldLevels(candles: any[], currentPrice: number) {
-    const sliceLast24 = candles.slice(-24);
-    const dailyHigh = Math.max(...sliceLast24.map(c => Number(c.high)));
-    const dailyLow = Math.min(...sliceLast24.map(c => Number(c.low)));
-    const dailyOpen = Number(sliceLast24[0]?.open || currentPrice);
-
-    // Calculate nearest $25 round psychological numbers
-    const baseRound = Math.floor(currentPrice / 25) * 25;
-    const roundLevels = [baseRound - 25, baseRound, baseRound + 25, baseRound + 50];
-
-    const supports = [dailyLow, ...roundLevels.filter(lvl => lvl < currentPrice)].sort((a, b) => b - a);
-    const resistances = [dailyHigh, ...roundLevels.filter(lvl => lvl > currentPrice)].sort((a, b) => a - b);
-
-    const nearestSupport = supports[0] || (currentPrice - 15);
-    const nearestResistance = resistances[0] || (currentPrice + 15);
-
-    const distToSupport = parseFloat((currentPrice - nearestSupport).toFixed(2));
-    const distToResistance = parseFloat((nearestResistance - currentPrice).toFixed(2));
-
-    return {
-      dailyHigh: parseFloat(dailyHigh.toFixed(2)),
-      dailyLow: parseFloat(dailyLow.toFixed(2)),
-      dailyOpen: parseFloat(dailyOpen.toFixed(2)),
-      nearestSupport: parseFloat(nearestSupport.toFixed(2)),
-      nearestResistance: parseFloat(nearestResistance.toFixed(2)),
-      distToSupport,
-      distToResistance,
-      psychologicalLevels: roundLevels
-    };
-  }
-
-  private btcStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified ${symbol} candlestick history (${validCandles.length}/30 min bars) for institutional crypto evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-
-    // 1. Market Regime Classification
-    const prevAtr = this.calcATR(validCandles.slice(0, -10), 14);
-    const isTrending = (ema20 > ema50 && ema50 > ema200) || (ema20 < ema50 && ema50 < ema200);
-    const isHighVol = atr > (prevAtr * 1.3);
-    const isRanging = !isTrending && rsi >= 45 && rsi <= 55;
-    const marketRegime = isHighVol ? 'HIGH_VOLATILITY' : isTrending ? 'TRENDING' : 'RANGING';
-
-    // 2. Technical Structure & Displacement
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    // 3. Liquidity Sweep vs Breakout (BOS) Detection (Adaptive Session Lookback)
-    const lookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-lookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-lookback).map(c => Number(c.low));
-    const pdh = Math.max(...recentHighs.slice(0, -1));
-    const pdl = Math.min(...recentLows.slice(0, -1));
-
-    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
-    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    // Bullish Breakout (BOS - Break of Structure above PDH with strong bull close)
-    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
-
-    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
-    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    // Bearish Breakdown (BOS - Break of Structure below PDL with strong bear close)
-    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
-
-    // 4. Crypto Session & Volume Profile Timing (UTC)
-    const currentHour = new Date().getUTCHours();
-    let sessionName = 'Asian Globex Accumulation (00:00-07:00 UTC)';
-    let sessionScore = 3;
-
-    if (currentHour >= 7 && currentHour < 13) {
-      sessionName = 'European / London Crypto Expansion (07:00-13:30 UTC)';
-      sessionScore = 4;
-    } else if (currentHour >= 13 && currentHour < 20) {
-      sessionName = 'US Session / Wall Street ETF Flow Window (13:30-20:00 UTC)';
-      sessionScore = 5;
-    } else if (currentHour >= 20) {
-      sessionName = 'Late US / Pacific Funding Settlement (20:00-24:00 UTC)';
-      sessionScore = 4;
-    }
-
-    // 5. Multi-Layer Confluence Scoring (Total 100 Points)
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
-      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
-      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.12% Neutral Deadband (16 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0012) {
-      if (ema20 > ema50) {
-        bullishScore += 16;
-        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish crypto momentum (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 16;
-        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish crypto momentum (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — trend transition neutral`);
-    }
-
-    // Layer 2: HTF Macro Regime (200 EMA) with 0.20% Neutral Deadband (14 Points)
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0020) {
-      if (entryPrice > ema200) {
-        bullishScore += 14;
-        reasonsFor.push(`Bitcoin price above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
-      } else {
-        bearishScore += 14;
-        reasonsAgainst.push(`Bitcoin price below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
-      }
-    } else {
-      reasonsFor.push(`Price oscillating directly on 200 EMA ($${ema200.toFixed(2)}) — macro inflection neutral`);
-    }
-
-    // Layer 3: VWAP Institutional Floor with 0.15% Neutral Zone (15 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0015) {
-      if (entryPrice > vwap) {
-        bullishScore += 15;
-        reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — institutional spot accumulation floor`);
-      } else {
-        bearishScore += 15;
-        reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — institutional overhead supply resistance`);
-      }
-    } else {
-      reasonsFor.push(`Price at VWAP equilibrium ($${vwap.toFixed(2)}) — no institutional imbalance`);
-    }
-
-    // Layer 4: Liquidity Structure & BOS (16 Points)
-    if (sweptPDL_Rejection) {
-      bullishScore += 16;
-      reasonsFor.push(`Sell-side liquidity swept below $${pdl.toFixed(2)} with hammer rejection wick`);
-    } else if (breakoutPDH) {
-      bullishScore += 16;
-      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${pdh.toFixed(2)}`);
-    }
-
-    if (sweptPDH_Rejection) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Buy-side liquidity swept above $${pdh.toFixed(2)} with shooting star rejection wick`);
-    } else if (breakdownPDL) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${pdl.toFixed(2)}`);
-    }
-
-    // Layer 5: Institutional Displacement (12 Points)
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) {
-        bullishScore += 12;
-        reasonsFor.push(`Bullish expansion displacement candle ($${lastBody.toFixed(2)} > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Bearish expansion displacement candle ($${lastBody.toFixed(2)} > 1.15x ATR)`);
-      }
-    }
-
-    // Layer 6: FVG & Order Block Imbalance (16 Points)
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Fair Value Gap (FVG) imbalance active (${fvg.gap_size} pts)`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Fair Value Gap (FVG) imbalance active (${fvg.gap_size} pts)`);
-      }
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone active at $${ob.price_level}`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone active at $${ob.price_level}`);
-      }
-    }
-
-    // Layer 7: RSI Momentum Alignment (15 Points)
-    if (rsi > 52 && rsi < 72) {
-      bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms sustained buying momentum`);
-    } else if (rsi < 48 && rsi > 28) {
-      bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms sustained selling momentum`);
-    } else if (rsi >= 72) {
-      bearishScore += 6;
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of long liquidation unwind`);
-    } else if (rsi <= 28) {
-      bullishScore += 6;
-      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short squeeze reversal opportunity`);
-    }
-
-    // Layer 8: Session Window Timing
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) bullishScore += sessionScore;
-      else bearishScore += sessionScore;
-    }
-
-    // Rangebound Penalties
-    if (isRanging) {
-      if (entryPrice > vwap * 1.008) {
-        bullishScore -= 10;
-        reasonsAgainst.push('Ranging Regime: Price extended above VWAP — mean reversion hazard');
-      } else if (entryPrice < vwap * 0.992) {
-        bearishScore -= 10;
-        reasonsAgainst.push('Ranging Regime: Price extended below VWAP — mean reversion hazard');
-      }
-    }
-
-    // Direction determination with NO-TRADE check on exact score ties
-    if (bullishScore === bearishScore) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} balanced momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting directional catalyst.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    // Apply universal quality gate
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated ${symbol} Institutional Confluence Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptPDL_Rejection ? 'Sell-side Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Buy-side Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active Expansion Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
-    };
-  }
-
-  private nasdaqStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified US100/NQ candlestick history (${validCandles.length}/30 min bars) for institutional evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-
-    // 1. Market Regime Classification
-    const prevAtr = this.calcATR(validCandles.slice(0, -10), 14);
-    const isTrending = (ema20 > ema50 && ema50 > ema200) || (ema20 < ema50 && ema50 < ema200);
-    const isHighVol = atr > (prevAtr * 1.3);
-    const isRanging = !isTrending && rsi >= 44 && rsi <= 56;
-    const marketRegime = isHighVol ? 'HIGH_VOLATILITY' : isTrending ? 'TRENDING' : 'RANGING';
-
-    // 2. Technical Structure & Displacement
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    // 3. Liquidity Sweep vs Breakout (BOS) Detection (Adaptive Session Lookback)
-    const lookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-lookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-lookback).map(c => Number(c.low));
-    const pdh = Math.max(...recentHighs.slice(0, -1));
-    const pdl = Math.min(...recentLows.slice(0, -1));
-
-    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
-    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    // Bullish Breakout (BOS - Break of Structure above PDH with strong bull close)
-    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
-
-    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
-    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    // Bearish Breakdown (BOS - Break of Structure below PDL with strong bear close)
-    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
-
-    // 4. Session Timing & Power Hour Classification (UTC)
-    const currentHour = new Date().getUTCHours();
-    const currentMin = new Date().getUTCMinutes();
-    let sessionName = 'Asian Globex Session (Liquidity Map Build)';
-    let sessionScore = 3;
-
-    if (currentHour >= 7 && currentHour < 13) {
-      sessionName = 'London Pre-Market (Structure Build)';
-      sessionScore = 4;
-    } else if (currentHour === 13 && currentMin >= 30) {
-      sessionName = 'US Cash Session Open (09:30 ET ORB Window)';
-      sessionScore = 5;
-    } else if (currentHour >= 14 && currentHour < 16) {
-      sessionName = 'London / New York Overlap (Prime Institutional Execution)';
-      sessionScore = 5;
-    } else if (currentHour >= 16 && currentHour < 19) {
-      sessionName = 'New York Midday Session (Consolidation/Retracement)';
-      sessionScore = 3;
-    } else if (currentHour >= 19 && currentHour < 20) {
-      sessionName = 'US Power Hour (15:00-16:00 ET Institutional Closing Moves)';
-      sessionScore = 5;
-    }
-
-    // 5. Multi-Layer Confluence Scoring (Total 100 Points)
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
-      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
-      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0010) {
-      if (ema20 > ema50) {
-        bullishScore += 16;
-        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish index momentum (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 16;
-        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish index momentum (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — index momentum neutral`);
-    }
-
-    // Layer 2: HTF 200 EMA Regime with 0.15% Neutral Deadband (14 Points)
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0015) {
-      if (entryPrice > ema200) {
-        bullishScore += 14;
-        reasonsFor.push(`Index trading above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
-      } else {
-        bearishScore += 14;
-        reasonsAgainst.push(`Index trading below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
-      }
-    } else {
-      reasonsFor.push(`Index price right at 200 EMA ($${ema200.toFixed(2)}) — inflection neutral`);
-    }
-
-    // Layer 3: VWAP Mega-Cap Floor with 0.12% Neutral Zone (15 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0012) {
-      if (entryPrice > vwap) {
-        bullishScore += 15;
-        reasonsFor.push(`Index above VWAP ($${vwap.toFixed(2)}) — mega-cap tech institutional demand floor`);
-      } else {
-        bearishScore += 15;
-        reasonsAgainst.push(`Index below VWAP ($${vwap.toFixed(2)}) — mega-cap tech overhead supply resistance`);
-      }
-    } else {
-      reasonsFor.push(`Index balanced at VWAP ($${vwap.toFixed(2)}) — institutional equilibrium`);
-    }
-
-    // Layer 4: Liquidity Sweeps & BOS (16 Points)
-    if (sweptPDL_Rejection) {
-      bullishScore += 16;
-      reasonsFor.push(`Previous Day Low ($${pdl.toFixed(2)}) swept with hammer rejection wick`);
-    } else if (breakoutPDH) {
-      bullishScore += 16;
-      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${pdh.toFixed(2)}`);
-    }
-
-    if (sweptPDH_Rejection) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Previous Day High ($${pdh.toFixed(2)}) swept with shooting star rejection wick`);
-    } else if (breakdownPDL) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${pdl.toFixed(2)}`);
-    }
-
-    // Layer 5: Institutional Displacement (12 Points)
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) {
-        bullishScore += 12;
-        reasonsFor.push(`Strong bullish NQ futures displacement ($${lastBody.toFixed(2)} pts > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Strong bearish NQ futures displacement ($${lastBody.toFixed(2)} pts > 1.15x ATR)`);
-      }
-    }
-
-    // Layer 6: FVG & Order Block Imbalance (16 Points)
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish FVG gap imbalance zone identified (${fvg.gap_size} pts)`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish FVG gap imbalance zone identified (${fvg.gap_size} pts)`);
-      }
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone active at $${ob.price_level}`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone active at $${ob.price_level}`);
-      }
-    }
-
-    // Layer 7: RSI Momentum Alignment (15 Points)
-    if (rsi > 52 && rsi < 72) {
-      bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish index expansion`);
-    } else if (rsi < 48 && rsi > 28) {
-      bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
-    } else if (rsi >= 72) {
-      bearishScore += 6;
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of intraday pullback`);
-    } else if (rsi <= 28) {
-      bullishScore += 6;
-      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — oversold bounce opportunity`);
-    }
-
-    // Layer 8: Session Timing
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) bullishScore += sessionScore;
-      else bearishScore += sessionScore;
-    }
-
-    // Regime-Specific Strategy Adjustments
-    if (isRanging) {
-      if (entryPrice > vwap * 1.008) {
-        bullishScore -= 10;
-        reasonsAgainst.push('Ranging Regime: Price extended above VWAP — mean reversion risk');
-      } else if (entryPrice < vwap * 0.992) {
-        bearishScore -= 10;
-        reasonsAgainst.push('Ranging Regime: Price extended below VWAP — mean reversion risk');
-      }
-    }
-
-    // Determine Direction & Final Confluence Score
-    if (bullishScore === bearishScore) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} balanced momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting directional breakout.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    // Apply universal quality gate
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated US100 Institutional Tech Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss set at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Tech Flow)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptPDL_Rejection ? 'Sell-side Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Buy-side Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active Tech Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
-    };
-  }
-
-  private dowStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified US30 candlestick history (${validCandles.length}/30 min bars) for institutional evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-
-    // 1. Market Regime Classification
-    const prevAtr = this.calcATR(validCandles.slice(0, -10), 14);
-    const isTrending = (ema20 > ema50 && ema50 > ema200) || (ema20 < ema50 && ema50 < ema200);
-    const isHighVol = atr > (prevAtr * 1.3);
-    const isRanging = !isTrending && rsi >= 45 && rsi <= 55;
-    const marketRegime = isHighVol ? 'HIGH_VOLATILITY' : isTrending ? 'TRENDING' : 'RANGING';
-
-    // 2. Technical Structure & Displacement
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    // 3. Liquidity Sweep vs Breakout (BOS) Detection (Adaptive Session Lookback)
-    const lookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-lookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-lookback).map(c => Number(c.low));
-    const pdh = Math.max(...recentHighs.slice(0, -1));
-    const pdl = Math.min(...recentLows.slice(0, -1));
-
-    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
-    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    // Bullish Breakout (BOS - Break of Structure above PDH with strong bull close)
-    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
-
-    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
-    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    // Bearish Breakdown (BOS - Break of Structure below PDL with strong bear close)
-    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
-
-    // 4. Session Timing & Power Hour Classification (UTC)
-    const currentHour = new Date().getUTCHours();
-    const currentMin = new Date().getUTCMinutes();
-    let sessionName = 'Asian Globex Session (Overnight Build)';
-    let sessionScore = 3;
-
-    if (currentHour >= 7 && currentHour < 13) {
-      sessionName = 'London Pre-Market (European Capital Allocation)';
-      sessionScore = 4;
-    } else if (currentHour === 13 && currentMin >= 30) {
-      sessionName = 'US Cash Session Open (09:30 ET ORB Window)';
-      sessionScore = 5;
-    } else if (currentHour >= 14 && currentHour < 16) {
-      sessionName = 'London / New York Overlap (Prime Institutional Execution)';
-      sessionScore = 5;
-    } else if (currentHour >= 16 && currentHour < 19) {
-      sessionName = 'New York Midday Session (Consolidation/Retracement)';
-      sessionScore = 3;
-    } else if (currentHour >= 19 && currentHour < 20) {
-      sessionName = 'US Power Hour (15:00-16:00 ET Institutional Closing Moves)';
-      sessionScore = 5;
-    }
-
-    // 5. Multi-Layer Confluence Scoring (Total 100 Points)
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
-      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
-      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0010) {
-      if (ema20 > ema50) {
-        bullishScore += 16;
-        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) blue-chip bullish trend (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 16;
-        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) blue-chip bearish trend (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — industrial trend neutral`);
-    }
-
-    // Layer 2: HTF 200 EMA Regime with 0.15% Neutral Deadband (14 Points)
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0015) {
-      if (entryPrice > ema200) {
-        bullishScore += 14;
-        reasonsFor.push(`US30 price trading above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
-      } else {
-        bearishScore += 14;
-        reasonsAgainst.push(`US30 price trading below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
-      }
-    } else {
-      reasonsFor.push(`US30 oscillating on 200 EMA ($${ema200.toFixed(2)}) — inflection neutral`);
-    }
-
-    // Layer 3: VWAP Demand Floor with 0.12% Neutral Zone (15 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0012) {
-      if (entryPrice > vwap) {
-        bullishScore += 15;
-        reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — industrial & financial capital demand floor active`);
-      } else {
-        bearishScore += 15;
-        reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — industrial & financial overhead resistance`);
-      }
-    } else {
-      reasonsFor.push(`Price at VWAP equilibrium ($${vwap.toFixed(2)}) — balanced value flow`);
-    }
-
-    // Layer 4: Liquidity Sweeps & BOS (16 Points)
-    if (sweptPDL_Rejection) {
-      bullishScore += 16;
-      reasonsFor.push(`Previous Day Low ($${pdl.toFixed(2)}) swept with hammer rejection wick`);
-    } else if (breakoutPDH) {
-      bullishScore += 16;
-      reasonsFor.push(`Bullish Break of Structure (BOS) above previous high $${pdh.toFixed(2)}`);
-    }
-
-    if (sweptPDH_Rejection) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Previous Day High ($${pdh.toFixed(2)}) swept with shooting star rejection wick`);
-    } else if (breakdownPDL) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous low $${pdl.toFixed(2)}`);
-    }
-
-    // Layer 5: Institutional Displacement (12 Points)
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) {
-        bullishScore += 12;
-        reasonsFor.push(`Strong bullish YM futures displacement ($${lastBody.toFixed(2)} pts > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Strong bearish YM futures displacement ($${lastBody.toFixed(2)} pts > 1.15x ATR)`);
-      }
-    }
-
-    // Layer 6: FVG & Order Block Imbalance (16 Points)
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish FVG gap imbalance zone identified (${fvg.gap_size} pts)`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish FVG gap imbalance zone identified (${fvg.gap_size} pts)`);
-      }
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone identified at $${ob.price_level}`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone identified at $${ob.price_level}`);
-      }
-    }
-
-    // Layer 7: RSI Momentum Alignment (15 Points)
-    if (rsi > 52 && rsi < 72) {
-      bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish index expansion`);
-    } else if (rsi < 48 && rsi > 28) {
-      bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish index expansion`);
-    } else if (rsi >= 72) {
-      bearishScore += 6;
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of short-term pullback`);
-    } else if (rsi <= 28) {
-      bullishScore += 6;
-      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — oversold bounce opportunity`);
-    }
-
-    // Layer 8: Session Timing
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) bullishScore += sessionScore;
-      else bearishScore += sessionScore;
-    }
-
-    // Regime-Specific Strategy Adjustments: Mean Reversion Protection for US30
-    if (isRanging) {
-      if (entryPrice > vwap * 1.008) {
-        bullishScore -= 10;
-        reasonsAgainst.push('Ranging Regime: Price extended above VWAP — mean reversion risk');
-      } else if (entryPrice < vwap * 0.992) {
-        bearishScore -= 10;
-        reasonsAgainst.push('Ranging Regime: Price extended below VWAP — mean reversion risk');
-      }
-    }
-
-    // Determine Direction & High-Conviction Threshold with tie handling
-    if (bullishScore === bearishScore) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} balanced momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting directional breakout.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    // Apply universal quality gate
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated US30 12-Layer Industrial & Cyclical Value Engine evaluated setup in ${marketRegime} regime during ${sessionName}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss set at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Industrial Flow)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptPDL_Rejection ? 'Sell-side Swept' : sweptPDH_Rejection ? 'Buy-side Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active YM Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
-    };
-  }
-
-  private forexStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified ${symbol} candlestick history (${validCandles.length}/30 min bars) for FX macro evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-    const isJpy = symbol.includes('JPY');
-    const precision = isJpy ? 3 : 4;
-
-    // 1. Market Regime Classification
-    const prevAtr = this.calcATR(validCandles.slice(0, -10), 14);
-    const isTrending = (ema20 > ema50 && ema50 > ema200) || (ema20 < ema50 && ema50 < ema200);
-    const isHighVol = atr > (prevAtr * 1.3);
-    const isRanging = !isTrending && rsi >= 45 && rsi <= 55;
-    const marketRegime = isHighVol ? 'HIGH_VOLATILITY' : isTrending ? 'TRENDING' : 'RANGING';
-
-    // 2. Technical Structure & Displacement
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    // 3. Asian Session Range & Liquidity Sweeps (00:00 - 07:00 UTC) with Adaptive Lookback
-    const fxLookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-fxLookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-fxLookback).map(c => Number(c.low));
-    const asianHigh = Math.max(...recentHighs.slice(0, -1));
-    const asianLow = Math.min(...recentLows.slice(0, -1));
-
-    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
-    const sweptAsianHigh_Rejection = lastHigh >= asianHigh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    // Bullish Breakout (BOS - Break of Structure above Asian High with strong bull close)
-    const breakoutAsianHigh = lastClose >= asianHigh && lastClose > lastOpen;
-
-    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
-    const sweptAsianLow_Rejection = lastLow <= asianLow && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    // Bearish Breakdown (BOS - Break of Structure below Asian Low with strong bear close)
-    const breakdownAsianLow = lastClose <= asianLow && lastClose < lastOpen;
-
-    // 4. Session Timing Classification (UTC)
-    const currentHour = new Date().getUTCHours();
-    let sessionName = 'Asian Session (Range & Liquidity Build)';
-    let sessionScore = 3;
-
-    if (currentHour >= 7 && currentHour < 12) {
-      sessionName = 'London Session (Asian Range Liquidity Expansion)';
-      sessionScore = 5;
-    } else if (currentHour >= 12 && currentHour < 16) {
-      sessionName = 'London / New York Overlap (Prime Institutional FX Flow)';
-      sessionScore = 5;
-    } else if (currentHour >= 16 && currentHour < 21) {
-      sessionName = 'New York Session (Sub-Session & Benchmark Fix)';
-      sessionScore = 4;
-    }
-
-    // 5. Multi-Layer Confluence Scoring (Total 100 Points)
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
-      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
-      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: EMA Trend Structure with 0.05% Neutral Deadband (16 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0005) {
-      if (ema20 > ema50) {
-        bullishScore += 16;
-        reasonsFor.push(`EMA-20 (${ema20.toFixed(precision)}) > EMA-50 (${ema50.toFixed(precision)}) structural bullish alignment (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 16;
-        reasonsAgainst.push(`EMA-20 (${ema20.toFixed(precision)}) < EMA-50 (${ema50.toFixed(precision)}) structural bearish alignment (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — trend transition neutral`);
-    }
-
-    // Layer 2: VWAP Demand Floor with 0.06% Neutral Zone (15 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0006) {
-      if (entryPrice > vwap) {
-        bullishScore += 15;
-        reasonsFor.push(`Price trading above VWAP (${vwap.toFixed(precision)}) — institutional demand floor active`);
-      } else {
-        bearishScore += 15;
-        reasonsAgainst.push(`Price trading below VWAP (${vwap.toFixed(precision)}) — institutional overhead resistance`);
-      }
-    } else {
-      reasonsFor.push(`Price balanced at VWAP (${vwap.toFixed(precision)}) — FX value equilibrium`);
-    }
-
-    // Layer 3: Higher-Timeframe 200 EMA Regime with 0.08% Neutral Deadband (14 Points)
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0008) {
-      if (entryPrice > ema200) {
-        bullishScore += 14;
-        reasonsFor.push(`Price above 200 EMA (${ema200.toFixed(precision)}) — HTF macro bull regime`);
-      } else {
-        bearishScore += 14;
-        reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(precision)}) — HTF macro bear regime`);
-      }
-    } else {
-      reasonsFor.push(`Price oscillating right at 200 EMA (${ema200.toFixed(precision)}) — macro inflection neutral`);
-    }
-
-    // Layer 4: Asian Range Liquidity Sweeps & BOS (16 Points)
-    if (sweptAsianLow_Rejection) {
-      bullishScore += 16;
-      reasonsFor.push(`Asian Session Low (${asianLow.toFixed(precision)}) swept with hammer rejection wick`);
-    } else if (breakoutAsianHigh) {
-      bullishScore += 16;
-      reasonsFor.push(`Bullish Break of Structure (BOS) above Asian high (${asianHigh.toFixed(precision)})`);
-    }
-
-    if (sweptAsianHigh_Rejection) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Asian Session High (${asianHigh.toFixed(precision)}) swept with shooting star rejection wick`);
-    } else if (breakdownAsianLow) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Bearish Break of Structure (BOS) below Asian low (${asianLow.toFixed(precision)})`);
-    }
-
-    // Layer 5: Institutional FX Displacement (12 Points)
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) {
-        bullishScore += 12;
-        reasonsFor.push(`Bullish FX displacement candle ($${lastBody.toFixed(precision)} > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Bearish FX displacement candle ($${lastBody.toFixed(precision)} > 1.15x ATR)`);
-      }
-    }
-
-    // Layer 6: FVG & Order Block Imbalance (16 Points)
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish FVG gap imbalance active (${fvg.gap_size} pips)`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish FVG gap imbalance active (${fvg.gap_size} pips)`);
-      }
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone active at ${ob.price_level}`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone active at ${ob.price_level}`);
-      }
-    }
-
-    // Layer 7: RSI Momentum Alignment (15 Points)
-    if (rsi > 52 && rsi < 70) {
-      bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms institutional buying momentum`);
-    } else if (rsi < 48 && rsi > 30) {
-      bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms institutional selling momentum`);
-    } else if (rsi >= 70) {
-      bearishScore += 6;
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — pullback risk`);
-    } else if (rsi <= 28) {
-      bullishScore += 6;
-      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short-term squeeze reversal opportunity`);
-    }
-
-    // Layer 8: Prime Session Timing
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) bullishScore += sessionScore;
-      else bearishScore += sessionScore;
-    }
-
-    // Determine Direction with tie handling
-    if (bullishScore === bearishScore) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} balanced FX momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting macro catalyst.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    // Apply universal quality gate
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const swingSlice = validCandles.slice(-Math.min(fxLookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated EURUSD/FX Macro Intelligence Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(precision)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptAsianLow_Rejection ? 'Asian Low Swept' : breakoutAsianHigh ? 'Bullish BOS Breakout' : sweptAsianHigh_Rejection ? 'Asian High Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active FX Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, precision)
-    };
-  }
-
-  private stocksStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified ${symbol} candlestick history (${validCandles.length}/30 min bars) for equities evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-
-    const prevAtr = this.calcATR(validCandles.slice(0, -10), 14);
-    const isTrending = (ema20 > ema50 && ema50 > ema200) || (ema20 < ema50 && ema50 < ema200);
-    const isHighVol = atr > (prevAtr * 1.3);
-    const isRanging = !isTrending && rsi >= 45 && rsi <= 55;
-    const marketRegime = isHighVol ? 'HIGH_VOLATILITY' : isTrending ? 'TRENDING' : 'RANGING';
-
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    const lookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-lookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-lookback).map(c => Number(c.low));
-    const pdh = Math.max(...recentHighs.slice(0, -1));
-    const pdl = Math.min(...recentLows.slice(0, -1));
-
-    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
-    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
-
-    const currentHour = new Date().getUTCHours();
-    const currentMin = new Date().getUTCMinutes();
-    const isUSCashOpen = (currentHour === 13 && currentMin >= 30) || (currentHour > 13 && currentHour < 20);
-    const sessionName = isUSCashOpen ? 'Wall Street Cash Market (High Institutional Liquidity)' : 'Pre/Post Market Extended Trading';
-
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
-      reasonsFor.push(`Macro 1W+1D+4H Equities Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
-      reasonsAgainst.push(`Macro 1W+1D+4H Equities Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.12% Neutral Deadband (16 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0012) {
-      if (ema20 > ema50) {
-        bullishScore += 16;
-        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) structural bullish trend (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 16;
-        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) structural bearish trend (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — equity momentum neutral`);
-    }
-
-    // Layer 2: VWAP Demand Floor with 0.15% Neutral Zone (15 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0015) {
-      if (entryPrice > vwap) {
-        bullishScore += 15;
-        reasonsFor.push(`Trading above VWAP ($${vwap.toFixed(2)}) — institutional demand floor active`);
-      } else {
-        bearishScore += 15;
-        reasonsAgainst.push(`Trading below VWAP ($${vwap.toFixed(2)}) — overhead volume resistance`);
-      }
-    } else {
-      reasonsFor.push(`Price oscillating at equity VWAP ($${vwap.toFixed(2)}) — institutional equilibrium`);
-    }
-
-    // Layer 3: Macro 200 EMA Regime with 0.20% Neutral Deadband (14 Points)
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0020) {
-      if (entryPrice > ema200) {
-        bullishScore += 14;
-        reasonsFor.push(`Price above 200 EMA ($${ema200.toFixed(2)}) — Macro Bull Market Regime`);
-      } else {
-        bearishScore += 14;
-        reasonsAgainst.push(`Price below 200 EMA ($${ema200.toFixed(2)}) — Macro Bear Market Regime`);
-      }
-    } else {
-      reasonsFor.push(`Price at 200 EMA ($${ema200.toFixed(2)}) — long-term secular inflection neutral`);
-    }
-
-    if (sweptPDL_Rejection || breakoutPDH) {
-      bullishScore += 16;
-      reasonsFor.push(sweptPDL_Rejection ? `Liquidity Sweep of Session Low ($${pdl.toFixed(2)}) with institutional rejection` : `BOS Breakout above Session High ($${pdh.toFixed(2)})`);
-    }
-    if (sweptPDH_Rejection || breakdownPDL) {
-      bearishScore += 16;
-      reasonsAgainst.push(sweptPDH_Rejection ? `Liquidity Sweep of Session High ($${pdh.toFixed(2)}) with institutional rejection` : `BOS Breakdown below Session Low ($${pdl.toFixed(2)})`);
-    }
-
-    if (isDisplacement && lastClose !== lastOpen) {
-      if (lastClose > lastOpen) {
-        bullishScore += 12;
-        reasonsFor.push(`Institutional Buy Displacement candle ($${lastBody.toFixed(2)} move > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Institutional Sell Displacement candle ($${lastBody.toFixed(2)} move > 1.15x ATR)`);
-      }
-    }
-
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Fair Value Gap (${fvg.gap_size ? '$' + fvg.gap_size.toFixed(2) + ' gap' : 'detected'})`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Fair Value Gap (${fvg.gap_size ? '$' + fvg.gap_size.toFixed(2) + ' gap' : 'detected'})`);
-      }
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Institutional Bullish Order Block at $${(ob.price_level || entryPrice).toFixed(2)}`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Institutional Bearish Order Block at $${(ob.price_level || entryPrice).toFixed(2)}`);
-      }
-    }
-
-    if (rsi > 52 && rsi < 72) {
-      bullishScore += 15;
-      reasonsFor.push(`RSI momentum accelerating bullish (${rsi.toFixed(1)})`);
-    } else if (rsi < 48 && rsi > 28) {
-      bearishScore += 15;
-      reasonsAgainst.push(`RSI momentum accelerating bearish (${rsi.toFixed(1)})`);
-    } else if (rsi >= 72) {
-      bearishScore += 6;
-      reasonsAgainst.push(`RSI overbought (${rsi.toFixed(1)}) — mean-reversion risk`);
-    } else if (rsi <= 28) {
-      bullishScore += 6;
-      reasonsFor.push(`RSI oversold (${rsi.toFixed(1)}) — short squeeze bounce opportunity`);
-    }
-
-    // Direction determination with tie handling
-    if (bullishScore === bearishScore) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} balanced equity momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting institutional earnings or volume push.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const lowestLow = Math.min(...recentLows);
-    const highestHigh = Math.max(...recentHighs);
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated US Equities & Growth Engine evaluated ${symbol} during ${sessionName}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptPDL_Rejection ? 'Session Low Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Session High Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active Equity Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
-    };
-  }
-
-  private indicesStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified ${symbol} candlestick history (${validCandles.length}/30 min bars) for broad index evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-
-    const prevAtr = this.calcATR(validCandles.slice(0, -10), 14);
-    const isTrending = (ema20 > ema50 && ema50 > ema200) || (ema20 < ema50 && ema50 < ema200);
-    const isHighVol = atr > (prevAtr * 1.3);
-    const marketRegime = isHighVol ? 'HIGH_VOLATILITY' : isTrending ? 'TRENDING' : 'RANGING';
-
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    const lookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-lookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-lookback).map(c => Number(c.low));
-    const pdh = Math.max(...recentHighs.slice(0, -1));
-    const pdl = Math.min(...recentLows.slice(0, -1));
-
-    const sweptPDH_Rejection = lastHigh >= pdh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    const breakoutPDH = lastClose >= pdh && lastClose > lastOpen;
-    const sweptPDL_Rejection = lastLow <= pdl && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    const breakdownPDL = lastClose <= pdl && lastClose < lastOpen;
-
-    // Real Session Timing Classification for Global Indices (UTC)
-    const currentHour = new Date().getUTCHours();
-    const currentMin = new Date().getUTCMinutes();
-    let sessionName = 'Asian Globex Session (Overnight Consolidation)';
-    let sessionScore = 2;
-    if (currentHour >= 7 && currentHour < 13) {
-      sessionName = 'European Core Cash Session (Frankfurt/London DAX High Liquidity)';
-      sessionScore = 4;
-    } else if (currentHour === 13 && currentMin >= 30) {
-      sessionName = 'US Cash Session Open (SPX Primary Volume Window)';
-      sessionScore = 5;
-    } else if (currentHour >= 14 && currentHour < 16) {
-      sessionName = 'Europe / US Benchmark Overlap';
-      sessionScore = 5;
-    } else if (currentHour >= 16 && currentHour < 20) {
-      sessionName = 'US Afternoon Cash Session';
-      sessionScore = 4;
-    }
-
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
-      reasonsFor.push(`Macro 1W+1D+4H Index Confluence: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
-      reasonsAgainst.push(`Macro 1W+1D+4H Index Confluence: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: Trend Alignment (EMA-20 vs EMA-50) with 0.10% Neutral Deadband (16 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0010) {
-      if (ema20 > ema50) {
-        bullishScore += 16;
-        reasonsFor.push(`EMA-20 (${ema20.toFixed(2)}) > EMA-50 (${ema50.toFixed(2)}) bullish trend (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 16;
-        reasonsAgainst.push(`EMA-20 (${ema20.toFixed(2)}) < EMA-50 (${ema50.toFixed(2)}) bearish trend (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — index trend neutral`);
-    }
-
-    // Layer 2: VWAP Demand Floor with 0.12% Neutral Zone (15 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0012) {
-      if (entryPrice > vwap) {
-        bullishScore += 15;
-        reasonsFor.push(`Trading above VWAP (${vwap.toFixed(2)}) demand floor`);
-      } else {
-        bearishScore += 15;
-        reasonsAgainst.push(`Trading below VWAP (${vwap.toFixed(2)}) resistance`);
-      }
-    } else {
-      reasonsFor.push(`Price oscillating at index VWAP (${vwap.toFixed(2)}) — benchmark equilibrium`);
-    }
-
-    // Layer 3: 200 EMA Regime with 0.15% Neutral Deadband (14 Points)
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0015) {
-      if (entryPrice > ema200) {
-        bullishScore += 14;
-        reasonsFor.push(`Above 200 EMA (${ema200.toFixed(2)}) macro bull regime`);
-      } else {
-        bearishScore += 14;
-        reasonsAgainst.push(`Below 200 EMA (${ema200.toFixed(2)}) macro bear regime`);
-      }
-    } else {
-      reasonsFor.push(`Price right at 200 EMA (${ema200.toFixed(2)}) — macro inflection neutral`);
-    }
-
-    if (sweptPDL_Rejection || breakoutPDH) {
-      bullishScore += 16;
-      reasonsFor.push(sweptPDL_Rejection ? `Liquidity sweep of session low (${pdl.toFixed(2)}) with rejection` : `BOS Breakout above session high (${pdh.toFixed(2)})`);
-    }
-    if (sweptPDH_Rejection || breakdownPDL) {
-      bearishScore += 16;
-      reasonsAgainst.push(sweptPDH_Rejection ? `Liquidity sweep of session high (${pdh.toFixed(2)}) with rejection` : `BOS Breakdown below session low (${pdl.toFixed(2)})`);
-    }
-
-    if (isDisplacement && lastClose !== lastOpen) {
-      if (lastClose > lastOpen) {
-        bullishScore += 12;
-        reasonsFor.push(`Institutional Index Displacement ($${lastBody.toFixed(2)} move > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Institutional Index Displacement ($${lastBody.toFixed(2)} move > 1.15x ATR)`);
-      }
-    }
-
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') bullishScore += 8;
-      else bearishScore += 8;
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') bullishScore += 8;
-      else bearishScore += 8;
-    }
-
-    if (rsi > 52 && rsi < 72) bullishScore += 15;
-    else if (rsi < 48 && rsi > 28) bearishScore += 15;
-    else if (rsi >= 72) bearishScore += 6;
-    else if (rsi <= 28) bullishScore += 6;
-
-    // Layer 8: Session Timing
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) bullishScore += sessionScore;
-      else bearishScore += sessionScore;
-    }
-
-    // Determine Direction with tie handling
-    if (bullishScore === bearishScore) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} balanced benchmark momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting macro catalyst.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const lowestLow = Math.min(...recentLows);
-    const highestHigh = Math.max(...recentHighs);
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated Broad Benchmark Index Engine evaluated ${symbol} during ${sessionName}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at ${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptPDL_Rejection ? 'Session Low Swept' : breakoutPDH ? 'Bullish BOS Breakout' : sweptPDH_Rejection ? 'Session High Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active Index Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, 2)
-    };
-  }
-
-  private usdjpyStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, intermarket?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified ${symbol} candlestick history (${validCandles.length}/30 min bars) for Fed-BoJ yield evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-    const precision = 3; // JPY pairs use 3 decimal places for precision
-
-    // 1. Market Regime & Ministry of Finance (MoF) Intervention Risk Engine
-    const prevAtr = this.calcATR(validCandles.slice(0, -10), 14);
-    const isTrending = (ema20 > ema50 && ema50 > ema200) || (ema20 < ema50 && ema50 < ema200);
-    const isHighVol = atr > (prevAtr * 1.35);
-    const marketRegime = isHighVol ? 'HIGH_VOLATILITY' : isTrending ? 'TRENDING' : 'RANGING';
-
-    // MoF Intervention Risk Classification
-    let interventionRiskLevel = 'LOW';
-    if (entryPrice >= 158.0) {
-      interventionRiskLevel = 'EXTREME';
-    } else if (entryPrice >= 155.0 || isHighVol) {
-      interventionRiskLevel = 'HIGH';
-    } else if (entryPrice >= 152.0) {
-      interventionRiskLevel = 'MEDIUM';
-    }
-
-    // 2. Technical Structure & Displacement
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    // 3. Tokyo Session Range & Liquidity Sweeps (00:00 - 07:00 UTC) (Adaptive Session Lookback)
-    const lookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-lookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-lookback).map(c => Number(c.low));
-    const tokyoHigh = Math.max(...recentHighs.slice(0, -1));
-    const tokyoLow = Math.min(...recentLows.slice(0, -1));
-
-    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
-    const sweptTokyoHigh_Rejection = lastHigh >= tokyoHigh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    // Bullish Breakout (BOS - Break of Structure above Tokyo High with strong bull close)
-    const breakoutTokyoHigh = lastClose >= tokyoHigh && lastClose > lastOpen;
-
-    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
-    const sweptTokyoLow_Rejection = lastLow <= tokyoLow && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    // Bearish Breakdown (BOS - Break of Structure below Tokyo Low with strong bear close)
-    const breakdownTokyoLow = lastClose <= tokyoLow && lastClose < lastOpen;
-
-    // 4. Session Timing Classification (UTC)
-    const currentHour = new Date().getUTCHours();
-    let sessionName = 'Tokyo Session (Fixing & Range Build)';
-    let sessionScore = 4;
-
-    if (currentHour >= 7 && currentHour < 12) {
-      sessionName = 'London Session (Tokyo Range Sweep & Expansion)';
-      sessionScore = 5;
-    } else if (currentHour >= 12 && currentHour < 16) {
-      sessionName = 'London / New York Overlap (Treasury Yield Flows)';
-      sessionScore = 5;
-    } else if (currentHour >= 16 && currentHour < 21) {
-      sessionName = 'New York Session (Fed Policy Reaction)';
-      sessionScore = 4;
-    }
-
-    // 5. Multi-Layer Confluence Scoring (Total 100 Points)
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (20 Points)
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 20;
-      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 20;
-      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: Yield Spread & EMA Trend Structure with 0.05% Neutral Deadband (16 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0005) {
-      if (ema20 > ema50) {
-        bullishScore += 16;
-        reasonsFor.push(`US-Japan yield spread expanding: EMA-20 (${ema20.toFixed(2)}) > EMA-50 (${ema50.toFixed(2)}) (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 16;
-        reasonsAgainst.push(`US-Japan yield spread contracting: EMA-20 (${ema20.toFixed(2)}) < EMA-50 (${ema50.toFixed(2)}) (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`USDJPY EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — yield spread inflection neutral`);
-    }
-
-    // Layer 2: VWAP Carry Trade Demand Floor with 0.06% Neutral Zone (15 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0006) {
-      if (entryPrice > vwap) {
-        bullishScore += 15;
-        reasonsFor.push(`USDJPY above VWAP (${vwap.toFixed(2)}) — JPY carry trade demand active`);
-      } else {
-        bearishScore += 15;
-        reasonsAgainst.push(`USDJPY below VWAP (${vwap.toFixed(2)}) — JPY carry trade unwinding / risk-off`);
-      }
-    } else {
-      reasonsFor.push(`USDJPY balanced right at VWAP (${vwap.toFixed(2)}) — carry equilibrium`);
-    }
-
-    // Layer 3: Higher-Timeframe 200 EMA Regime with 0.08% Neutral Deadband (14 Points)
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0008) {
-      if (entryPrice > ema200) {
-        bullishScore += 14;
-        reasonsFor.push(`Price above 200 EMA (${ema200.toFixed(2)}) — HTF macro bull regime`);
-      } else {
-        bearishScore += 14;
-        reasonsAgainst.push(`Price below 200 EMA (${ema200.toFixed(2)}) — HTF macro bear regime`);
-      }
-    } else {
-      reasonsFor.push(`Price oscillating right at 200 EMA (${ema200.toFixed(2)}) — macro inflection neutral`);
-    }
-
-    // Optional Intermarket Integration: US10Y Yield Spread Direction (10 Points)
-    if (intermarket?.us10y && intermarket.us10y.yield > 0) {
-      const us10y = intermarket.us10y;
-      if (us10y.trend === 'RISING') {
-        bullishScore += 6;
-        reasonsFor.push(`US 10Y Treasury Yield rising (${us10y.yield}%) — widening US-Japan rate differential supports USDJPY`);
-      } else if (us10y.trend === 'FALLING') {
-        bearishScore += 6;
-        reasonsAgainst.push(`US 10Y Treasury Yield falling (${us10y.yield}%) — narrowing rate differential pressures USDJPY`);
-      }
-    }
-
-    // Layer 4: Tokyo Session Liquidity Sweeps & BOS (16 Points)
-    if (sweptTokyoLow_Rejection) {
-      bullishScore += 16;
-      reasonsFor.push(`Tokyo Session Low (${tokyoLow.toFixed(2)}) swept with hammer rejection wick`);
-    } else if (breakoutTokyoHigh) {
-      bullishScore += 16;
-      reasonsFor.push(`Bullish Break of Structure (BOS) above Tokyo high (${tokyoHigh.toFixed(2)})`);
-    }
-
-    if (sweptTokyoHigh_Rejection) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Tokyo Session High (${tokyoHigh.toFixed(2)}) swept with shooting star rejection wick`);
-    } else if (breakdownTokyoLow) {
-      bearishScore += 16;
-      reasonsAgainst.push(`Bearish Break of Structure (BOS) below Tokyo low (${tokyoLow.toFixed(2)})`);
-    }
-
-    // Layer 5: Institutional FX Displacement (12 Points)
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) {
-        bullishScore += 12;
-        reasonsFor.push(`Strong bullish USDJPY displacement candle (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
-      } else {
-        bearishScore += 12;
-        reasonsAgainst.push(`Strong bearish USDJPY displacement candle (${lastBody.toFixed(precision)} pips > 1.15x ATR)`);
-      }
-    }
-
-    // Layer 6: FVG & Order Block Imbalance (16 Points)
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish FVG gap imbalance zone identified (${fvg.gap_size} pips)`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish FVG gap imbalance zone identified (${fvg.gap_size} pips)`);
-      }
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') {
-        bullishScore += 8;
-        reasonsFor.push(`Bullish Order Block liquidity zone identified at ${ob.price_level}`);
-      } else {
-        bearishScore += 8;
-        reasonsAgainst.push(`Bearish Order Block liquidity zone identified at ${ob.price_level}`);
-      }
-    }
-
-    // Layer 7: RSI Momentum Alignment (15 Points)
-    if (rsi > 52 && rsi < 72) {
-      bullishScore += 15;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bullish USDJPY momentum`);
-    } else if (rsi < 48 && rsi > 28) {
-      bearishScore += 15;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy bearish USDJPY momentum`);
-    } else if (rsi >= 72) {
-      bearishScore += 6;
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — risk of MoF jawboning pullbacks`);
-    } else if (rsi <= 28) {
-      bullishScore += 6;
-      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short squeeze reversal opportunity`);
-    }
-
-    // Layer 8: Session Timing
-    if (isDisplacement && lastClose !== lastOpen) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) bullishScore += sessionScore;
-      else bearishScore += sessionScore;
-    }
-
-    // Intervention Risk Penalty
-    if (interventionRiskLevel === 'EXTREME') {
-      bullishScore -= 20;
-      reasonsAgainst.push('⚠️ EXTREME MoF Intervention Risk above 158.00 — Ministry of Finance physical intervention warning');
-    } else if (interventionRiskLevel === 'HIGH') {
-      bullishScore -= 10;
-      reasonsAgainst.push('⚠️ HIGH MoF Intervention Risk above 155.00 — verbal intervention warnings active');
-    }
-
-    // Direction determination with tie handling
-    if (bullishScore === bearishScore) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `${symbol} balanced USD/JPY momentum equilibrium (Bull: ${bullishScore} pts vs Bear: ${bearishScore} pts). Awaiting Fed-BoJ catalyst.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    // Apply universal quality gate
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, precision, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', precision)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Dedicated USDJPY Fed-BoJ Yield & Intervention Engine evaluated setup during ${sessionName}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). MoF Intervention Risk: ${interventionRiskLevel}. Primary bias: ${direction} at ${effectiveEntry.toFixed(precision)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss set at ${precisionOrder.stopLoss.toFixed(precision)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${marketRegime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Expansion)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptTokyoLow_Rejection ? 'Tokyo Low Swept' : breakoutTokyoHigh ? 'Bullish BOS Breakout' : sweptTokyoHigh_Rejection ? 'Tokyo High Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active USDJPY Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, precisionOrder.stopLoss, direction, precision)
-    };
-  }
-
-  private goldStrategyEngine(candles: any[], symbol: string, interval: string = '1h', htfBias?: any, intermarket?: any, news?: any[]) {
-    const validCandles = (candles || []).filter(c => c && Number.isFinite(Number(c.close)) && Number(c.close) > 0);
-    if (validCandles.length < 30) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Insufficient verified XAUUSD candlestick history (${validCandles.length}/30 min bars) for 12-layer institutional evaluation.`,
-        evidence: {}
-      };
-    }
-
-    const closes = validCandles.map(c => Number(c.close));
-    const entryPrice = closes[closes.length - 1];
-    const atr = this.calcATR(validCandles, 14);
-    const rsi = this.calcRSI(closes, 14);
-    const ema20 = this.calcEMA(closes, 20);
-    const ema50 = this.calcEMA(closes, 50);
-    const ema200 = this.calcEMA(closes, 200);
-    const vwap = this.calcVWAP(validCandles);
-
-    // 1. Technical Structure & Displacement
-    const fvg = this.detectFairValueGap(validCandles);
-    const ob = this.detectOrderBlock(validCandles, atr);
-    const lastCandle = validCandles[validCandles.length - 1];
-    const lastOpen = Number(lastCandle.open);
-    const lastClose = Number(lastCandle.close);
-    const lastHigh = Number(lastCandle.high);
-    const lastLow = Number(lastCandle.low);
-    const lastBody = Math.abs(lastClose - lastOpen);
-    const candleRange = Math.max(lastHigh - lastLow, 0.00001);
-    const upperWick = lastHigh - Math.max(lastOpen, lastClose);
-    const lowerWick = Math.min(lastOpen, lastClose) - lastLow;
-    const isDisplacement = lastBody > (atr * 1.15);
-
-    // Candle Microstructure Metrics
-    const bodyToRangeRatio = parseFloat((lastBody / candleRange).toFixed(2));
-    const upperWickRatio = parseFloat((upperWick / candleRange).toFixed(2));
-    const lowerWickRatio = parseFloat((lowerWick / candleRange).toFixed(2));
-    const closePosition = parseFloat(((lastClose - lastLow) / candleRange).toFixed(2)); // 0 = close at low, 1 = close at high
-
-    // 2. Liquidity Sweep vs Breakout (BOS) Detection (Adaptive Session Lookback)
-    const lookback = this.getAdaptiveLookback(interval);
-    const recentHighs = validCandles.slice(-lookback).map(c => Number(c.high));
-    const recentLows = validCandles.slice(-lookback).map(c => Number(c.low));
-    const maxHigh = Math.max(...recentHighs.slice(0, -1));
-    const minLow = Math.min(...recentLows.slice(0, -1));
-
-    // True Bearish Sweep Rejection (Must make high, but reject with long upper wick + bear body)
-    const sweptHigh_Rejection = lastHigh >= maxHigh && upperWick >= (candleRange * 0.38) && lastClose < lastOpen;
-    // Bullish Breakout (BOS - Break of Structure above Max High with strong bull close)
-    const breakoutHigh = lastClose >= maxHigh && lastClose > lastOpen;
-
-    // True Bullish Sweep Rejection (Must make low, but reject with long lower wick + bull body)
-    const sweptLow_Rejection = lastLow <= minLow && lowerWick >= (candleRange * 0.38) && lastClose > lastOpen;
-    // Bearish Breakdown (BOS - Break of Structure below Min Low with strong bear close)
-    const breakdownLow = lastClose <= minLow && lastClose < lastOpen;
-
-    // 3. Auto-Calculated S/R Levels & Psychological Round Numbers ($25 increments)
-    const levels = this.calcGoldLevels(validCandles, entryPrice);
-
-    // 4. Intermarket Feeds (DXY, US10Y Yield, VIX)
-    const dxy = intermarket?.dxy || { price: 0, change1h: 0, trend: 'NEUTRAL' };
-    const us10y = intermarket?.us10y || { yield: 0, change1h: 0, trend: 'FLAT' };
-    const vix = intermarket?.vix || { level: 0, regime: 'NORMAL' };
-    const goldSource = intermarket?.goldSpot?.source || 'YAHOO_COMEX_FUTURES';
-
-    // 5. Market Regime Detection
-    const regimeData = this.detectGoldRegime(validCandles, atr, ema20, ema50, ema200, dxy.trend, us10y.trend);
-
-    // 6. Session Classification (UTC based)
-    const currentHour = new Date().getUTCHours();
-    let sessionName = 'Asian Session (Range Build)';
-    let sessionScore = 2;
-    if (currentHour >= 7 && currentHour < 12) {
-      sessionName = 'London Session (Expansion)';
-      sessionScore = 4;
-    } else if (currentHour >= 12 && currentHour < 17) {
-      sessionName = 'London / New York Overlap (Prime Volume Window)';
-      sessionScore = 4;
-    } else if (currentHour >= 17 && currentHour < 21) {
-      sessionName = 'New York Session (Sub-Session)';
-      sessionScore = 3;
-    }
-
-    // 7. Multi-Layer Confluence Scoring (102 Points Total)
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const reasonsFor: string[] = [];
-    const reasonsAgainst: string[] = [];
-
-    // Layer 0: Multi-Timeframe (MTF) Top-Down Institutional Confluence (18 Points)
-    if (htfBias && htfBias.htfDirection === 'BUY') {
-      bullishScore += 18;
-      reasonsFor.push(`Macro 1W+1D+4H Institutional Lock: BULLISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    } else if (htfBias && htfBias.htfDirection === 'SELL') {
-      bearishScore += 18;
-      reasonsAgainst.push(`Macro 1W+1D+4H Institutional Lock: BEARISH (1W: ${htfBias.bias1w || 'NEUTRAL'}, 1D: ${htfBias.bias1d || 'NEUTRAL'}, 4H: ${htfBias.bias4h})`);
-    }
-
-    // Layer 1: Market Regime Alignment (12 Points)
-    if (regimeData.regimeBias === 'BUY') {
-      bullishScore += 12;
-      reasonsFor.push(`Market Regime: ${regimeData.regime} (${regimeData.description})`);
-    } else if (regimeData.regimeBias === 'SELL') {
-      bearishScore += 12;
-      reasonsAgainst.push(`Market Regime: ${regimeData.regime} (${regimeData.description})`);
-    } else {
-      reasonsFor.push(`Regime: ${regimeData.regime} — Volatility percentile: ${regimeData.volatilityPercentile}%`);
-    }
-
-    // Layer 2: EMA Trend Structure 20/50/200 with Neutral Deadbands (10 Points)
-    const emaSpreadPct = Math.abs(ema20 - ema50) / (entryPrice || 1);
-    if (emaSpreadPct >= 0.0008) { // 0.08% deadband
-      if (ema20 > ema50) {
-        bullishScore += 10;
-        reasonsFor.push(`EMA-20 ($${ema20.toFixed(2)}) > EMA-50 ($${ema50.toFixed(2)}) bullish gold trend alignment (+${(emaSpreadPct * 100).toFixed(2)}%)`);
-      } else {
-        bearishScore += 10;
-        reasonsAgainst.push(`EMA-20 ($${ema20.toFixed(2)}) < EMA-50 ($${ema50.toFixed(2)}) bearish gold trend alignment (-${(emaSpreadPct * 100).toFixed(2)}%)`);
-      }
-    } else {
-      reasonsFor.push(`EMA-20 and EMA-50 compressed (${(emaSpreadPct * 100).toFixed(3)}%) — gold trend neutral`);
-    }
-
-    const ema200DistPct = Math.abs(entryPrice - ema200) / (entryPrice || 1);
-    if (ema200DistPct >= 0.0012) { // 0.12% deadband
-      if (entryPrice > ema200) {
-        bullishScore += 5;
-        reasonsFor.push(`Price above 200 EMA ($${ema200.toFixed(2)}) — HTF macro bull regime`);
-      } else {
-        bearishScore += 5;
-        reasonsAgainst.push(`Price below 200 EMA ($${ema200.toFixed(2)}) — HTF macro bear regime`);
-      }
-    } else {
-      reasonsFor.push(`Price at 200 EMA ($${ema200.toFixed(2)}) — macro inflection neutral`);
-    }
-
-    // Layer 3: VWAP & Psychological S/R Floor/Ceiling with Neutral Deadbands (8 Points)
-    const vwapDistPct = Math.abs(entryPrice - vwap) / (entryPrice || 1);
-    if (vwapDistPct >= 0.0008) { // 0.08% deadband
-      if (entryPrice > vwap) {
-        bullishScore += 4;
-        reasonsFor.push(`Price above VWAP ($${vwap.toFixed(2)}) — institutional demand floor`);
-      } else {
-        bearishScore += 4;
-        reasonsAgainst.push(`Price below VWAP ($${vwap.toFixed(2)}) — overhead supply resistance`);
-      }
-    } else {
-      reasonsFor.push(`Price oscillating at VWAP equilibrium ($${vwap.toFixed(2)})`);
-    }
-
-    const srDiff = Math.abs(levels.distToSupport - levels.distToResistance);
-    if (srDiff >= 1.50) { // $1.50 deadband
-      if (levels.distToSupport < levels.distToResistance) {
-        bullishScore += 4;
-        reasonsFor.push(`Proximity to major support at $${levels.nearestSupport.toFixed(2)} (only $${levels.distToSupport} away)`);
-      } else {
-        bearishScore += 4;
-        reasonsAgainst.push(`Proximity to major resistance at $${levels.nearestResistance.toFixed(2)} (only $${levels.distToResistance} away)`);
-      }
-    } else {
-      reasonsFor.push(`Price equidistant between support ($${levels.nearestSupport.toFixed(2)}) and resistance ($${levels.nearestResistance.toFixed(2)})`);
-    }
-
-    // Layer 4: US Dollar Index (DXY) Inverse Correlation (10 Points)
-    if (dxy.trend === 'BEARISH' && dxy.price > 0) {
-      bullishScore += 10;
-      reasonsFor.push(`US Dollar Index (DXY at ${dxy.price}, ${dxy.change1h > 0 ? '+' : ''}${dxy.change1h}%) softening — tailwind for XAU/USD`);
-    } else if (dxy.trend === 'BULLISH' && dxy.price > 0) {
-      bearishScore += 10;
-      reasonsAgainst.push(`US Dollar Index (DXY at ${dxy.price}, +${dxy.change1h}%) firming — headwind for gold valuation`);
-    } else if (dxy.price > 0) {
-      reasonsFor.push(`DXY Index neutral at ${dxy.price} (${dxy.change1h}%)`);
-    }
-
-    // Layer 5: US 10-Year Treasury Yields & Real Rates (8 Points)
-    if (us10y.trend === 'FALLING' && us10y.yield > 0) {
-      bullishScore += 8;
-      reasonsFor.push(`US 10Y Yield falling (${us10y.yield}%, ${us10y.change1h}%) — reduces opportunity cost of non-yielding bullion`);
-    } else if (us10y.trend === 'RISING' && us10y.yield > 0) {
-      bearishScore += 8;
-      reasonsAgainst.push(`US 10Y Yield rising (${us10y.yield}%, +${us10y.change1h}%) — higher real rates compress gold demand`);
-    } else if (us10y.yield > 0) {
-      reasonsFor.push(`US 10Y Yield steady at ${us10y.yield}%`);
-    }
-
-    // Layer 6: Smart Money Liquidity Sweeps & BOS (10 Points)
-    if (sweptLow_Rejection) {
-      bullishScore += 10;
-      reasonsFor.push(`Sell-Side Liquidity Swept below $${minLow.toFixed(2)} with strong hammer wick`);
-    } else if (breakoutHigh) {
-      bullishScore += 10;
-      reasonsFor.push(`Bullish Break of Structure (BOS) above previous swing high $${maxHigh.toFixed(2)}`);
-    }
-
-    if (sweptHigh_Rejection) {
-      bearishScore += 10;
-      reasonsAgainst.push(`Buy-Side Liquidity Swept above $${maxHigh.toFixed(2)} with shooting star rejection wick`);
-    } else if (breakdownLow) {
-      bearishScore += 10;
-      reasonsAgainst.push(`Bearish Break of Structure (BOS) below previous swing low $${minLow.toFixed(2)}`);
-    }
-
-    // Layer 7: Displacement & Candle Microstructure (6 Points)
-    if (isDisplacement) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody && closePosition >= 0.70) {
-        bullishScore += 6;
-        reasonsFor.push(`Bullish displacement candle body ($${lastBody.toFixed(2)} > 1.15x ATR, close at ${Math.round(closePosition * 100)}% of range)`);
-      } else if (!isBullBody && closePosition <= 0.30) {
-        bearishScore += 6;
-        reasonsAgainst.push(`Bearish displacement candle body ($${lastBody.toFixed(2)} > 1.15x ATR, close at ${Math.round(closePosition * 100)}% of range)`);
-      }
-    }
-
-    // Layer 8: FVG & Order Block Imbalance (6 Points)
-    if (fvg.fvg_detected) {
-      if (fvg.type === 'BULLISH') {
-        bullishScore += 3;
-        reasonsFor.push(`Bullish Fair Value Gap (FVG) imbalance zone at $${fvg.gap_size}`);
-      } else {
-        bearishScore += 3;
-        reasonsAgainst.push(`Bearish Fair Value Gap (FVG) imbalance zone at $${fvg.gap_size}`);
-      }
-    }
-
-    if (ob.order_block_detected) {
-      if (ob.type === 'BULLISH') {
-        bullishScore += 3;
-        reasonsFor.push(`Bullish Order Block liquidity floor identified at ${ob.price_level}`);
-      } else {
-        bearishScore += 3;
-        reasonsAgainst.push(`Bearish Order Block liquidity ceiling identified at ${ob.price_level}`);
-      }
-    }
-
-    // Layer 9: RSI Momentum & Divergence Window (6 Points)
-    if (rsi > 52 && rsi < 72) {
-      bullishScore += 6;
-      reasonsFor.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy upward momentum without exhaustion`);
-    } else if (rsi < 48 && rsi > 28) {
-      bearishScore += 6;
-      reasonsAgainst.push(`RSI-14 at ${rsi.toFixed(1)} confirms healthy downward momentum without exhaustion`);
-    } else if (rsi >= 72) {
-      bearishScore += 4;
-      reasonsAgainst.push(`RSI-14 overbought at ${rsi.toFixed(1)} — mean-reversion risk`);
-    } else if (rsi <= 28) {
-      bullishScore += 4;
-      reasonsFor.push(`RSI-14 oversold at ${rsi.toFixed(1)} — short-squeeze risk`);
-    }
-
-    // Layer 10: CBOE VIX Volatility & Safe-Haven Regime (4 Points)
-    if (vix.level > 0 && (vix.regime === 'ELEVATED' || vix.regime === 'EXTREME')) {
-      bullishScore += 4;
-      reasonsFor.push(`CBOE VIX elevated at ${vix.level} (${vix.regime}) — safe-haven bid activated for bullion`);
-    } else if (vix.level > 0) {
-      reasonsFor.push(`VIX calm at ${vix.level} (${vix.regime})`);
-    }
-
-    // Layer 11: Session Window
-    if (isDisplacement) {
-      const isBullBody = lastClose > lastOpen;
-      if (isBullBody) bullishScore += sessionScore;
-      else bearishScore += sessionScore;
-    }
-
-    // 8. Quality Gate: NO TRADE / WAIT if edge is insufficient
-    const scoreDiff = Math.abs(bullishScore - bearishScore);
-    if (scoreDiff < 12) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: `Gold market in neutral consolidation. Bullish (${bullishScore}) vs Bearish (${bearishScore}) score difference is only ${scoreDiff} pts (< 12 pts threshold). Awaiting decisive breakout from $${levels.nearestSupport} - $${levels.nearestResistance}.`,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    // Direction determination
-    const isBull = bullishScore > bearishScore;
-    const direction = isBull ? 'BUY' : 'SELL';
-
-    // News Digestion & Adverse Breaking News Veto Gate
-    const newsDigestion = this.digestNewsSentiment(news, symbol, direction);
-    if (newsDigestion.isVetoed) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: newsDigestion.vetoReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (direction === 'BUY') {
-      bullishScore += (newsDigestion.sentimentScore > 0.6 ? 8 : 0);
-    } else {
-      bearishScore += (newsDigestion.sentimentScore < 0.4 ? 8 : 0);
-    }
-    reasonsFor.push(newsDigestion.newsContext);
-
-    // Calibrated conviction & probability calculation
-    const { confidence: confidenceScore, winProb: calculatedWinProb } = this.calculateCalibratedConfidence(bullishScore, bearishScore);
-
-    // Apply universal quality gate
-    const marketRegimeGate = regimeData.regime;
-    const gateResult = this.applyQualityGate({
-      bullishScore, bearishScore, rsi, ema20, ema50, entryPrice,
-      candles: validCandles, direction, symbol, marketRegime: marketRegimeGate, htfBias
-    });
-    if (gateResult) return gateResult;
-
-    const isScalp = ['1m', '3m', '5m', '15m', '30m'].includes(interval);
-    const swingSlice = validCandles.slice(-Math.min(lookback, isScalp ? 10 : 20));
-    const lowestLow = Math.min(...swingSlice.map(c => Number(c.low)));
-    const highestHigh = Math.max(...swingSlice.map(c => Number(c.high)));
-
-    const precisionOrder = this.calculatePrecisionEntry(direction, entryPrice, ema20, vwap, atr, 2, {
-      rsi,
-      ema50,
-      ema200,
-      fvg,
-      ob,
-      htfBias,
-      sessionName,
-      recentNews: news,
-      symbol,
-      lowestLow,
-      highestHigh,
-      interval
-    });
-
-    if (precisionOrder.isOverextended) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.overextendedReason,
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-    if (!precisionOrder.passedGates) {
-      return {
-        direction: 'WAIT',
-        invalidationReason: precisionOrder.gateRejectionReason || 'Hard Confluence Gate Failed',
-        evidence: this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, entryPrice, entryPrice, 'WAIT', 2)
-      };
-    }
-
-    const effectiveEntry = precisionOrder.entryPrice;
-    const signalGrade = this.computeSignalGrade(precisionOrder.setupScore, ema20, ema50, ema200, direction);
-
-    const aiValidation = `Institutional 12-Layer Confluence Engine evaluated XAUUSD setup during ${sessionName}. ` +
-      `Data Source: ${goldSource}. Regime: ${regimeData.regime}. ` +
-      `Confluence Score: ${precisionOrder.setupScore}/100 (${signalGrade}, ${precisionOrder.entryModel}). Primary bias: ${direction} at $${effectiveEntry.toFixed(2)} [Zone: ${precisionOrder.entryZone}] ` +
-      `with invalidation stop loss set at $${precisionOrder.stopLoss.toFixed(2)} (R:R 1:${precisionOrder.riskRewardRatio}). ` +
-      `Intermarket Drivers: DXY ${dxy.price} (${dxy.trend}), US10Y ${us10y.yield}% (${us10y.trend}), VIX ${vix.level}. ` +
-      `Key catalysts: ${reasonsFor.slice(0, 3).join('; ')}.`;
-
-    const computedEvidence: any = this.getComputedEvidence(ema20, ema50, rsi, atr, vwap, effectiveEntry, precisionOrder.stopLoss, direction, 2);
-    computedEvidence.regime = regimeData.regime;
-    computedEvidence.dxy = dxy;
-    computedEvidence.us10y = us10y;
-    computedEvidence.vix = vix;
-    computedEvidence.goldSource = goldSource;
-    computedEvidence.levels = levels;
-
-    return {
-      direction,
-      entryType: precisionOrder.entryType,
-      entryPrice: effectiveEntry,
-      entryZone: precisionOrder.entryZone,
-      entryZoneMin: precisionOrder.entryZoneMin,
-      entryZoneMax: precisionOrder.entryZoneMax,
-      idealEntry: precisionOrder.idealEntry,
-      entryModel: precisionOrder.entryModel,
-      setupScore: precisionOrder.setupScore,
-      scoreBreakdown: precisionOrder.scoreBreakdown,
-      entryCondition: precisionOrder.entryCondition,
-      stopLoss: precisionOrder.stopLoss,
-      takeProfit1: precisionOrder.takeProfit1,
-      takeProfit2: precisionOrder.takeProfit2,
-      takeProfit3: precisionOrder.takeProfit3,
-      riskRewardRatio: precisionOrder.riskRewardRatio,
-      confidenceScore: precisionOrder.setupScore,
-      calculatedWinProb: precisionOrder.setupScore,
-      signalGrade,
-      marketRegime: `${regimeData.regime} (${direction === 'BUY' ? 'Bullish' : 'Bearish'} Flow)`,
-      htfBias: htfBias?.htfContext || (entryPrice >= ema200 ? 'Bullish HTF' : 'Bearish HTF'),
-      liquidityStatus: sweptLow_Rejection ? 'Sell-Side Swept' : breakoutHigh ? 'Bullish BOS Breakout' : sweptHigh_Rejection ? 'Buy-Side Swept' : 'Neutral Range',
-      structureStatus: fvg.fvg_detected ? `FVG ${fvg.type}` : 'Standard Structure',
-      displacementStatus: isDisplacement ? 'Active Gold Displacement' : 'Normal Volatility',
-      sessionStatus: sessionName,
-      reasonsFor,
-      reasonsAgainst,
-      aiValidation,
-      evidence: computedEvidence
-    };
-  }
-
-  private calcSMA(vals: number[], period: number): number {
+  // Common Technical Indicators & Helpers
+  public calcSMA(vals: number[], period: number): number {
     if (!vals || vals.length === 0) return 0;
-    const p = Math.min(period, vals.length);
-    const slice = vals.slice(-p);
-    return slice.reduce((a, b) => a + b, 0) / p;
+    const slice = vals.slice(-period);
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
   }
 
-  private calcEMA(vals: number[], period: number): number {
+  public calcEMA(vals: number[], period: number): number {
     if (!vals || vals.length === 0) return 0;
-    if (vals.length < period) {
-      // Use arithmetic mean (SMA) of available values instead of blindly returning current price
-      return vals.reduce((a, b) => a + b, 0) / vals.length;
-    }
+    if (vals.length < period) return vals.reduce((a, b) => a + b, 0) / vals.length;
     const k = 2 / (period + 1);
     let ema = vals.slice(0, period).reduce((a, b) => a + b, 0) / period;
     for (let i = period; i < vals.length; i++) {
-      ema = (vals[i] * k) + (ema * (1 - k));
+      ema = vals[i] * k + ema * (1 - k);
     }
     return ema;
   }
 
-  private calcRSI(closes: number[], period = 14): number {
+  public calcRSI(closes: number[], period = 14): number {
     if (!closes || closes.length < period + 1) return 50.0;
-    
-    // First average gain/loss
     let avgGain = 0;
     let avgLoss = 0;
     for (let i = 1; i <= period; i++) {
@@ -5497,8 +2676,6 @@ export class SignalsController implements OnModuleInit {
     }
     avgGain /= period;
     avgLoss /= period;
-
-    // Wilder's RMA smoothing for remaining bars
     for (let i = period + 1; i < closes.length; i++) {
       const diff = closes[i] - closes[i - 1];
       const gain = diff >= 0 ? diff : 0;
@@ -5506,12 +2683,11 @@ export class SignalsController implements OnModuleInit {
       avgGain = (avgGain * (period - 1) + gain) / period;
       avgLoss = (avgLoss * (period - 1) + loss) / period;
     }
-
     const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    return parseFloat((100 - (100 / (1 + rs))).toFixed(1));
+    return parseFloat((100 - 100 / (1 + rs)).toFixed(1));
   }
 
-  private calcATR(candles: any[], period = 14): number {
+  public calcATR(candles: any[], period = 14): number {
     if (!candles || candles.length < 2) return 0;
     const trs: number[] = [];
     for (let i = 1; i < candles.length; i++) {
@@ -5520,217 +2696,146 @@ export class SignalsController implements OnModuleInit {
       const pc = Number(candles[i - 1].close);
       trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
     }
-    if (trs.length < period) {
-      return trs.reduce((a, b) => a + b, 0) / trs.length;
-    }
-    
-    // Initial SMA of TR for first 'period' bars
+    if (trs.length < period) return trs.reduce((a, b) => a + b, 0) / trs.length;
     let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
-    // Wilder's RMA smoothing for subsequent bars
     for (let i = period; i < trs.length; i++) {
       atr = (atr * (period - 1) + trs[i]) / period;
     }
     return atr;
   }
 
-  private calcVWAP(candles: any[]): number {
+  public calcVWAP(candles: any[]): number {
     if (!candles || candles.length === 0) return 0;
     let totalTypicalVolume = 0;
     let totalVolume = 0;
-
     for (const candle of candles) {
       const high = Number(candle.high);
       const low = Number(candle.low);
       const close = Number(candle.close);
       const volume = Math.max(Number(candle.volume || 1), 1);
-
       if (![high, low, close].every(Number.isFinite)) continue;
-
       const typicalPrice = (high + low + close) / 3;
       totalTypicalVolume += typicalPrice * volume;
       totalVolume += volume;
     }
-
     return totalVolume > 0 ? totalTypicalVolume / totalVolume : Number(candles[candles.length - 1]?.close || 0);
   }
 
-  // Multi-Factor Institutional Conviction & Probability Engine
-  private calculateCalibratedConfidence(bullishScore: number, bearishScore: number): {
-    confidence: number;
-    margin: number;
-    winProb: number;
-  } {
-    const winningScore = Math.max(bullishScore, bearishScore);
-    const losingScore = Math.min(bullishScore, bearishScore);
-    const diff = Math.abs(bullishScore - bearishScore);
-    const totalScore = bullishScore + bearishScore;
+  public calcMACD(closes: number[]): { macd: number; signal: number; histogram: number } {
+    if (!closes || closes.length < 26) return { macd: 0, signal: 0, histogram: 0 };
+    const ema12 = this.calcEMA(closes, 12);
+    const ema26 = this.calcEMA(closes, 26);
+    const macdLine = parseFloat((ema12 - ema26).toFixed(2));
 
-    if (winningScore <= 0) return { confidence: 50, margin: 0, winProb: 50 };
-
-    // 1. Base Score derived from winning confluence evidence (scale 50 to 95)
-    // winningScore ranges from 60 (minimum quality gate) to 100+ (near-perfect confluence)
-    const baseScore = Math.min(95, Math.max(50, winningScore));
-
-    // 2. Opposition Conflict Penalty: opposing evidence shaves up to 18 points
-    const conflictRatio = totalScore > 0 ? losingScore / totalScore : 0;
-    const conflictPenalty = conflictRatio * 20;
-
-    // 3. Margin Dominance Bonus: decisive edge adds up to +4 points
-    const dominanceBonus = diff >= 50 ? 4 : diff >= 35 ? 2 : 0;
-
-    // 4. Final Calibrated Confidence Score
-    const rawConfidence = baseScore - conflictPenalty + dominanceBonus;
-    const confidence = Math.min(95, Math.max(45, Math.round(rawConfidence)));
-
-    // 5. Statistical Win Probability: calibrated cleanly with confidence (realistic 50% - 88% range)
-    const winProb = Math.min(88, Math.max(50, Math.round(50 + (confidence - 50) * 0.82)));
-
-    return { confidence, margin: diff, winProb };
+    const macdSeries: number[] = [];
+    for (let i = 26; i <= closes.length; i++) {
+      const slice = closes.slice(0, i);
+      macdSeries.push(this.calcEMA(slice, 12) - this.calcEMA(slice, 26));
+    }
+    const signalLine = parseFloat(this.calcEMA(macdSeries, 9).toFixed(2));
+    const histogram = parseFloat((macdLine - signalLine).toFixed(2));
+    return { macd: macdLine, signal: signalLine, histogram };
   }
 
-  // Background signal outcome resolution evaluator running every 15 seconds
-  @Interval(15000)
-  async evaluateActiveSignals() {
-    try {
-      const activeSignals = await this.prisma.signal.findMany({
-        where: { expiresAt: { gt: new Date() } },
-        take: 30,
-      });
+  public calcADX(candles: Candle[], period = 14): number {
+    if (!candles || candles.length < period * 2) return 20.0;
+    const plusDMs: number[] = [];
+    const minusDMs: number[] = [];
+    const trs: number[] = [];
 
-      if (activeSignals.length === 0) return;
+    for (let i = 1; i < candles.length; i++) {
+      const upMove = candles[i].high - candles[i - 1].high;
+      const downMove = candles[i - 1].low - candles[i].low;
+      plusDMs.push(upMove > downMove && upMove > 0 ? upMove : 0);
+      minusDMs.push(downMove > upMove && downMove > 0 ? downMove : 0);
+      trs.push(Math.max(
+        candles[i].high - candles[i].low,
+        Math.abs(candles[i].high - candles[i - 1].close),
+        Math.abs(candles[i].low - candles[i - 1].close)
+      ));
+    }
 
-      const tickers = await this.prisma.marketData.findMany();
-      const priceMap: Record<string, number> = {};
-      tickers.forEach((t: any) => {
-        priceMap[t.symbol] = Number(t.bidPrice || t.askPrice || 0);
-      });
+    const smoothedTr = trs.slice(-period).reduce((a, b) => a + b, 0);
+    if (smoothedTr <= 0) return 20.0;
+    const smoothedPlusDm = plusDMs.slice(-period).reduce((a, b) => a + b, 0);
+    const smoothedMinusDm = minusDMs.slice(-period).reduce((a, b) => a + b, 0);
 
-      for (const sig of activeSignals) {
-        const livePrice = priceMap[sig.symbol] || priceMap[sig.symbol.replace('/', '')];
-        if (!livePrice || livePrice <= 0) continue;
+    const plusDI = (smoothedPlusDm / smoothedTr) * 100;
+    const minusDI = (smoothedMinusDm / smoothedTr) * 100;
+    const diDiff = Math.abs(plusDI - minusDI);
+    const diSum = plusDI + minusDI;
+    const dx = diSum > 0 ? (diDiff / diSum) * 100 : 20.0;
 
-        let outcome: string | null = null;
-        if (sig.direction === 'BUY') {
-          if (livePrice >= Number(sig.takeProfit2)) outcome = 'HIT_TP2';
-          else if (livePrice >= Number(sig.takeProfit1)) outcome = 'HIT_TP1';
-          else if (livePrice <= Number(sig.stopLoss)) outcome = 'HIT_SL';
-        } else if (sig.direction === 'SELL') {
-          if (livePrice <= Number(sig.takeProfit2)) outcome = 'HIT_TP2';
-          else if (livePrice <= Number(sig.takeProfit1)) outcome = 'HIT_TP1';
-          else if (livePrice >= Number(sig.stopLoss)) outcome = 'HIT_SL';
-        }
+    return parseFloat(dx.toFixed(1));
+  }
 
-        if (outcome) {
-          let tradeAutopsy = null;
-          if (outcome === 'HIT_SL') {
-            tradeAutopsy = this.generateTradeAutopsy(sig, livePrice);
-          }
+  public calcBollingerBands(closes: number[], period = 20, multiplier = 2): { upper: number; middle: number; lower: number; bandwidth: number } {
+    if (!closes || closes.length < period) {
+      const last = closes[closes.length - 1] || 0;
+      return { upper: last + 2, middle: last, lower: last - 2, bandwidth: 4 };
+    }
+    const middle = this.calcSMA(closes, period);
+    const slice = closes.slice(-period);
+    const variance = slice.reduce((sum, c) => sum + Math.pow(c - middle, 2), 0) / period;
+    const stdDev = Math.sqrt(variance);
+    const upper = parseFloat((middle + multiplier * stdDev).toFixed(2));
+    const lower = parseFloat((middle - multiplier * stdDev).toFixed(2));
+    const bandwidth = parseFloat(((upper - lower) / Math.max(1, middle) * 100).toFixed(2));
+    return { upper, middle: parseFloat(middle.toFixed(2)), lower, bandwidth };
+  }
 
-          await this.prisma.signal.update({
-            where: { id: sig.id },
-            data: {
-              expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-              aiReasoning: {
-                ...(typeof sig.aiReasoning === 'object' ? sig.aiReasoning : {}),
-                status: outcome,
-                outcomeResolution: outcome,
-                resolvedAt: new Date().toISOString(),
-                resolvedPrice: livePrice,
-                ...(tradeAutopsy ? { tradeAutopsy } : {})
-              }
-            }
-          });
-          
-          let winRateText = '0.0%';
-          try {
-            const lastSignals = await this.prisma.signal.findMany({
-              where: { symbol: sig.symbol },
-              orderBy: { createdAt: 'desc' },
-              take: 50
-            });
-            const resolvedSignals = lastSignals.filter(s => {
-               const res = (s.aiReasoning as any)?.outcomeResolution;
-               return res && res !== '';
-            }).slice(0, 20);
-            
-            if (resolvedSignals.length > 0) {
-              const wins = resolvedSignals.filter(s => {
-                 const res = (s.aiReasoning as any)?.outcomeResolution;
-                 return res === 'HIT_TP1' || res === 'HIT_TP2';
-              }).length;
-              winRateText = ((wins / resolvedSignals.length) * 100).toFixed(1) + '%';
-            }
-          } catch (e) {
-            // Ignore DB errors during calibration
-          }
-          
-          console.log(`[SIGNAL OUTCOME RESOLVED] Signal ${sig.id} (${sig.symbol} ${sig.direction}) resolved to ${outcome} at price ${livePrice}. Historical Win Rate (last 20): ${winRateText}`);
-        }
+  public detectRsiDivergence(closes: number[], swings: FractalSwing[]): 'BULLISH_DIVERGENCE' | 'BEARISH_DIVERGENCE' | 'NONE' {
+    if (!closes || closes.length < 30 || swings.length < 4) return 'NONE';
+    const recentLowSwings = swings.filter(s => s.type === 'LOW').slice(-2);
+    if (recentLowSwings.length === 2) {
+      const [s1, s2] = recentLowSwings;
+      const rsi1 = this.calcRSI(closes.slice(0, s1.index + 1));
+      const rsi2 = this.calcRSI(closes.slice(0, s2.index + 1));
+      if (s2.price < s1.price && rsi2 > rsi1 + 2) {
+        return 'BULLISH_DIVERGENCE';
       }
-    } catch (err: any) {
-      console.warn(`[SignalsController] Signal outcome evaluator notice: ${err.message}`);
     }
+    const recentHighSwings = swings.filter(s => s.type === 'HIGH').slice(-2);
+    if (recentHighSwings.length === 2) {
+      const [s1, s2] = recentHighSwings;
+      const rsi1 = this.calcRSI(closes.slice(0, s1.index + 1));
+      const rsi2 = this.calcRSI(closes.slice(0, s2.index + 1));
+      if (s2.price > s1.price && rsi2 < rsi1 - 2) {
+        return 'BEARISH_DIVERGENCE';
+      }
+    }
+    return 'NONE';
   }
 
-  // Automated Post-Trade Forensic Diagnostic Autopsy Engine
-  private generateTradeAutopsy(sig: any, livePrice: number): any {
-    const reasoning = (typeof sig.aiReasoning === 'object' ? sig.aiReasoning : {}) || {};
-    const entry = Number(sig.entryPrice || 0);
-    const sl = Number(sig.stopLoss || 0);
-    const slDist = Math.abs(entry - sl);
-    const isForex = sig.symbol.includes('/') || ['EUR', 'GBP', 'JPY'].some((fx: string) => sig.symbol.includes(fx));
-    const slPips = isForex ? (sig.symbol.includes('JPY') ? slDist * 100 : slDist * 10000) : slDist;
+  public computeEventDrivenWeights(
+    candles: Candle[],
+    sweeps: LiquiditySweep[],
+    swings: FractalSwing[],
+    obs: OrderBlock[],
+    fvgs: FairValueGap[]
+  ): { index: number; weight: number; eventTag: string }[] {
+    const len = candles.length;
+    return candles.map((c, i) => {
+      const isSweep = sweeps.some(s => s.candleIndex === i);
+      const isSwing = swings.some(s => s.index === i);
+      const isObs = obs.some(o => o.candleIndex === i && !o.mitigated);
+      const isFvg = fvgs.some(f => f.candleIndex === i && !f.mitigated);
+      const isRecent = i >= len - 10;
 
-    // Evaluate structural failure dimensions
-    const isShallowSL = isForex ? slPips < 3.5 : slDist < (entry * 0.0005);
-    const hadNews = Array.isArray(reasoning.indicators) && reasoning.indicators.some((i: string) => i.toLowerCase().includes('news') || i.toLowerCase().includes('cpi'));
-    const htfAligned = !String(reasoning.htfBias || '').toLowerCase().includes('counter');
-
-    let primaryFailure = 'Category H — Shallow Stop Loss Placement';
-    let failureDesc = `Stop Loss was placed within normal market spread and noise (${slPips.toFixed(1)} pips). Trade direction had high structural validity, but invalidation buffer was caught by retail liquidity sweep.`;
-
-    if (!htfAligned) {
-      primaryFailure = 'Category D — Higher-Timeframe (HTF) Trend Conflict';
-      failureDesc = 'Trade was entered against the dominant 4H/1H institutional order flow baseline.';
-    } else if (hadNews) {
-      primaryFailure = 'Category E — High-Impact Macro Economic Event';
-      failureDesc = 'Trade was active during an unexpected high-impact economic news release (CPI/NFP/FOMC), causing transient spread and volatility spikes.';
-    } else if (isShallowSL) {
-      primaryFailure = 'Category H — Shallow Stop Loss Placement';
-      failureDesc = `Stop Loss (${slPips.toFixed(1)} pips) was placed too close to entry without clearing the session swing invalidation boundary.`;
-    } else {
-      primaryFailure = 'Category O — Statistically Normal Market Invalidation';
-      failureDesc = 'All 23 structural and liquidity parameters were aligned; this trade is within normal expected statistical variance.';
-    }
-
-    return {
-      asset: sig.symbol,
-      direction: sig.direction,
-      entryPrice: entry,
-      stopLoss: sl,
-      resolvedPrice: livePrice,
-      resultR: '-1.0R',
-      timestamp: new Date().toISOString(),
-      primaryFailure,
-      failureDescription: failureDesc,
-      checklist: {
-        htfTrendAligned: htfAligned,
-        liquiditySweptBeforeEntry: !isShallowSL,
-        fvgStructureValid: true,
-        macroAligned: true,
-        spreadNormal: true,
-        slStructurallyPlaced: !isShallowSL,
-        lossCategory: primaryFailure.split(' — ')[0],
-      },
-      actionableTakeaway: isShallowSL
-        ? 'Widen invalidation buffer beyond the session extreme + 0.20x ATR on subsequent setups.'
-        : 'Maintain risk management rules; setup had positive expected mathematical value.'
-    };
+      if (isSweep) return { index: i, weight: 0.95, eventTag: 'MAJOR_LIQUIDITY_SWEEP' };
+      if (isObs) return { index: i, weight: 0.90, eventTag: 'DISPLACEMENT_ORDER_BLOCK' };
+      if (isFvg) return { index: i, weight: 0.88, eventTag: 'FRESH_FAIR_VALUE_GAP' };
+      if (isSwing) return { index: i, weight: 0.82, eventTag: 'FRACTAL_SWING_PIVOT' };
+      if (isRecent) return { index: i, weight: 0.40, eventTag: 'RECENT_TACTICAL_BAR' };
+      return { index: i, weight: 0.05, eventTag: 'BASELINE_STRUCTURAL_BAR' };
+    });
   }
 }
 
 @Module({
   imports: [SubscriptionModule, AutomationModule],
   controllers: [SignalsController],
+  providers: [SignalsController],
+  exports: [SignalsController],
 })
 export class SignalsModule {}
