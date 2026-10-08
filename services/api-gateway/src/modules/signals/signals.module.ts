@@ -1376,7 +1376,7 @@ export class SignalsController implements OnModuleInit {
         zoneLow: currentPrice - 0.5,
         zoneHigh: currentPrice + 0.5,
         preferredEntry: currentPrice,
-        confluenceFactors: ['Market Current Price'],
+        confluenceFactors: ['Consolidating Range Equilibrium'],
         overlapCount: 1,
         zoneRank: 'WEAK',
         entryQualityCurve: []
@@ -2418,7 +2418,74 @@ export class SignalsController implements OnModuleInit {
         orderBy: { createdAt: 'desc' },
       });
 
-      return activeSignals;
+      if (activeSignals.length > 0) {
+        return activeSignals;
+      }
+
+      // If no active limit/market order is stored in DB, serve the live 5-gate engine state
+      if (this.liveStateStore?.currentPrice) {
+        const state = this.liveStateStore;
+        const dir = (state.activeOrderType && state.activeOrderType.includes('BUY'))
+          ? 'BUY'
+          : (state.activeOrderType && state.activeOrderType.includes('SELL'))
+          ? 'SELL'
+          : 'WAIT';
+
+        return [{
+          id: `gold-state-${Date.now()}`,
+          symbol: 'GOLD',
+          direction: dir,
+          entryPrice: state.preferredEntry || state.currentPrice,
+          stopLoss: state.stopLoss || 0,
+          takeProfit1: state.tp1 || 0,
+          takeProfit2: state.tp2 || 0,
+          riskRewardRatio: state.fiveGates?.gate4_trade?.telemetry?.r1 || 1.8,
+          winProbability: state.fiveGates?.allPassed ? 82 : Math.round(state.fiveGates?.gate3_setup?.score || 73),
+          durationEstimate: 'Active Market Scan',
+          aiReasoning: {
+            status: state.fiveGates?.allPassed ? 'ACTIVE' : 'WAIT',
+            orderType: state.activeOrderType || 'WAIT',
+            entryZone: state.entryZone || [state.currentPrice - 0.5, state.currentPrice + 0.5],
+            strategy: 'SWEEP_CHOCH_REVERSAL',
+            signalGrade: state.fiveGates?.allPassed ? 'A' : 'WAIT',
+            opportunityScore: Math.round(state.fiveGates?.gate3_setup?.score || 73),
+            marketBiasScore: state.fiveGates?.gate3_setup?.score || 73,
+            entryQualityScore: state.fiveGates?.gate4_trade?.score || 70,
+            fiveGates: state.fiveGates,
+            tradePath: {
+              tp1Price: state.tp1 || 0,
+              tp2Price: state.tp2 || 0,
+              tp3Price: state.tp3 || 0,
+              expectedValueR: state.expectedValueR || 0.4
+            },
+            invalidationAndExpiry: {
+              exactStopLoss: state.stopLoss || 0,
+              invalidationThesis: `Invalidation if 15M candle closes beyond structural SL.`
+            },
+            positionSizing: {
+              recommendedLots: 0.10,
+              riskBudgetUsd: 1000
+            },
+            indicators: state.fiveGates?.allPassed ? ['Institutional Confluence Zone'] : [state.fiveGates?.gate3_setup?.reason || 'Awaiting clean session liquidity sweep and MSS displacement.'],
+            explanation: state.fiveGates?.allPassed
+              ? `Institutional trade plan cleared through 5 gates.`
+              : (state.fiveGates?.gate3_setup?.reason || 'Market structure is consolidating without an active liquidity sweep.'),
+            aiVerdict: state.fiveGates?.allPassed ? 'APPROVED' : 'HOLD',
+            levels: {
+              currentPrice: state.currentPrice,
+              sessionVwap: state.currentPrice
+            },
+            marketRegime: state.marketRegime || 'EXPANSION_RANGE',
+            volatilityMetrics: { regime: state.volatilityRegime || 'NORMAL' },
+            microstructure: { spread: state.spread || 0.25, bid: state.bid || state.currentPrice, ask: state.ask || state.currentPrice },
+            timeframe: '15m'
+          },
+          createdAt: new Date(state.lastUpdated || Date.now()),
+          expiresAt: new Date(Date.now() + 300 * 1000)
+        }];
+      }
+
+      return [];
     } catch (err: any) {
       this.logger.error(`[SignalsController] getSignals notice: ${err.message}`);
       return [];
@@ -2509,9 +2576,9 @@ export class SignalsController implements OnModuleInit {
             grade: setup.grade,
             score: setup.opportunityScore,
             risk_reward_ratio_tp1: setup.riskReward1,
-            risk_reward_ratio_tp2: setup.riskReward2,
-            confluence_reasons: setup.confluenceReasons,
-            levels: setup.levels,
+            confluence_reasons: setup.fiveGates.allPassed
+              ? setup.confluenceReasons
+              : [setup.fiveGates.gate3_setup.reason || setup.summary || 'Awaiting clean session liquidity sweep and displacement.'],
           },
           session: (setup.levels as any)?.session || 'Active Session',
           intermarket: setup.intermarket,

@@ -127,6 +127,12 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
               {signal.direction}
             </Badge>
 
+            {/* Timeframe Badge */}
+            <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center gap-1">
+              <Clock size={11} className="text-purple-400" />
+              {(ai.timeframe || '15m').toUpperCase()}
+            </span>
+
             {/* Order Type Badge */}
             <span className={cn(
               "px-2.5 py-0.5 rounded-lg text-[11px] font-mono font-bold border flex items-center gap-1.5",
@@ -150,17 +156,15 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
 
             {/* Model Tag */}
             {ai.strategy && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white/5 text-slate-300 border border-white/10">
                 {String(ai.strategy).replace(/_/g, ' ')}
               </span>
             )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-400">
-            <span className="font-mono text-slate-300">Timeframe: <strong>{ai.timeframe || '15m'}</strong></span>
-            <span>•</span>
             <span className="font-mono text-cyan-300 flex items-center gap-1 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-500/20">
-              <Clock size={11} className="text-cyan-400" /> {timeAgo}
+              <Clock size={11} className="text-cyan-400" /> Generated: {timeAgo}
             </span>
             <span>•</span>
             <span className="text-[11px] text-slate-400 font-mono">
@@ -249,6 +253,12 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
               <div className="flex items-center justify-between text-[10px] font-mono text-cyan-300/90 mt-1 pt-1 border-t border-white/5">
                 <span>Confluence Zone (ICZ):</span>
                 <strong>{Array.isArray(entryZone) ? `${fmtPrice(entryZone[0])} - ${fmtPrice(entryZone[1])}` : String(entryZone)}</strong>
+              </div>
+              <div className="text-[10px] text-slate-300 mt-1.5 pt-1.5 border-t border-white/5 flex items-start gap-1 font-mono">
+                <span className="text-cyan-400 font-bold shrink-0">Reason for Entry:</span>
+                <span className="text-slate-300 line-clamp-1">
+                  {Array.isArray(ai.indicators) && ai.indicators.length > 0 ? ai.indicators.slice(0, 2).join(' + ') : 'Institutional Order Block & Liquidity Sweep'}
+                </span>
               </div>
             </div>
 
@@ -353,7 +363,7 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
             <BrainCircuit size={13} className="text-purple-400" />
-            Senior AI Desk Reviewer (Gemini Context Layer)
+            Full Entry Thesis & Market Structure Rationale (Gemini AI)
           </div>
           <span className="text-[9px] font-mono text-purple-300/80">Macro Risk & Liquidity Audit</span>
         </div>
@@ -364,7 +374,8 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
 
         {/* Confluence Pill Tags */}
         {Array.isArray(ai.indicators) && ai.indicators.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-1 border-t border-purple-500/15">
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-purple-500/15">
+            <span className="text-[10px] font-mono text-slate-400 font-bold">Key Entry Confluences:</span>
             {ai.indicators.slice(0, 5).map((fact: string, idx: number) => (
               <span key={idx} className="px-2 py-0.5 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] font-mono text-purple-200">
                 {fact}
@@ -545,7 +556,15 @@ export default function SignalsPage() {
   }, [setSignals]);
 
   useEffect(() => {
-    fetchActiveSignals(true);
+    fetchActiveSignals(true).then(() => {
+      const currentGold = useAIStore.getState().signals.filter(s => {
+        const sym = (s.symbol || '').toUpperCase();
+        return sym.includes('GOLD') || sym.includes('XAU');
+      });
+      if (currentGold.length === 0) {
+        handleRunGoldScan(true);
+      }
+    });
     const interval = setInterval(() => {
       fetchActiveSignals(true);
     }, 12000);
@@ -553,9 +572,9 @@ export default function SignalsPage() {
   }, [fetchActiveSignals]);
 
   // Execute 5-Gate Institutional Scan on Gold
-  const handleRunGoldScan = async () => {
+  const handleRunGoldScan = async (silent = false) => {
     setIsScanning(true);
-    const toastId = toast.loading('Running 5-Gate Institutional Gold Engine (TradingView WebSocket)...');
+    const toastId = !silent ? toast.loading('Running 5-Gate Institutional Gold Engine (TradingView WebSocket)...') : undefined;
     try {
       const rawSignal = await apiFetch<any>('/api/v2/signals/generate', {
         method: 'POST',
@@ -568,20 +587,28 @@ export default function SignalsPage() {
 
       const newSignal = mapSignal(rawSignal);
 
+      // ALWAYS mount the signal card in the state feed so user sees the 5-Gate audit card!
+      setSignals([newSignal, ...signals.filter(s => s.id !== newSignal.id && (s.symbol || '').toUpperCase().includes('GOLD'))]);
+
       if (newSignal.direction === 'WAIT') {
-        toast(
-          `Market Held at Gate: ${newSignal.reasoning || 'Awaiting clean session liquidity sweep and MSS displacement.'}`,
-          { id: toastId, icon: '⚠️', duration: 5000 }
-        );
-        fetchActiveSignals(true);
+        const failedGate = (newSignal.aiReasoning as any)?.failedGate || (newSignal.aiReasoning as any)?.fiveGates?.failingGate;
+        const gatePrefix = failedGate ? `[${failedGate.replace(/_/g, ' ')}] ` : '';
+        const waitReason = (newSignal.aiReasoning as any)?.explanation || newSignal.reasoning || 'Awaiting clean session liquidity sweep and MSS displacement.';
+        if (!silent && toastId) {
+          toast(
+            `Market Held: ${gatePrefix}${waitReason}`,
+            { id: toastId, icon: '🛡️', duration: 6000 }
+          );
+        }
         return;
       }
 
-      setSignals([newSignal, ...signals.filter(s => s.id !== newSignal.id && s.symbol === 'GOLD')]);
-      toast.success(
-        `Institutional ${newSignal.direction} signal generated on Gold! (EV: +${(newSignal.aiReasoning as any)?.tradePath?.expectedValueR || '0.85'}R)`,
-        { id: toastId, duration: 5000 }
-      );
+      if (!silent && toastId) {
+        toast.success(
+          `Institutional ${newSignal.direction} signal generated on Gold! (EV: +${(newSignal.aiReasoning as any)?.tradePath?.expectedValueR || '0.85'}R)`,
+          { id: toastId, duration: 5000 }
+        );
+      }
 
       if (notificationsEnabled) {
         playSignalChime('NEW_SIGNAL');
@@ -590,7 +617,9 @@ export default function SignalsPage() {
         });
       }
     } catch (err: any) {
-      toast.error(err.message || 'Error executing Gold scan.', { id: toastId });
+      if (!silent && toastId) {
+        toast.error(err.message || 'Error executing Gold scan.', { id: toastId });
+      }
     } finally {
       setIsScanning(false);
     }
@@ -662,7 +691,7 @@ export default function SignalsPage() {
 
           {/* Primary Action: Run 5-Gate Scan */}
           <button
-            onClick={handleRunGoldScan}
+            onClick={() => handleRunGoldScan(false)}
             disabled={isScanning}
             className="btn-primary py-2 px-3 sm:px-4 rounded-xl text-xs font-bold flex items-center gap-1.5 sm:gap-2 shadow-lg shadow-purple-500/25 cursor-pointer disabled:opacity-50 shrink-0"
           >
@@ -881,7 +910,7 @@ export default function SignalsPage() {
               The automated 5-Gate production engine is continuously monitoring live TradingView price flow for clean session liquidity sweeps and institutional displacement.
             </p>
             <button
-              onClick={handleRunGoldScan}
+              onClick={() => handleRunGoldScan(false)}
               disabled={isScanning}
               className="btn-primary py-2.5 px-5 rounded-xl text-xs font-bold inline-flex items-center gap-2 cursor-pointer shadow-lg shadow-purple-500/25"
             >

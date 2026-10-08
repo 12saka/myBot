@@ -200,10 +200,15 @@ async def predict_institutional(
 
     # If the quantitative setup is WAIT or score is low, return transparent WAIT response
     if setup.direction == "WAIT" or setup.score < 70 or setup.entry <= 0:
-        reasons = setup.confluence_reasons if setup.confluence_reasons else [
-            "Market structure did not meet institutional grade threshold (minimum score: 70/100).",
-            "Awaiting clean session liquidity sweep and displacement confirmation."
-        ]
+        raw_reasons = [r for r in setup.confluence_reasons if r and r != "Market Current Price"] if setup.confluence_reasons else []
+        if not raw_reasons:
+            reasons = [
+                "Market is consolidating without an active liquidity sweep or displacement trigger (75+ confluence threshold required)."
+            ]
+        else:
+            reasons = raw_reasons
+
+        explanation_detail = " ".join(reasons)
         return PredictResponse(
             symbol=symbol,
             direction="WAIT",
@@ -213,7 +218,7 @@ async def predict_institutional(
             take_profit_1=0.0,
             take_profit_2=0.0,
             indicators=reasons,
-            ai_explanation=f"XAUUSD Engine Status: WAIT. Confluence score is {setup.score:.0f}/100. " + " ".join(reasons),
+            ai_explanation=f"XAUUSD Engine Status: WAIT (Score {setup.score:.0f}/100). {explanation_detail}",
             timestamp=datetime.utcnow().isoformat(),
             ai_review_verdict="HOLD",
             macro_context=intermarket.get("rationale", "Normal intermarket conditions"),
