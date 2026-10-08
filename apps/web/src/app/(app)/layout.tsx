@@ -37,6 +37,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { setPortfolio } = usePortfolioStore();
   const { setTickers, setWatchlist } = useMarketStore();
   const { setSignals } = useAIStore();
+  const signals = useAIStore((s) => s.signals);
+  const activeSignalsCount = signals.filter(s => s.direction === 'BUY' || s.direction === 'SELL').length;
   const { sidebarOpen } = useUIStore();
 
   useEffect(() => {
@@ -130,6 +132,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     { href: '/academy',   label: 'Academy',   icon: BookOpen },
                   ].map(({ href, label, icon: Icon }) => {
                     const isActive = pathname === href || pathname?.startsWith(href + '/');
+                    const isSignals = href === '/signals';
                     return (
                       <Link
                         key={href}
@@ -139,7 +142,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                           isActive ? "text-purple-400" : "text-slate-400 hover:text-slate-200"
                         )}
                       >
-                        <Icon size={18} className={cn("transition-transform duration-200", isActive && "scale-110")} />
+                        <div className="relative">
+                          <Icon size={18} className={cn("transition-transform duration-200", isActive && "scale-110")} />
+                          {isSignals && activeSignalsCount > 0 && (
+                            <span className="absolute -top-1.5 -right-2 px-1 py-0.2 min-w-[14px] text-[8px] font-mono font-black rounded-full bg-amber-500 text-slate-950 flex items-center justify-center animate-bounce shadow-md shadow-amber-500/50">
+                              {activeSignalsCount}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[9px] font-bold tracking-wide uppercase">{label}</span>
                         {isActive && (
                           <span className="absolute bottom-0 w-1.5 h-1.5 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7]" />

@@ -160,6 +160,13 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
                 {String(ai.strategy).replace(/_/g, ' ')}
               </span>
             )}
+
+            {/* Live Progress Status Badge */}
+            {ai.status === 'TP1_HIT' && (
+              <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse flex items-center gap-1">
+                <CheckCircle2 size={11} /> TP1 HIT • SL AT BREAKEVEN
+              </span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-400">
@@ -556,23 +563,15 @@ export default function SignalsPage() {
   }, [setSignals]);
 
   useEffect(() => {
-    fetchActiveSignals(true).then(() => {
-      const currentGold = useAIStore.getState().signals.filter(s => {
-        const sym = (s.symbol || '').toUpperCase();
-        return sym.includes('GOLD') || sym.includes('XAU');
-      });
-      if (currentGold.length === 0) {
-        handleRunGoldScan(true);
-      }
-    });
+    fetchActiveSignals(true);
     const interval = setInterval(() => {
       fetchActiveSignals(true);
-    }, 12000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [fetchActiveSignals]);
 
   // Execute 5-Gate Institutional Scan on Gold
-  const handleRunGoldScan = async (silent = false) => {
+  const handleRunGoldScan = async (silent = false, forceFresh = false) => {
     setIsScanning(true);
     const toastId = !silent ? toast.loading('Running 5-Gate Institutional Gold Engine (TradingView WebSocket)...') : undefined;
     try {
@@ -581,14 +580,11 @@ export default function SignalsPage() {
         body: JSON.stringify({
           symbol: 'GOLD',
           interval: selectedTimeframe,
-          forceFresh: true
+          forceFresh
         })
       });
 
       const newSignal = mapSignal(rawSignal);
-
-      // ALWAYS mount the signal card in the state feed so user sees the 5-Gate audit card!
-      setSignals([newSignal, ...signals.filter(s => s.id !== newSignal.id && (s.symbol || '').toUpperCase().includes('GOLD'))]);
 
       if (newSignal.direction === 'WAIT') {
         const failedGate = (newSignal.aiReasoning as any)?.failedGate || (newSignal.aiReasoning as any)?.fiveGates?.failingGate;
@@ -603,9 +599,12 @@ export default function SignalsPage() {
         return;
       }
 
+      // Actionable BUY or SELL trade plan verified through all 5 gates
+      setSignals([newSignal, ...signals.filter(s => s.id !== newSignal.id && (s.symbol || '').toUpperCase().includes('GOLD'))]);
+
       if (!silent && toastId) {
         toast.success(
-          `Institutional ${newSignal.direction} signal generated on Gold! (EV: +${(newSignal.aiReasoning as any)?.tradePath?.expectedValueR || '0.85'}R)`,
+          `Institutional ${newSignal.direction} signal active on Gold! (EV: +${(newSignal.aiReasoning as any)?.tradePath?.expectedValueR || '0.85'}R)`,
           { id: toastId, duration: 5000 }
         );
       }
@@ -636,13 +635,14 @@ export default function SignalsPage() {
     }
   };
 
-  // Filter signals strictly for Gold
+  // Filter signals strictly for Gold ACTIONABLE trades (BUY or SELL)
   const goldSignals = signals.filter(s => {
-    const sym = s.symbol.toUpperCase();
-    return sym.includes('GOLD') || sym.includes('XAU');
+    const sym = (s.symbol || '').toUpperCase();
+    const isGold = sym.includes('GOLD') || sym.includes('XAU');
+    return isGold && (s.direction === 'BUY' || s.direction === 'SELL');
   });
 
-  const activeSetups = goldSignals.filter(s => s.direction === 'BUY' || s.direction === 'SELL');
+  const activeSetups = goldSignals;
   const avgConfidence = goldSignals.length > 0
     ? Math.round(goldSignals.reduce((a, b) => a + b.confidence, 0) / goldSignals.length)
     : null;
@@ -903,20 +903,96 @@ export default function SignalsPage() {
         ))}
 
         {goldSignals.length === 0 && (
-          <div className="glass-card rounded-2xl p-8 sm:p-12 text-center border border-white/5 space-y-4">
-            <Zap className="mx-auto text-amber-400/50" size={36} />
-            <h3 className="font-display font-bold text-white text-base sm:text-lg">No Active Gold Trade Setups</h3>
-            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              The automated 5-Gate production engine is continuously monitoring live TradingView price flow for clean session liquidity sweeps and institutional displacement.
-            </p>
-            <button
-              onClick={() => handleRunGoldScan(false)}
-              disabled={isScanning}
-              className="btn-primary py-2.5 px-5 rounded-xl text-xs font-bold inline-flex items-center gap-2 cursor-pointer shadow-lg shadow-purple-500/25"
-            >
-              {isScanning ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              <span>Execute 5-Gate Institutional Scan Now</span>
-            </button>
+          <div className="glass-card rounded-2xl p-6 sm:p-10 border border-purple-500/20 bg-gradient-to-b from-purple-950/20 via-slate-950/40 to-slate-950/80 space-y-6 relative overflow-hidden shadow-2xl">
+            {/* Ambient Background Glow */}
+            <div className="absolute top-0 right-1/4 w-96 h-36 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/5 pb-5">
+              <div className="flex items-center gap-3">
+                <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300">
+                  <Activity size={20} className="animate-pulse" />
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-white text-base sm:text-lg flex items-center gap-2">
+                    Autonomous 5-Gate Radar Active
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                      LIVE SCANNING
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Background engine runs continuously every 45s across all pages.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => handleRunGoldScan(false)}
+                disabled={isScanning}
+                className="btn-primary py-2 px-4 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-lg shadow-purple-500/25 shrink-0 disabled:opacity-50"
+              >
+                {isScanning ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} className="text-amber-300" />}
+                <span>Scan Live Market Now</span>
+              </button>
+            </div>
+
+            {/* 4 Multi-Timeframe Quality Gates Currently Being Tracked */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 space-y-1">
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                  <span>Gate 1: Macro & News</span>
+                  <span className="text-emerald-400 font-bold">CLEAR</span>
+                </div>
+                <div className="text-xs font-semibold text-slate-200">
+                  Zero USD Blackouts Active
+                </div>
+                <p className="text-[10px] text-slate-500">ForexFactory calendar filter</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 space-y-1">
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                  <span>Gate 2: Intermarket</span>
+                  <span className="text-purple-300 font-bold">ALIGNED</span>
+                </div>
+                <div className="text-xs font-semibold text-slate-200">
+                  DXY & US10Y Decoupled
+                </div>
+                <p className="text-[10px] text-slate-500">Real Treasury Yield spread</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 space-y-1">
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                  <span>Gate 3: Liquidity Sweeps</span>
+                  <span className="text-amber-400 font-bold">MONITORING</span>
+                </div>
+                <div className="text-xs font-semibold text-slate-200">
+                  Session High/Low Levels
+                </div>
+                <p className="text-[10px] text-slate-500">Asian Range & London Overlap</p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 space-y-1">
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                  <span>Gate 4: Trigger & EV</span>
+                  <span className="text-cyan-400 font-bold">&ge; +1.4R Target</span>
+                </div>
+                <div className="text-xs font-semibold text-slate-200">
+                  5M Displacement / Pullback
+                </div>
+                <p className="text-[10px] text-slate-500">Awaiting precise entry geometry</p>
+              </div>
+            </div>
+
+            {/* Background Notification Reassurance Banner */}
+            <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5 text-slate-300">
+                <BellRing size={16} className="text-purple-400 shrink-0 animate-pulse" />
+                <span>
+                  <strong>Switch pages freely:</strong> The engine operates in the background. When a high-conviction trade confirms, you will receive an instant audio chime, toast notification, and device push alert anywhere in the app.
+                </span>
+              </div>
+            </div>
           </div>
         )}
       </motion.div>

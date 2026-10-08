@@ -11,6 +11,7 @@ import {
   Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle, Monitor
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
+import { useAIStore } from '@/store/useAIStore';
 import { cn } from '@/lib/utils';
 import { toast } from 'react-hot-toast';
 
@@ -55,6 +56,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { sidebarCollapsed, toggleSidebarCollapsed, sidebarOpen, setSidebarOpen } = useUIStore();
+  const signals = useAIStore((s) => s.signals);
+  const activeSignalsCount = signals.filter(s => s.direction === 'BUY' || s.direction === 'SELL').length;
 
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -181,12 +184,13 @@ export function Sidebar() {
               <div className="px-2 space-y-0.5">
                 {group.items.map(({ href, label, icon: Icon }) => {
                   const isActive = pathname === href || pathname?.startsWith(href + '/');
+                  const isSignals = href === '/signals';
                   return (
                     <Link
                       key={href}
                       href={href}
                       onClick={() => setSidebarOpen(false)}
-                      className={cn('sidebar-link group', isActive && 'active')}
+                      className={cn('sidebar-link group relative', isActive && 'active')}
                       title={isCollapsed ? label : undefined}
                     >
                       <Icon
@@ -197,15 +201,24 @@ export function Sidebar() {
                         )}
                       />
                       <AnimatePresence>
-                        {!isCollapsed && (
+                        {!isCollapsed ? (
                           <motion.span
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            className="whitespace-nowrap"
+                            className="whitespace-nowrap flex items-center justify-between flex-1 min-w-0"
                           >
-                            {label}
+                            <span>{label}</span>
+                            {isSignals && activeSignalsCount > 0 && (
+                              <span className="ml-2 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                                {activeSignalsCount} LIVE
+                              </span>
+                            )}
                           </motion.span>
+                        ) : (
+                          isSignals && activeSignalsCount > 0 && (
+                            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                          )
                         )}
                       </AnimatePresence>
                     </Link>
