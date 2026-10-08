@@ -173,11 +173,11 @@ export function mapSignal(item: any): AISignal {
   };
   const tradingviewIdea = reasoning.tradingview_idea || reasoning.tradingviewIdea || defaultTvIdea;
   const categoryScores = reasoning.category_scores || reasoning.categoryScores || {
-    market_structure: 88,
-    order_flow: 85,
-    volume_profile: 82,
-    macro_backdrop: 79,
-    sentiment: 84
+    market_structure: reasoning.marketBiasScore || confidence || 70,
+    order_flow: reasoning.entryQualityScore || confidence || 70,
+    volume_profile: reasoning.volumeProfile?.poc ? 80 : (confidence || 70),
+    macro_backdrop: reasoning.fiveGates?.gate2_market?.score || 75,
+    sentiment: reasoning.opportunityScore || confidence || 70
   };
 
   const strategyName = getAssetStrategyName(item.symbol || 'BTC/USD', item.strategyKey || reasoning.strategy_key);

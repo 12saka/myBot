@@ -81,6 +81,8 @@ interface AIState {
   setRiskLimit: (pct: number) => void;
   setMaxDrawdown: (pct: number) => void;
   setSignals: (signals: AISignal[]) => void;
+  upsertSignal: (signal: AISignal) => void;
+  removeSignal: (id: string) => void;
 }
 
 const getInitialBool = (key: string, defaultValue = false): boolean => {
@@ -161,4 +163,22 @@ export const useAIStore = create<AIState>((set) => ({
       }
       return { signals: Array.from(map.values()) };
     }),
+  upsertSignal: (newSig) =>
+    set((state) => {
+      const normSym = (sym: string): string => {
+        const u = String(sym || '').toUpperCase().trim();
+        const base = u.replace('/USD', '');
+        if (['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(base)) return `${base}/USD`;
+        if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(u)) return 'XAU/USD';
+        return u;
+      };
+      const cleanSym = normSym(newSig.symbol);
+      const formatted = { ...newSig, symbol: cleanSym };
+      const filtered = state.signals.filter((s) => s.id !== newSig.id && normSym(s.symbol) !== cleanSym);
+      return { signals: [formatted, ...filtered] };
+    }),
+  removeSignal: (id) =>
+    set((state) => ({
+      signals: state.signals.filter((s) => s.id !== id),
+    })),
 }));

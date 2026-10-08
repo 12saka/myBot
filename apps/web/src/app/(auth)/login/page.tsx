@@ -23,6 +23,16 @@ export default function LoginPage() {
   const [suspendedMsg, setSuspendedMsg] = useState('');
   const [mouseCoords, setMouseCoords] = useState({ x: 0, y: 0 });
   const [devOtp, setDevOtp] = useState('');
+  const [inactivityNotice, setInactivityNotice] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('reason') === 'inactivity') {
+        setInactivityNotice(true);
+      }
+    }
+  }, []);
   type LoginResponse = {
     accessToken?: string;
     requires2fa?: boolean;
@@ -138,6 +148,18 @@ export default function LoginPage() {
             <h2 className="text-2xl font-display font-bold text-white tracking-tight">Institutional Terminal</h2>
             <p className="text-xs text-slate-400 mt-2 font-medium">Authenticate to TradeMind autonomous trading systems</p>
           </div>
+
+          {inactivityNotice && (
+            <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-amber-200 text-xs mb-6 relative z-10 flex items-start gap-2.5">
+              <AlertTriangle size={17} className="text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <strong className="block font-bold text-white mb-0.5">Session Terminated for Inactivity</strong>
+                <span className="text-[11px] text-amber-300/90 leading-relaxed">
+                  Your session was automatically locked to safeguard your trading account. Please sign in again.
+                </span>
+              </div>
+            </div>
+          )}
 
           {suspendedMsg && (
             <div className="p-4 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs space-y-3 mb-6 relative z-10">

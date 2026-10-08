@@ -3,8 +3,10 @@
 import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useMarketStore } from '@/store/useMarketStore';
+import { useAIStore } from '@/store/useAIStore';
 import { toast } from 'react-hot-toast';
-import { getApiUrl } from '@/lib/api';
+import { getApiUrl, mapSignal } from '@/lib/api';
+import { playSignalChime, sendDeviceNotification } from '@/lib/notifications';
 
 const WebSocketContext = createContext<Socket | null>(null);
 
@@ -200,6 +202,31 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
           },
         }
       );
+    });
+
+    socket.on('signal:created', (data: any) => {
+      try {
+        const mapped = mapSignal(data);
+        useAIStore.getState().upsertSignal(mapped);
+        playSignalChime('NEW_SIGNAL');
+        sendDeviceNotification(`⚡ Auto-Generated Gold Signal: ${mapped.direction}`, {
+          body: `${mapped.direction} at $${mapped.entry?.toFixed(2)} | TP1: $${mapped.tp1?.toFixed(2)} | SL: $${mapped.stopLoss?.toFixed(2)}`
+        });
+        toast.success(`⚡ New Live Signal: ${mapped.direction} at $${mapped.entry?.toFixed(2)}`, {
+          id: `signal-created-${mapped.id}`,
+          duration: 6000,
+          position: 'top-right',
+        });
+      } catch (e) {
+        console.error('[WebSocket] Failed to handle signal:created:', e);
+      }
+    });
+
+    socket.on('signal:updated', (data: any) => {
+      try {
+        const mapped = mapSignal(data);
+        useAIStore.getState().upsertSignal(mapped);
+      } catch (e) {}
     });
 
     socket.on('disconnect', () => {

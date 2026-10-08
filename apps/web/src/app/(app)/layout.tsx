@@ -11,6 +11,7 @@ import { usePortfolioStore } from '@/store/usePortfolioStore';
 import { useMarketStore } from '@/store/useMarketStore';
 import { useAIStore } from '@/store/useAIStore';
 import { useUIStore } from '@/store/useUIStore';
+import { InactivityGuard } from '@/components/layout/InactivityGuard';
 import { cn } from '@/lib/utils';
 import { toast } from 'react-hot-toast';
 import {
@@ -100,56 +101,58 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <WebSocketProvider>
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <div className="flex flex-1 flex-col min-w-0">
-          <Topbar />
-          <motion.main
-            className="flex-1 overflow-auto"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <div className="max-w-screen-2xl mx-auto px-4 md:px-6 py-6 pb-28 md:pb-10">
-              {children}
-            </div>
-          </motion.main>
-
-          {/* Mobile Bottom Navigation */}
-          {!sidebarOpen && (
-            <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-slate-950/95 backdrop-blur-2xl py-2 md:hidden shadow-2xl shadow-black">
-              <div className="flex items-center justify-around px-2">
-                {[
-                  { href: '/dashboard', label: 'Home',      icon: LayoutDashboard },
-                  { href: '/markets',   label: 'Markets',   icon: TrendingUp },
-                  { href: '/signals',   label: 'Signals',   icon: Zap },
-                  { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
-                  { href: '/news',      label: 'News',      icon: Newspaper },
-                  { href: '/academy',   label: 'Academy',   icon: BookOpen },
-                ].map(({ href, label, icon: Icon }) => {
-                  const isActive = pathname === href || pathname?.startsWith(href + '/');
-                  return (
-                    <Link
-                      key={href}
-                      href={href}
-                      className={cn(
-                        "flex flex-col items-center gap-1 px-3 py-1.5 transition-all relative shrink-0",
-                        isActive ? "text-purple-400" : "text-slate-400 hover:text-slate-200"
-                      )}
-                    >
-                      <Icon size={18} className={cn("transition-transform duration-200", isActive && "scale-110")} />
-                      <span className="text-[9px] font-bold tracking-wide uppercase">{label}</span>
-                      {isActive && (
-                        <span className="absolute bottom-0 w-1.5 h-1.5 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7]" />
-                      )}
-                    </Link>
-                  );
-                })}
+      <InactivityGuard>
+        <div className="flex min-h-screen">
+          <Sidebar />
+          <div className="flex flex-1 flex-col min-w-0">
+            <Topbar />
+            <motion.main
+              className="flex-1 overflow-auto"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+            >
+              <div className="max-w-screen-2xl mx-auto px-4 md:px-6 py-6 pb-28 md:pb-10">
+                {children}
               </div>
-            </nav>
-          )}
+            </motion.main>
+
+            {/* Mobile Bottom Navigation */}
+            {!sidebarOpen && (
+              <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-slate-950/95 backdrop-blur-2xl py-2 md:hidden shadow-2xl shadow-black">
+                <div className="flex items-center justify-around px-2">
+                  {[
+                    { href: '/dashboard', label: 'Home',      icon: LayoutDashboard },
+                    { href: '/markets',   label: 'Markets',   icon: TrendingUp },
+                    { href: '/signals',   label: 'Signals',   icon: Zap },
+                    { href: '/portfolio', label: 'Portfolio', icon: Briefcase },
+                    { href: '/news',      label: 'News',      icon: Newspaper },
+                    { href: '/academy',   label: 'Academy',   icon: BookOpen },
+                  ].map(({ href, label, icon: Icon }) => {
+                    const isActive = pathname === href || pathname?.startsWith(href + '/');
+                    return (
+                      <Link
+                        key={href}
+                        href={href}
+                        className={cn(
+                          "flex flex-col items-center gap-1 px-3 py-1.5 transition-all relative shrink-0",
+                          isActive ? "text-purple-400" : "text-slate-400 hover:text-slate-200"
+                        )}
+                      >
+                        <Icon size={18} className={cn("transition-transform duration-200", isActive && "scale-110")} />
+                        <span className="text-[9px] font-bold tracking-wide uppercase">{label}</span>
+                        {isActive && (
+                          <span className="absolute bottom-0 w-1.5 h-1.5 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7]" />
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </nav>
+            )}
+          </div>
         </div>
-      </div>
+      </InactivityGuard>
     </WebSocketProvider>
   );
 }

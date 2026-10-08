@@ -374,14 +374,14 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
         )}
       </div>
 
-      {/* 6. Action Controls */}
-      <div className="flex items-center gap-2 pt-1">
+      {/* 6. Action Controls (100% Mobile Responsive) */}
+      <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 pt-1">
         <button
           onClick={() => setExpanded(!expanded)}
           className="btn-ghost py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer text-slate-300 border border-white/5 hover:bg-white/5"
         >
           <Layers size={13} />
-          <span>{expanded ? 'Hide Horizon Map' : 'View MTF Map'}</span>
+          <span>{expanded ? 'Hide Map' : 'View MTF Map'}</span>
           <ChevronDown size={13} className={cn('transition-transform duration-200', expanded && 'rotate-180')} />
         </button>
 
@@ -390,7 +390,7 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
           className="btn-ghost py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer text-purple-300 border border-purple-500/25 hover:bg-purple-500/10"
         >
           <Eye size={13} />
-          <span>Interactive TV Chart</span>
+          <span>TV Chart</span>
         </button>
 
         <button
@@ -403,14 +403,14 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
           title="Copy levels for MT4/MT5"
         >
           <Copy size={13} />
-          <span className="hidden sm:inline">Copy Levels</span>
+          <span>Copy Levels</span>
         </button>
 
         <button
           onClick={() => setIsTradeOpen(true)}
-          className="flex-1 btn-primary py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-purple-500/20"
+          className="col-span-2 sm:col-span-1 sm:flex-1 btn-primary py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-purple-500/20"
         >
-          <Zap size={14} className="fill-current" />
+          <Zap size={14} className="fill-current text-amber-300" />
           <span>Execute Trade</span>
         </button>
       </div>
@@ -495,8 +495,8 @@ export default function SignalsPage() {
 
   // Live Gold ticker data from Market Store
   const goldTicker = tickers.find(t => t.symbol === 'GOLD' || t.symbol === 'XAU/USD' || t.symbol === 'XAUUSD');
-  const livePrice = goldTicker?.price || 4171.30;
-  const liveChange = goldTicker?.changePct24h || 0.85;
+  const livePrice = goldTicker?.price && goldTicker.price > 0 ? goldTicker.price : null;
+  const liveChange = goldTicker?.changePct24h !== undefined ? goldTicker.changePct24h : null;
 
   // Notification Permissions
   useEffect(() => {
@@ -616,7 +616,7 @@ export default function SignalsPage() {
   const activeSetups = goldSignals.filter(s => s.direction === 'BUY' || s.direction === 'SELL');
   const avgConfidence = goldSignals.length > 0
     ? Math.round(goldSignals.reduce((a, b) => a + b.confidence, 0) / goldSignals.length)
-    : 82;
+    : null;
 
   // Active session helper
   const nowUtc = new Date();
@@ -664,18 +664,19 @@ export default function SignalsPage() {
           <button
             onClick={handleRunGoldScan}
             disabled={isScanning}
-            className="btn-primary py-2 px-4 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-500/25 cursor-pointer disabled:opacity-50"
+            className="btn-primary py-2 px-3 sm:px-4 rounded-xl text-xs font-bold flex items-center gap-1.5 sm:gap-2 shadow-lg shadow-purple-500/25 cursor-pointer disabled:opacity-50 shrink-0"
           >
             {isScanning ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} className="fill-current text-amber-300" />}
-            <span>Run 5-Gate Gold Engine</span>
+            <span className="hidden sm:inline">Run 5-Gate Gold Engine</span>
+            <span className="inline sm:hidden">Run Engine</span>
           </button>
         </div>
       </PageHeader>
 
-      {/* 2. Institutional Cockpit & Live Macro Barometer */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* 2. Institutional Cockpit & Live Macro Barometer (100% Mobile Responsive) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Card 1: Live Gold Spot & Spread */}
-        <div className="glass-card rounded-2xl p-4.5 border border-amber-500/20 bg-amber-950/10 flex flex-col justify-between">
+        <div className="glass-card rounded-2xl p-3.5 sm:p-4.5 border border-amber-500/20 bg-amber-950/10 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-mono uppercase font-bold text-amber-400 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping inline-block" />
@@ -687,15 +688,19 @@ export default function SignalsPage() {
           </div>
           <div>
             <div className="text-2xl font-mono font-black text-white tracking-tight">
-              ${livePrice.toFixed(2)}
+              {livePrice ? `$${livePrice.toFixed(2)}` : 'Connecting Feed...'}
             </div>
             <div className="flex items-center gap-2 text-xs font-mono mt-1">
-              <span className={cn("font-bold flex items-center", liveChange >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                {liveChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                {liveChange >= 0 ? `+${liveChange.toFixed(2)}%` : `${liveChange.toFixed(2)}%`}
-              </span>
+              {liveChange !== null ? (
+                <span className={cn("font-bold flex items-center", liveChange >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                  {liveChange >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                  {liveChange >= 0 ? `+${liveChange.toFixed(2)}%` : `${liveChange.toFixed(2)}%`}
+                </span>
+              ) : (
+                <span className="text-slate-400">Syncing...</span>
+              )}
               <span className="text-slate-400">•</span>
-              <span className="text-cyan-300 font-bold">Spread: $0.35 / oz</span>
+              <span className="text-cyan-300 font-bold">Spread: Real TV CFD</span>
             </div>
           </div>
           <div className="text-[10px] text-slate-400 font-mono mt-2 pt-2 border-t border-white/5 flex items-center justify-between">
@@ -787,35 +792,73 @@ export default function SignalsPage() {
         </div>
       </div>
 
-      {/* 3. Horizon Timeframe Selector & Terminal Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl glass-card border border-white/5">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono font-bold uppercase text-slate-400 px-2">Analysis Horizon:</span>
-          <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 text-xs font-mono">
-            {[
-              { id: '15m', label: '15M Tactical ICZ' },
-              { id: '5m',  label: '5M Scalp MSS' },
-              { id: '1h',  label: '1H Primary Flow' },
-              { id: '4h',  label: '4H Macro Trend' },
-            ].map(tf => (
+      {/* 3. Horizon Timeframe Selector & Terminal Controls (100% Mobile Responsive) */}
+      <div className="p-3 sm:p-4 rounded-2xl glass-card border border-white/10 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:justify-between sm:gap-4">
+        {/* Mobile Header / Desktop Left Title */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+            <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">
+              Analysis Horizon
+            </span>
+          </div>
+
+          {/* Quick Metrics Badges (visible in header on mobile) */}
+          <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 sm:hidden">
+            <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/5 text-slate-300">
+              Setups: <strong className="text-white">{activeSetups.length}</strong>
+            </span>
+            <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+              {avgConfidence !== null ? `${avgConfidence}%` : '—'}
+            </span>
+          </div>
+        </div>
+
+        {/* 4-Column Responsive Grid on Mobile, Flex on Desktop */}
+        <div className="grid grid-cols-4 sm:flex items-center gap-1.5 p-1 bg-slate-950/80 border border-white/10 rounded-xl w-full sm:w-auto">
+          {[
+            { id: '15m', short: '15M', role: 'Tactical', full: '15M Tactical' },
+            { id: '5m',  short: '5M',  role: 'Scalp',    full: '5M Scalp' },
+            { id: '1h',  short: '1H',  role: 'Flow',     full: '1H Flow' },
+            { id: '4h',  short: '4H',  role: 'Macro',    full: '4H Macro' },
+          ].map(tf => {
+            const isSelected = selectedTimeframe === tf.id;
+            return (
               <button
                 key={tf.id}
                 onClick={() => setSelectedTimeframe(tf.id as any)}
                 className={cn(
-                  'px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer whitespace-nowrap',
-                  selectedTimeframe === tf.id ? 'bg-purple-600 text-white shadow-sm shadow-purple-500/30' : 'text-slate-400 hover:text-white'
+                  'flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 py-2 sm:py-1.5 px-2 sm:px-3 rounded-lg font-mono transition-all cursor-pointer text-center select-none',
+                  isSelected
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-500/30 border border-purple-400/40'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
                 )}
               >
-                {tf.label}
+                {/* Mobile View: Short badge + subtitle */}
+                <span className="text-xs font-bold leading-none sm:hidden">
+                  {tf.short}
+                </span>
+                <span className={cn(
+                  "text-[9px] uppercase tracking-wider leading-none sm:hidden",
+                  isSelected ? "text-purple-200" : "text-slate-400"
+                )}>
+                  {tf.role}
+                </span>
+
+                {/* Desktop View: Full descriptive label */}
+                <span className="hidden sm:inline text-xs font-bold whitespace-nowrap">
+                  {tf.full}
+                </span>
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        <div className="text-xs font-mono text-slate-400 flex items-center gap-3">
+        {/* Desktop Metrics Display */}
+        <div className="hidden sm:flex items-center gap-3 text-xs font-mono text-slate-400 shrink-0">
           <span>Active Setups: <strong className="text-white">{activeSetups.length}</strong></span>
           <span>•</span>
-          <span>Average Conviction: <strong className="text-emerald-400">{avgConfidence}%</strong></span>
+          <span>Engine Conviction: <strong className="text-emerald-400">{avgConfidence !== null ? `${avgConfidence}%` : '—'}</strong></span>
         </div>
       </div>
 
@@ -831,11 +874,11 @@ export default function SignalsPage() {
         ))}
 
         {goldSignals.length === 0 && (
-          <div className="glass-card rounded-2xl p-12 text-center border border-white/5 space-y-4">
-            <Zap className="mx-auto text-amber-400/50" size={40} />
-            <h3 className="font-display font-bold text-white text-lg">No Active Gold Trade Setups</h3>
+          <div className="glass-card rounded-2xl p-8 sm:p-12 text-center border border-white/5 space-y-4">
+            <Zap className="mx-auto text-amber-400/50" size={36} />
+            <h3 className="font-display font-bold text-white text-base sm:text-lg">No Active Gold Trade Setups</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-              The 5-Gate production engine is monitoring live TradingView price flow for clean session liquidity sweeps and institutional displacement.
+              The automated 5-Gate production engine is continuously monitoring live TradingView price flow for clean session liquidity sweeps and institutional displacement.
             </p>
             <button
               onClick={handleRunGoldScan}
@@ -849,17 +892,29 @@ export default function SignalsPage() {
         )}
       </motion.div>
 
-      {/* 5. Live Interactive TradingView Gold Chart Embed */}
-      <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-3">
-        <div className="flex items-center justify-between">
+      {/* 5. Live Interactive TradingView Gold Chart Embed (100% Mobile Responsive & Full-Page Expandable) */}
+      <div className="rounded-2xl p-3.5 sm:p-5 border border-white/10 bg-slate-900/80 space-y-3 relative">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <BarChart3 size={16} className="text-amber-400" />
-            <h3 className="font-display font-bold text-white text-base">Live TradingView Institutional Chart (TVC:GOLD)</h3>
+            <h3 className="font-display font-bold text-white text-sm sm:text-base">Institutional Gold Chart (XAU/USD)</h3>
           </div>
-          <span className="text-[11px] font-mono text-slate-400">15-Minute Institutional Interval • Real Spot Spread</span>
+          <span className="text-[10px] sm:text-[11px] font-mono text-slate-400">
+            {selectedTimeframe.toUpperCase()} Institutional Interval • Real OANDA/TVC Spread
+          </span>
         </div>
-        <div className="h-[480px] rounded-xl overflow-hidden border border-white/10 bg-slate-950">
-          <TradingViewWidget symbol="TVC:GOLD" interval="15" theme="dark" autosize />
+        <div className="h-[380px] sm:h-[480px] md:h-[540px] rounded-xl overflow-hidden border border-white/10 bg-slate-950">
+          <TradingViewWidget
+            symbol="GOLD"
+            containerId="tv_chart_gold_main"
+            interval={selectedTimeframe === '15m' ? '15' : selectedTimeframe === '5m' ? '5' : selectedTimeframe === '1h' ? '60' : '240'}
+            theme="dark"
+            autosize
+            entryPrice={activeSetups[0]?.entry}
+            stopLoss={activeSetups[0]?.stopLoss}
+            tp1={activeSetups[0]?.tp1}
+            tp2={activeSetups[0]?.tp2}
+          />
         </div>
       </div>
 
@@ -892,7 +947,17 @@ export default function SignalsPage() {
               </div>
 
               <div className="h-[460px] rounded-xl overflow-hidden border border-white/10">
-                <TradingViewWidget symbol="TVC:GOLD" interval="15" theme="dark" autosize />
+                <TradingViewWidget
+                  symbol="TVC:GOLD"
+                  containerId="tv_chart_gold_modal"
+                  interval="15"
+                  theme="dark"
+                  autosize
+                  entryPrice={selectedChartSignal.entry}
+                  stopLoss={selectedChartSignal.stopLoss}
+                  tp1={selectedChartSignal.tp1}
+                  tp2={selectedChartSignal.tp2}
+                />
               </div>
             </motion.div>
           </div>
