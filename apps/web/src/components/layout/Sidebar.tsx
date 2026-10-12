@@ -8,7 +8,7 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle, Monitor
+  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle, Monitor, Flame
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { useAIStore } from '@/store/useAIStore';
@@ -37,6 +37,7 @@ const NAV_GROUPS = [
   {
     label: 'Intelligence',
     items: [
+      { href: '/dashboard/engines/gold', label: 'Gold Engine', icon: Flame },
       { href: '/copilot',    label: 'Copilot',      icon: Bot              },
       { href: '/automation', label: 'Automation',   icon: Cpu              },
       { href: '/news',       label: 'News',         icon: Newspaper        },

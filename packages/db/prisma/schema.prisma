@@ -246,6 +246,41 @@ model Signal {
   @@index([userId, expiresAt])
 }
 
+model GoldMarketRegimeSnapshot {
+  id                  String   @id @default(uuid())
+  timestamp           DateTime @default(now())
+  symbol              String   @default("GOLD")
+  regime              String
+  atr15m              Float
+  atrPercentile       Float
+  adx14               Float
+  session             String
+  spread              Float
+  strategyPermissions String[]
+  dxyDirection        String
+  us10yDirection      String
+
+  @@index([symbol, timestamp])
+}
+
+model GoldSignalPerformance {
+  id         String    @id @default(uuid())
+  signalId   String    @unique
+  symbol     String    @default("GOLD")
+  direction  String
+  entryPrice Float
+  exitPrice  Float?
+  result     String?   // WIN, LOSS, BREAKEVEN
+  pnlR       Float?
+  mfeR       Float?
+  maeR       Float?
+  exitReason String?   // TP1_HIT, TP2_HIT, SL_HIT, EXPIRED
+  createdAt  DateTime  @default(now())
+  closedAt   DateTime?
+
+  @@index([symbol, createdAt])
+}
+
 model TradingStrategy {
   id               String  @id @default(uuid())
   name             String

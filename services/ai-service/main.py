@@ -58,11 +58,12 @@ if GEMINI_API_KEY:
 else:
     print("[AI-Service] WARNING: GEMINI_API_KEY is not set.")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_FALLBACK_MODELS = [
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
     "gemini-3.8-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
 ]
 
 API_KEY_NAME = "X-AI-API-Key"
@@ -348,9 +349,12 @@ Please provide your institutional review in JSON format:
                         config=types.GenerateContentConfig(
                             temperature=0.2,
                             max_output_tokens=500,
+                            response_mime_type="application/json",
                         )
                     )
-                    raw_text = res.text.strip()
+                    raw_text = (res.text or "").strip()
+                    if not raw_text:
+                        continue
                     # Clean markdown formatting if present
                     if "```json" in raw_text:
                         raw_text = raw_text.split("```json")[1].split("```")[0].strip()
@@ -462,8 +466,10 @@ Be concise, mathematically sound, professional, and directly address the user's 
                             max_output_tokens=800,
                         )
                     )
-                    reply = response.text.strip()
-                    break
+                    txt = (response.text or "").strip()
+                    if txt:
+                        reply = txt
+                        break
                 except Exception:
                     continue
         except Exception as e:

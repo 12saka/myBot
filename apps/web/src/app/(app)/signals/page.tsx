@@ -689,6 +689,17 @@ export default function SignalsPage() {
             <span className="hidden sm:inline">Sync</span>
           </button>
 
+          {/* Dedicated Gold Engine Workspace Link */}
+          <a
+            href="/dashboard/engines/gold"
+            className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-amber-500/35 bg-gradient-to-r from-amber-500/20 to-amber-600/20 text-amber-300 hover:border-amber-400 transition-all cursor-pointer shadow-lg shadow-amber-500/10"
+            title="Open Dedicated Gold Engine Deep Workspace"
+          >
+            <Compass size={14} className="text-amber-400" />
+            <span className="hidden sm:inline">Gold Intelligence Workspace</span>
+            <span className="inline sm:hidden">Gold Engine</span>
+          </a>
+
           {/* Primary Action: Run 5-Gate Scan */}
           <button
             onClick={() => handleRunGoldScan(false)}
