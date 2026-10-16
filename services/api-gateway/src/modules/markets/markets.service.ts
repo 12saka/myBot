@@ -641,6 +641,11 @@ export class MarketsService implements OnModuleInit {
       });
 
       for (const signal of activeSignals) {
+        // Gold signals are managed exclusively by SignalsController.handlePositionManagement with full limit-order fill tracking
+        if (signal.symbol === 'GOLD' || signal.symbol === 'XAU/USD') {
+          continue;
+        }
+
         const reasoning = signal.aiReasoning as any || {};
         let status = reasoning.status || 'ACTIVE';
         
