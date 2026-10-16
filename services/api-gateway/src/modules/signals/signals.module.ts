@@ -1448,9 +1448,6 @@ export class SignalsController implements OnModuleInit {
     if (bestCluster.length === 0) bestCluster = [candidates[0]];
 
     const prices = bestCluster.map(c => c.price);
-    const zoneLow = parseFloat(Math.min(...prices).toFixed(2));
-    const zoneHigh = parseFloat(Math.max(...prices).toFixed(2));
-
     let weightedSum = 0;
     let totalW = 0;
     bestCluster.forEach(c => {
@@ -1458,6 +1455,9 @@ export class SignalsController implements OnModuleInit {
       totalW += c.weight;
     });
     const preferredEntry = parseFloat((weightedSum / Math.max(1, totalW)).toFixed(2));
+    const minHalfBand = Math.max(0.65, parseFloat((atr15m * 0.18).toFixed(2)));
+    const zoneLow = parseFloat(Math.min(Math.min(...prices), preferredEntry - minHalfBand).toFixed(2));
+    const zoneHigh = parseFloat(Math.max(Math.max(...prices), preferredEntry + minHalfBand).toFixed(2));
     const confluenceFactors = Array.from(new Set(bestCluster.map(c => c.source)));
     const overlapCount = bestCluster.length;
 
@@ -2735,36 +2735,64 @@ export class SignalsController implements OnModuleInit {
           unmitigatedOrderBlocks: realOrderBlocks,
           fairValueGaps: realFairValueGaps
         },
-        entryPlan: {
-          eligibleStrategies: [setup.model as any],
-          selectedStrategy: setup.model as any,
-          orderType: setup.orderType as any,
-          preferredEntry: setup.entryPrice,
-          entryZone: setup.entryZone,
-          currentDistancePips: Math.round(Math.abs(setup.levels.currentPrice - setup.entryPrice) * 10),
-          entryConditions: setup.confluenceReasons.map((reason, idx) => ({
-            name: `Confluence Factor #${idx + 1}`,
-            status: 'PASSED',
-            detail: reason
-          }))
-        },
-        riskPlan: {
-          exactStopLoss: setup.stopLoss,
-          stopDistancePips: Math.round(Math.abs(setup.entryPrice - setup.stopLoss) * 10),
-          takeProfit1: setup.takeProfit1,
-          takeProfit2: setup.takeProfit2,
-          takeProfit3: setup.takeProfit3,
-          riskReward1: setup.riskReward1,
-          riskReward2: setup.riskReward2,
-          expectedValueR: setup.tradePath.expectedValueR,
-          recommendedLots: setup.positionSizing.recommendedLots,
-          recommendedUnitsOz: Number((setup.positionSizing.recommendedLots * 100).toFixed(1)),
-          riskBudgetUsd: setup.positionSizing.riskBudgetUsd,
-          trailingStopBeActive: (activeSignal?.aiReasoning as any)?.trailingStopBe || false,
-          spread: setup.microstructure.spread,
-          maxSpreadAllowed: 0.50,
-          executionEligibility: setup.fiveGates.gate5_execution.passed ? 'APPROVED' : 'SPREAD_HALTED'
-        }
+        entryPlan: (() => {
+          const sigAi = (activeSignal?.aiReasoning as any) || {};
+          const uEntry = activeSignal ? activeSignal.entryPrice : setup.entryPrice;
+          const uDir = activeSignal ? (activeSignal.direction as 'BUY' | 'SELL') : setup.direction;
+          const uOrderType = activeSignal
+            ? (sigAi.orderType || (uDir === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
+            : (setup.orderType !== 'WAIT' ? setup.orderType : (uDir === 'BUY' ? 'BUY_LIMIT' : uDir === 'SELL' ? 'SELL_LIMIT' : 'WAIT'));
+          const rawZone = (activeSignal && Array.isArray(sigAi.entryZone) && sigAi.entryZone.length === 2) ? sigAi.entryZone : setup.entryZone;
+          const uZone: [number, number] = (rawZone[1] > rawZone[0] && uEntry >= rawZone[0] - 2 && uEntry <= rawZone[1] + 2)
+            ? [parseFloat(Math.min(rawZone[0], uEntry - 0.65).toFixed(2)), parseFloat(Math.max(rawZone[1], uEntry + 0.65).toFixed(2))]
+            : [parseFloat((uEntry - 0.75).toFixed(2)), parseFloat((uEntry + 0.75).toFixed(2))];
+          const uStrat = (activeSignal && sigAi.strategy) ? sigAi.strategy : (setup.model !== 'NONE' ? setup.model : 'SWEEP_CHOCH_REVERSAL');
+          return {
+            eligibleStrategies: [uStrat as any],
+            selectedStrategy: uStrat as any,
+            orderType: uOrderType as any,
+            preferredEntry: uEntry,
+            entryZone: uZone,
+            currentDistancePips: Math.round(Math.abs(setup.levels.currentPrice - uEntry) * 10),
+            entryConditions: setup.confluenceReasons.map((reason, idx) => ({
+              name: `Confluence Factor #${idx + 1}`,
+              status: 'PASSED',
+              detail: reason
+            }))
+          };
+        })(),
+        riskPlan: (() => {
+          const sigAi = (activeSignal?.aiReasoning as any) || {};
+          const uEntry = activeSignal ? activeSignal.entryPrice : setup.entryPrice;
+          const uDir = activeSignal ? (activeSignal.direction as 'BUY' | 'SELL') : setup.direction;
+          const uSl = activeSignal ? activeSignal.stopLoss : setup.stopLoss;
+          const uTp1 = activeSignal ? activeSignal.takeProfit1 : setup.takeProfit1;
+          const uTp2 = activeSignal ? activeSignal.takeProfit2 : setup.takeProfit2;
+          const uRisk = Math.max(0.5, Math.abs(uEntry - uSl));
+          const rawTp3 = sigAi.tradePath?.tp3Price || setup.takeProfit3;
+          const uTp3 = uDir === 'BUY'
+            ? parseFloat(Math.max(uTp2 + Math.max(4.0, uRisk * 0.8), rawTp3).toFixed(2))
+            : parseFloat(Math.min(uTp2 - Math.max(4.0, uRisk * 0.8), rawTp3).toFixed(2));
+          const uR1 = parseFloat((Math.abs(uTp1 - uEntry) / uRisk).toFixed(2));
+          const uR2 = parseFloat((Math.abs(uTp2 - uEntry) / uRisk).toFixed(2));
+          return {
+            exactStopLoss: uSl,
+            stopDistancePips: Math.round(uRisk * 10),
+            takeProfit1: uTp1,
+            takeProfit2: uTp2,
+            takeProfit3: uTp3,
+            riskReward1: uR1,
+            riskReward2: uR2,
+            expectedValueR: sigAi.tradePath?.expectedValueR || setup.tradePath.expectedValueR,
+            recommendedLots: setup.positionSizing.recommendedLots,
+            recommendedUnitsOz: Number((setup.positionSizing.recommendedLots * 100).toFixed(1)),
+            riskBudgetUsd: setup.positionSizing.riskBudgetUsd,
+            trailingStopBeActive: sigAi.trailingStopBe || false,
+            spread: setup.microstructure.spread,
+            maxSpreadAllowed: 0.50,
+            executionEligibility: setup.fiveGates.gate5_execution.passed ? 'APPROVED' : 'SPREAD_HALTED'
+          };
+        })()
       };
     } catch (e: any) {
       this.logger.error(`[getGoldOverview] Failed to assemble overview: ${e.message}`);
@@ -3072,25 +3100,44 @@ export class SignalsController implements OnModuleInit {
     }
 
     // 6. Active Trade Levels (Entry, Stop Loss, TP1, TP2, TP3)
+    const sigAi = (activeSignal?.aiReasoning as any) || {};
     const activeEntry = activeSignal ? activeSignal.entryPrice : setup.entryPrice;
     const activeSl = activeSignal ? activeSignal.stopLoss : setup.stopLoss;
     const activeTp1 = activeSignal ? activeSignal.takeProfit1 : setup.takeProfit1;
     const activeTp2 = activeSignal ? activeSignal.takeProfit2 : setup.takeProfit2;
-    const activeTp3 = setup.takeProfit3;
     const direction = activeSignal ? (activeSignal.direction as 'BUY' | 'SELL') : setup.direction;
+    const annotationDir = direction === 'BUY' ? 'BULLISH' : direction === 'SELL' ? 'BEARISH' : 'NEUTRAL';
+    const activeOrderType = activeSignal
+      ? (sigAi.orderType || (direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
+      : (setup.orderType !== 'WAIT' ? setup.orderType : (direction === 'BUY' ? 'BUY_LIMIT' : direction === 'SELL' ? 'SELL_LIMIT' : 'WAIT'));
+
+    const rawZone = (activeSignal && Array.isArray(sigAi.entryZone) && sigAi.entryZone.length === 2) ? sigAi.entryZone : setup.entryZone;
+    const activeZone: [number, number] = (rawZone[1] > rawZone[0] && activeEntry >= rawZone[0] - 2 && activeEntry <= rawZone[1] + 2)
+      ? [parseFloat(Math.min(rawZone[0], activeEntry - 0.65).toFixed(2)), parseFloat(Math.max(rawZone[1], activeEntry + 0.65).toFixed(2))]
+      : [parseFloat((activeEntry - 0.75).toFixed(2)), parseFloat((activeEntry + 0.75).toFixed(2))];
+
+    const activeRisk = Math.max(0.5, Math.abs(activeEntry - activeSl));
+    const rawTp3 = sigAi.tradePath?.tp3Price || setup.takeProfit3;
+    const activeTp3 = direction === 'BUY'
+      ? parseFloat(Math.max(activeTp2 + Math.max(4.0, activeRisk * 0.8), rawTp3).toFixed(2))
+      : parseFloat(Math.min(activeTp2 - Math.max(4.0, activeRisk * 0.8), rawTp3).toFixed(2));
+
+    const activeR1 = parseFloat((Math.abs(activeTp1 - activeEntry) / activeRisk).toFixed(2));
+    const activeR2 = parseFloat((Math.abs(activeTp2 - activeEntry) / activeRisk).toFixed(2));
+    const activeR3 = parseFloat((Math.abs(activeTp3 - activeEntry) / activeRisk).toFixed(2));
 
     if (activeEntry > 0) {
       annotations.push({
         id: 'trade_entry',
         type: 'ENTRY_LEVEL',
-        direction,
+        direction: annotationDir,
         price: activeEntry,
-        upperPrice: setup.entryZone[1],
-        lowerPrice: setup.entryZone[0],
+        upperPrice: activeZone[1],
+        lowerPrice: activeZone[0],
         timeframe,
         status: 'ACTIVE',
         label: `ENTRY ($${activeEntry.toFixed(2)})`,
-        description: `Institutional Entry Zone: $${setup.entryZone[0].toFixed(2)} - $${setup.entryZone[1].toFixed(2)}`
+        description: `Institutional Entry Zone: $${activeZone[0].toFixed(2)} - $${activeZone[1].toFixed(2)}`
       });
     }
 
@@ -3098,7 +3145,7 @@ export class SignalsController implements OnModuleInit {
       annotations.push({
         id: 'trade_sl',
         type: 'STOP_LOSS',
-        direction,
+        direction: annotationDir,
         price: activeSl,
         timeframe,
         status: 'ACTIVE',
@@ -3111,11 +3158,11 @@ export class SignalsController implements OnModuleInit {
       annotations.push({
         id: 'trade_tp1',
         type: 'TAKE_PROFIT_1',
-        direction,
+        direction: annotationDir,
         price: activeTp1,
         timeframe,
         status: 'ACTIVE',
-        label: `TP1 ($${activeTp1.toFixed(2)}) [${setup.riskReward1}R]`,
+        label: `TP1 ($${activeTp1.toFixed(2)}) [${activeR1}R]`,
         description: `Take Profit 1 (Opposing liquidity): $${activeTp1.toFixed(2)}`
       });
     }
@@ -3124,11 +3171,11 @@ export class SignalsController implements OnModuleInit {
       annotations.push({
         id: 'trade_tp2',
         type: 'TAKE_PROFIT_2',
-        direction,
+        direction: annotationDir,
         price: activeTp2,
         timeframe,
         status: 'ACTIVE',
-        label: `TP2 ($${activeTp2.toFixed(2)}) [${setup.riskReward2}R]`,
+        label: `TP2 ($${activeTp2.toFixed(2)}) [${activeR2}R]`,
         description: `Take Profit 2 (HTF structural target): $${activeTp2.toFixed(2)}`
       });
     }
@@ -3137,11 +3184,11 @@ export class SignalsController implements OnModuleInit {
       annotations.push({
         id: 'trade_tp3',
         type: 'TAKE_PROFIT_3',
-        direction,
+        direction: annotationDir,
         price: activeTp3,
         timeframe,
         status: 'ACTIVE',
-        label: `TP3 ($${activeTp3.toFixed(2)}) [${setup.riskReward3}R]`,
+        label: `TP3 ($${activeTp3.toFixed(2)}) [${activeR3}R]`,
         description: `Take Profit 3 (Extended runner): $${activeTp3.toFixed(2)}`
       });
     }
@@ -3157,7 +3204,7 @@ export class SignalsController implements OnModuleInit {
         takeProfit2: activeTp2 || null,
         takeProfit3: activeTp3 || null,
         direction,
-        orderType: setup.orderType
+        orderType: activeOrderType
       },
       annotations,
       lastUpdated: new Date().toISOString()
