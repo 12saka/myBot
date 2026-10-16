@@ -224,30 +224,93 @@ export function GoldAnnotatedChart({
           tp2={tradeLevels?.direction !== 'WAIT' ? tradeLevels?.takeProfit2 || undefined : undefined}
         />
 
-        {/* Floating Structural Heads-Up Display (Overlay matching uploaded charts) */}
-        <div className="absolute top-12 left-3 z-10 max-w-xs space-y-2 pointer-events-none sm:pointer-events-auto">
-          {tradeLevels && tradeLevels.entry && tradeLevels.direction !== 'WAIT' && (
-            <div className="px-3 py-2 rounded-xl bg-black/85 backdrop-blur-md border border-amber-500/30 text-xs shadow-xl">
-              <div className="flex items-center justify-between gap-3 mb-1">
-                <span className="font-bold uppercase text-[10px] text-amber-400">
-                  {tradeLevels.orderType} Setup
-                </span>
-                <span className={cn(
-                  "font-bold font-mono px-1.5 py-0.2 rounded text-[10px]",
-                  tradeLevels.direction === 'BUY' ? "text-emerald-400 bg-emerald-500/20" : "text-rose-400 bg-rose-500/20"
-                )}>
-                  {tradeLevels.direction}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
-                <div className="text-slate-400">Entry: <span className="text-white font-bold">${tradeLevels.entry.toFixed(2)}</span></div>
-                <div className="text-slate-400">SL: <span className="text-rose-400 font-bold">${tradeLevels.stopLoss?.toFixed(2)}</span></div>
-                <div className="text-slate-400">TP1: <span className="text-emerald-400 font-bold">${tradeLevels.takeProfit1?.toFixed(2)}</span></div>
-                <div className="text-slate-400">TP2: <span className="text-emerald-400 font-bold">${tradeLevels.takeProfit2?.toFixed(2)}</span></div>
+        {/* Floating Structural Heads-Up Display & Active Order Visual Drawings */}
+        {layers.tradeLevels && tradeLevels && tradeLevels.entry && tradeLevels.direction !== 'WAIT' && (
+          <>
+            {/* Top-Left Heads-Up Display */}
+            <div className="absolute top-12 left-3 z-10 max-w-sm pointer-events-none sm:pointer-events-auto">
+              <div className="p-3 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-amber-500/40 text-xs shadow-2xl space-y-2">
+                <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    <span className="font-extrabold uppercase text-[11px] text-amber-300 font-mono tracking-wider">
+                      {tradeLevels.orderType.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <span className={cn(
+                    "font-bold font-mono px-2 py-0.5 rounded text-[10px] tracking-wide",
+                    tradeLevels.direction === 'BUY'
+                      ? "text-emerald-300 bg-emerald-500/20 border border-emerald-500/40"
+                      : "text-rose-300 bg-rose-500/20 border border-rose-500/40"
+                  )}>
+                    {tradeLevels.direction === 'BUY' ? 'BULLISH FLOW' : 'BEARISH FLOW'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                  <div className="p-1.5 rounded-lg bg-white/5 border border-white/5">
+                    <span className="text-[9px] uppercase text-cyan-300/80 block font-bold">Preferred Entry</span>
+                    <span className="text-white font-extrabold">${tradeLevels.entry.toFixed(2)}</span>
+                  </div>
+                  <div className="p-1.5 rounded-lg bg-rose-950/20 border border-rose-500/20">
+                    <span className="text-[9px] uppercase text-rose-400 block font-bold">Stop Loss</span>
+                    <span className="text-rose-300 font-extrabold">${tradeLevels.stopLoss ? tradeLevels.stopLoss.toFixed(2) : '—'}</span>
+                  </div>
+                  <div className="p-1.5 rounded-lg bg-emerald-950/20 border border-emerald-500/20">
+                    <span className="text-[9px] uppercase text-emerald-400 block font-bold">Target 1 (TP1)</span>
+                    <span className="text-emerald-300 font-extrabold">${tradeLevels.takeProfit1 ? tradeLevels.takeProfit1.toFixed(2) : '—'}</span>
+                  </div>
+                  <div className="p-1.5 rounded-lg bg-emerald-950/30 border border-emerald-500/30">
+                    <span className="text-[9px] uppercase text-emerald-300 block font-bold">Target 2 (TP2)</span>
+                    <span className="text-emerald-200 font-extrabold">${tradeLevels.takeProfit2 ? tradeLevels.takeProfit2.toFixed(2) : '—'}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1 border-t border-white/5">
+                  <span>Risk : Reward</span>
+                  <span className="font-bold text-amber-300">
+                    {tradeLevels.stopLoss && tradeLevels.takeProfit1
+                      ? `1 : ${(Math.abs(tradeLevels.takeProfit1 - tradeLevels.entry) / Math.max(0.1, Math.abs(tradeLevels.entry - tradeLevels.stopLoss))).toFixed(1)}`
+                      : '1 : 2.5'}
+                  </span>
+                </div>
               </div>
             </div>
-          )}
-        </div>
+
+            {/* Visual Level Overlays across Chart Window */}
+            <div className="absolute right-3 top-16 bottom-16 w-60 z-10 pointer-events-none flex flex-col justify-between items-end">
+              {/* TP2 Marker */}
+              {tradeLevels.takeProfit2 && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/85 backdrop-blur-md border border-emerald-500/50 text-[10px] font-mono font-bold text-emerald-300 shadow-lg">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>TP2: ${tradeLevels.takeProfit2.toFixed(2)}</span>
+                </div>
+              )}
+
+              {/* TP1 Marker */}
+              {tradeLevels.takeProfit1 && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-900/85 backdrop-blur-md border border-emerald-400/60 text-[10px] font-mono font-bold text-emerald-200 shadow-lg">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
+                  <span>TP1: ${tradeLevels.takeProfit1.toFixed(2)}</span>
+                </div>
+              )}
+
+              {/* Entry Centroid Marker */}
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-950/90 backdrop-blur-md border border-cyan-400/70 text-[10px] font-mono font-bold text-cyan-200 shadow-lg animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                <span>{tradeLevels.orderType}: ${tradeLevels.entry.toFixed(2)}</span>
+              </div>
+
+              {/* Stop Loss Marker */}
+              {tradeLevels.stopLoss && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-950/85 backdrop-blur-md border border-rose-500/60 text-[10px] font-mono font-bold text-rose-300 shadow-lg">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                  <span>SL: ${tradeLevels.stopLoss.toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* 4. Active Detected Zones & Patterns Strip (Below Chart) */}

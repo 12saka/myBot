@@ -1557,13 +1557,15 @@ export class SignalsController implements OnModuleInit {
       }
     };
 
-    // Analytical models across memory layers
+    // Analytical models across memory layers (15M, 1H, 4H)
     const volMetrics = this.computeVolatilityMetrics(candles15m);
     const sessionLevels = this.computeSessionLevels(candles15m);
     const volumeProfile = this.computeVolumeProfile(candles15m);
     const swings15 = this.detectFractalSwings(candles15m);
     const swings1h = this.detectFractalSwings(candles1h);
+    const swings4h = candles4h && candles4h.length >= 10 ? this.detectFractalSwings(candles4h) : [];
     const obs15 = this.detectOrderBlocks(candles15m, volMetrics.atr15m);
+    const obs1h = candles1h && candles1h.length >= 10 ? this.detectOrderBlocks(candles1h, volMetrics.atr15m * 1.8) : [];
     const fvgs15 = this.detectFairValueGaps(candles15m, volMetrics.atr15m);
 
     // Event-driven candle importance weighting
@@ -1600,8 +1602,10 @@ export class SignalsController implements OnModuleInit {
       { name: 'Previous Day High (PDH)', price: sessionLevels.pdh },
       { name: 'Previous Day Low (PDL)', price: sessionLevels.pdl }
     ];
-    swings15.filter(s => s.type === 'HIGH').slice(-3).forEach(s => keyLevels.push({ name: `Swing High ($${s.price.toFixed(1)})`, price: s.price }));
-    swings15.filter(s => s.type === 'LOW').slice(-3).forEach(s => keyLevels.push({ name: `Swing Low ($${s.price.toFixed(1)})`, price: s.price }));
+    swings15.filter(s => s.type === 'HIGH').slice(-3).forEach(s => keyLevels.push({ name: `15M Swing High ($${s.price.toFixed(1)})`, price: s.price }));
+    swings15.filter(s => s.type === 'LOW').slice(-3).forEach(s => keyLevels.push({ name: `15M Swing Low ($${s.price.toFixed(1)})`, price: s.price }));
+    swings1h.filter(s => s.type === 'HIGH').slice(-2).forEach(s => keyLevels.push({ name: `1H Swing High ($${s.price.toFixed(1)})`, price: s.price }));
+    swings1h.filter(s => s.type === 'LOW').slice(-2).forEach(s => keyLevels.push({ name: `1H Swing Low ($${s.price.toFixed(1)})`, price: s.price }));
     const sweeps = this.detectAdaptiveLiquiditySweeps(candles15m, keyLevels, volMetrics.atr15m);
 
     // 1H Trend (Primary Structure via Swings)
@@ -1914,33 +1918,68 @@ export class SignalsController implements OnModuleInit {
     const swingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || sessionLevels.asl;
     const swingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || sessionLevels.ash;
     const equilibrium = (swingLow + swingHigh) / 2;
+    const maxCandidateDist = 2.2 * volMetrics.atr15m;
 
     if (bias === 'BUY') {
-      activeBullishObs.forEach(ob => {
-        candidates.push({ source: 'Bullish Order Block Midpoint', price: ob.midpoint, weight: 3 });
-        candidates.push({ source: 'Bullish Order Block Edge', price: ob.high, weight: 2 });
-      });
-      activeBullishFvgs.forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
-      candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
-      candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
-      candidates.push({ source: 'Discount Equilibrium', price: equilibrium, weight: 2 });
-      if (latestBullishSweep) candidates.push({ source: 'Sweep Retest', price: latestBullishSweep.levelPrice, weight: 3 });
+      activeBullishObs
+        .filter(ob => Math.abs(ob.midpoint - currentPrice) <= maxCandidateDist)
+        .forEach(ob => {
+          candidates.push({ source: '15M Bullish Order Block Midpoint', price: ob.midpoint, weight: 3 });
+          candidates.push({ source: '15M Bullish Order Block Edge', price: ob.high, weight: 2 });
+        });
+      obs1h
+        .filter(ob => !ob.mitigated && ob.type === 'BULLISH' && Math.abs(ob.midpoint - currentPrice) <= 2.5 * volMetrics.atr15m)
+        .forEach(ob => {
+          candidates.push({ source: '1H Institutional Bullish OB', price: ob.midpoint, weight: 4 });
+        });
+      activeBullishFvgs
+        .filter(fvg => Math.abs(fvg.midpoint - currentPrice) <= maxCandidateDist)
+        .forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
+      if (Math.abs(sessionLevels.sessionVwap - currentPrice) <= 1.6 * volMetrics.atr15m) {
+        candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
+      }
+      if (Math.abs(volumeProfile.poc - currentPrice) <= 1.6 * volMetrics.atr15m) {
+        candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
+      }
+      if (Math.abs(equilibrium - currentPrice) <= 1.6 * volMetrics.atr15m) {
+        candidates.push({ source: 'Discount Equilibrium', price: equilibrium, weight: 2 });
+      }
+      if (latestBullishSweep && Math.abs(latestBullishSweep.levelPrice - currentPrice) <= maxCandidateDist) {
+        candidates.push({ source: 'Liquidity Sweep Retest', price: latestBullishSweep.levelPrice, weight: 4 });
+      }
     } else if (bias === 'SELL') {
-      activeBearishObs.forEach(ob => {
-        candidates.push({ source: 'Bearish Order Block Midpoint', price: ob.midpoint, weight: 3 });
-        candidates.push({ source: 'Bearish Order Block Edge', price: ob.low, weight: 2 });
-      });
-      activeBearishFvgs.forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
-      candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
-      candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
-      candidates.push({ source: 'Premium Equilibrium', price: equilibrium, weight: 2 });
-      if (latestBearishSweep) candidates.push({ source: 'Sweep Retest', price: latestBearishSweep.levelPrice, weight: 3 });
+      activeBearishObs
+        .filter(ob => Math.abs(ob.midpoint - currentPrice) <= maxCandidateDist)
+        .forEach(ob => {
+          candidates.push({ source: '15M Bearish Order Block Midpoint', price: ob.midpoint, weight: 3 });
+          candidates.push({ source: '15M Bearish Order Block Edge', price: ob.low, weight: 2 });
+        });
+      obs1h
+        .filter(ob => !ob.mitigated && ob.type === 'BEARISH' && Math.abs(ob.midpoint - currentPrice) <= 2.5 * volMetrics.atr15m)
+        .forEach(ob => {
+          candidates.push({ source: '1H Institutional Bearish OB', price: ob.midpoint, weight: 4 });
+        });
+      activeBearishFvgs
+        .filter(fvg => Math.abs(fvg.midpoint - currentPrice) <= maxCandidateDist)
+        .forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
+      if (Math.abs(sessionLevels.sessionVwap - currentPrice) <= 1.6 * volMetrics.atr15m) {
+        candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
+      }
+      if (Math.abs(volumeProfile.poc - currentPrice) <= 1.6 * volMetrics.atr15m) {
+        candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
+      }
+      if (Math.abs(equilibrium - currentPrice) <= 1.6 * volMetrics.atr15m) {
+        candidates.push({ source: 'Premium Equilibrium', price: equilibrium, weight: 2 });
+      }
+      if (latestBearishSweep && Math.abs(latestBearishSweep.levelPrice - currentPrice) <= maxCandidateDist) {
+        candidates.push({ source: 'Liquidity Sweep Retest', price: latestBearishSweep.levelPrice, weight: 4 });
+      }
     }
 
     const highImpactCandles = (eventWeights || []).filter(ew => ew.weight >= 1.5).slice(-2);
     highImpactCandles.forEach(hic => {
       const c = candles15m[hic.index];
-      if (c) {
+      if (c && Math.abs(((c.open + c.close) / 2) - currentPrice) <= maxCandidateDist) {
         candidates.push({
           source: `Event Impulse Level (${hic.eventTag})`,
           price: parseFloat(((c.open + c.close) / 2).toFixed(2)),
@@ -1954,72 +1993,83 @@ export class SignalsController implements OnModuleInit {
     let orderType: OrderType = 'WAIT';
     let selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE' = 'NONE';
     const mss5mTriggered = bias === 'BUY' ? mss5mBuy : bias === 'SELL' ? mss5mSell : false;
+    const isInsideIcz = Math.abs(currentPrice - icz.preferredEntry) <= 0.30 * volMetrics.atr15m;
 
     if (bias === 'BUY') {
       if (latestBullishSweep) selectedModel = 'SWEEP_CHOCH_REVERSAL';
       else if (isBullTrend) selectedModel = 'BOS_PULLBACK_CONTINUATION';
       else selectedModel = 'RANGE_DEVIATION_RECLAIM';
 
-      if (mss5mTriggered || Math.abs(currentPrice - icz.preferredEntry) <= 0.6 * volMetrics.atr15m) {
-        orderType = mss5mTriggered ? 'MARKET_BUY' : 'BUY_LIMIT';
-      } else {
-        orderType = 'BUY_LIMIT';
-      }
+      orderType = (mss5mTriggered || isInsideIcz) ? 'MARKET_BUY' : 'BUY_LIMIT';
     } else if (bias === 'SELL') {
       if (latestBearishSweep) selectedModel = 'SWEEP_CHOCH_REVERSAL';
       else if (isBearTrend) selectedModel = 'BOS_PULLBACK_CONTINUATION';
       else selectedModel = 'RANGE_DEVIATION_RECLAIM';
 
-      if (mss5mTriggered || Math.abs(currentPrice - icz.preferredEntry) <= 0.6 * volMetrics.atr15m) {
-        orderType = mss5mTriggered ? 'MARKET_SELL' : 'SELL_LIMIT';
-      } else {
-        orderType = 'SELL_LIMIT';
-      }
+      orderType = (mss5mTriggered || isInsideIcz) ? 'MARKET_SELL' : 'SELL_LIMIT';
     }
 
-    // Precise and realistic Entry Price
+    // Precise and fill-optimized Entry Price (within realistic retest band so setups don't miss fills)
     let entryPrice = currentPrice;
     if (orderType === 'BUY_LIMIT') {
-      const targetPullback = Math.min(currentPrice - 0.25, icz.preferredEntry);
-      entryPrice = parseFloat(Math.max(currentPrice - 1.5 * volMetrics.atr15m, targetPullback).toFixed(2));
+      const targetPullback = Math.min(currentPrice - 0.15, icz.preferredEntry);
+      entryPrice = parseFloat(Math.max(currentPrice - 0.85 * volMetrics.atr15m, targetPullback).toFixed(2));
       if (entryPrice >= currentPrice) {
-        entryPrice = parseFloat((currentPrice - 0.30).toFixed(2));
+        entryPrice = parseFloat((currentPrice - 0.20).toFixed(2));
       }
     } else if (orderType === 'SELL_LIMIT') {
-      const targetPullback = Math.max(currentPrice + 0.25, icz.preferredEntry);
-      entryPrice = parseFloat(Math.min(currentPrice + 1.5 * volMetrics.atr15m, targetPullback).toFixed(2));
+      const targetPullback = Math.max(currentPrice + 0.15, icz.preferredEntry);
+      entryPrice = parseFloat(Math.min(currentPrice + 0.85 * volMetrics.atr15m, targetPullback).toFixed(2));
       if (entryPrice <= currentPrice) {
-        entryPrice = parseFloat((currentPrice + 0.30).toFixed(2));
+        entryPrice = parseFloat((currentPrice + 0.20).toFixed(2));
       }
     } else {
-      entryPrice = currentPrice;
+      entryPrice = parseFloat(currentPrice.toFixed(2));
     }
 
-    // Strict Structural Invalidation (SL) Calculation
-    const adaptiveBuffer = parseFloat((volMetrics.atr15m * 0.45).toFixed(2));
+    // Strict Structural Invalidation (SL) Calculation with Anti-Wick-Hunt Protection
+    const adaptiveBuffer = parseFloat((volMetrics.atr15m * 0.35).toFixed(2));
+    const minStopDist = Math.max(1.80, parseFloat((0.75 * volMetrics.atr15m).toFixed(2)));
+    const maxStopDist = parseFloat((1.65 * volMetrics.atr15m).toFixed(2));
     let exactStopLoss = 0;
     let structuralInvalidationLevel = 0;
 
     if (bias === 'BUY') {
-      const structuralLowsBelow = swings15.filter(s => s.type === 'LOW' && s.price < entryPrice).map(s => s.price);
-      if (latestBullishSweep && latestBullishSweep.wickExtreme < entryPrice) structuralLowsBelow.push(latestBullishSweep.wickExtreme);
-      if (sessionLevels.asl < entryPrice) structuralLowsBelow.push(sessionLevels.asl);
+      const structuralLowsBelow = swings15
+        .filter(s => s.type === 'LOW' && s.price <= entryPrice - 0.40 * volMetrics.atr15m && s.price >= entryPrice - 1.35 * volMetrics.atr15m)
+        .map(s => s.price);
+      if (latestBullishSweep && latestBullishSweep.wickExtreme < entryPrice && latestBullishSweep.wickExtreme >= entryPrice - 1.40 * volMetrics.atr15m) {
+        structuralLowsBelow.push(latestBullishSweep.wickExtreme);
+      }
+      if (icz.zoneLow < entryPrice - 0.35 * volMetrics.atr15m && icz.zoneLow >= entryPrice - 1.30 * volMetrics.atr15m) {
+        structuralLowsBelow.push(icz.zoneLow);
+      }
 
       structuralInvalidationLevel = structuralLowsBelow.length > 0
-        ? Math.max(...structuralLowsBelow)
-        : parseFloat((entryPrice - 1.2 * volMetrics.atr15m).toFixed(2));
+        ? Math.min(...structuralLowsBelow)
+        : parseFloat((entryPrice - 0.80 * volMetrics.atr15m).toFixed(2));
 
-      exactStopLoss = parseFloat((structuralInvalidationLevel - adaptiveBuffer).toFixed(2));
+      const rawSl = structuralInvalidationLevel - adaptiveBuffer;
+      const clampedDist = Math.min(maxStopDist, Math.max(minStopDist, entryPrice - rawSl));
+      exactStopLoss = parseFloat((entryPrice - clampedDist).toFixed(2));
     } else {
-      const structuralHighsAbove = swings15.filter(s => s.type === 'HIGH' && s.price > entryPrice).map(s => s.price);
-      if (latestBearishSweep && latestBearishSweep.wickExtreme > entryPrice) structuralHighsAbove.push(latestBearishSweep.wickExtreme);
-      if (sessionLevels.ash > entryPrice) structuralHighsAbove.push(sessionLevels.ash);
+      const structuralHighsAbove = swings15
+        .filter(s => s.type === 'HIGH' && s.price >= entryPrice + 0.40 * volMetrics.atr15m && s.price <= entryPrice + 1.35 * volMetrics.atr15m)
+        .map(s => s.price);
+      if (latestBearishSweep && latestBearishSweep.wickExtreme > entryPrice && latestBearishSweep.wickExtreme <= entryPrice + 1.40 * volMetrics.atr15m) {
+        structuralHighsAbove.push(latestBearishSweep.wickExtreme);
+      }
+      if (icz.zoneHigh > entryPrice + 0.35 * volMetrics.atr15m && icz.zoneHigh <= entryPrice + 1.30 * volMetrics.atr15m) {
+        structuralHighsAbove.push(icz.zoneHigh);
+      }
 
       structuralInvalidationLevel = structuralHighsAbove.length > 0
-        ? Math.min(...structuralHighsAbove)
-        : parseFloat((entryPrice + 1.2 * volMetrics.atr15m).toFixed(2));
+        ? Math.max(...structuralHighsAbove)
+        : parseFloat((entryPrice + 0.80 * volMetrics.atr15m).toFixed(2));
 
-      exactStopLoss = parseFloat((structuralInvalidationLevel + adaptiveBuffer).toFixed(2));
+      const rawSl = structuralInvalidationLevel + adaptiveBuffer;
+      const clampedDist = Math.min(maxStopDist, Math.max(minStopDist, rawSl - entryPrice));
+      exactStopLoss = parseFloat((entryPrice + clampedDist).toFixed(2));
     }
 
     const directionalRisk = bias === 'BUY'
@@ -2029,33 +2079,73 @@ export class SignalsController implements OnModuleInit {
     const isGeometryValid = directionalRisk >= Math.max(1.5, 0.5 * volMetrics.atr15m);
     const risk = isGeometryValid ? directionalRisk : Math.max(3.0, volMetrics.atr15m);
 
-    // Dynamic Structural Take Profit Targets anchored to real Opposing Liquidity Pools
+    // Multi-Timeframe Liquidity-Anchored Take Profit Targets (15M, 1H, 4H) with Front-Running Buffer
     let tp1Price = 0;
     let tp2Price = 0;
     let tp3Price = 0;
 
     if (bias === 'BUY') {
-      // Find opposing buy-side liquidity above entry (Swing Highs, Session VAH, ASH, PDH)
-      const opposingHighs = swings15.filter(s => s.type === 'HIGH' && s.price >= entryPrice + 1.3 * risk).map(s => s.price).sort((a, b) => a - b);
-      if (sessionLevels.ash >= entryPrice + 1.3 * risk) opposingHighs.push(sessionLevels.ash);
-      if (sessionLevels.pdh >= entryPrice + 1.3 * risk) opposingHighs.push(sessionLevels.pdh);
-      if (volumeProfile.vah >= entryPrice + 1.3 * risk) opposingHighs.push(volumeProfile.vah);
-      opposingHighs.sort((a, b) => a - b);
+      const allHighPools = [
+        ...swings15.filter(s => s.type === 'HIGH').map(s => s.price),
+        ...swings1h.filter(s => s.type === 'HIGH').map(s => s.price),
+        ...swings4h.filter(s => s.type === 'HIGH').map(s => s.price),
+        sessionLevels.ash,
+        sessionLevels.pdh,
+        volumeProfile.vah,
+        ...obs1h.filter(o => !o.mitigated && o.type === 'BEARISH').map(o => o.low)
+      ].filter(p => p && !isNaN(p) && p > entryPrice);
 
-      tp1Price = opposingHighs.length > 0 ? parseFloat(opposingHighs[0].toFixed(2)) : parseFloat((entryPrice + Math.max(3.5, risk * 1.5)).toFixed(2));
-      tp2Price = opposingHighs.length > 1 ? parseFloat(opposingHighs[1].toFixed(2)) : parseFloat((entryPrice + Math.max(6.0, risk * 2.5)).toFixed(2));
-      tp3Price = opposingHighs.length > 2 ? parseFloat(opposingHighs[2].toFixed(2)) : parseFloat((entryPrice + Math.max(9.0, risk * 3.5)).toFixed(2));
+      const tp1Candidates = allHighPools
+        .filter(p => p >= entryPrice + 1.35 * risk && p <= entryPrice + 1.95 * risk)
+        .sort((a, b) => a - b);
+      tp1Price = tp1Candidates.length > 0
+        ? parseFloat(Math.max(entryPrice + 1.35 * risk, tp1Candidates[0] - 0.20).toFixed(2))
+        : parseFloat((entryPrice + Math.max(3.5, risk * 1.55)).toFixed(2));
+
+      const tp2Candidates = allHighPools
+        .filter(p => p >= Math.max(tp1Price + 0.5 * risk, entryPrice + 2.10 * risk) && p <= entryPrice + 3.10 * risk)
+        .sort((a, b) => a - b);
+      tp2Price = tp2Candidates.length > 0
+        ? parseFloat((tp2Candidates[0] - 0.25).toFixed(2))
+        : parseFloat((entryPrice + Math.max(6.0, risk * 2.45)).toFixed(2));
+
+      const tp3Candidates = allHighPools
+        .filter(p => p >= Math.max(tp2Price + 0.6 * risk, entryPrice + 3.20 * risk) && p <= entryPrice + 4.80 * risk)
+        .sort((a, b) => a - b);
+      tp3Price = tp3Candidates.length > 0
+        ? parseFloat((tp3Candidates[0] - 0.30).toFixed(2))
+        : parseFloat((entryPrice + Math.max(9.0, risk * 3.50)).toFixed(2));
     } else {
-      // Find opposing sell-side liquidity below entry (Swing Lows, Session VAL, ASL, PDL)
-      const opposingLows = swings15.filter(s => s.type === 'LOW' && s.price <= entryPrice - 1.3 * risk).map(s => s.price).sort((a, b) => b - a);
-      if (sessionLevels.asl <= entryPrice - 1.3 * risk) opposingLows.push(sessionLevels.asl);
-      if (sessionLevels.pdl <= entryPrice - 1.3 * risk) opposingLows.push(sessionLevels.pdl);
-      if (volumeProfile.val <= entryPrice - 1.3 * risk) opposingLows.push(volumeProfile.val);
-      opposingLows.sort((a, b) => b - a);
+      const allLowPools = [
+        ...swings15.filter(s => s.type === 'LOW').map(s => s.price),
+        ...swings1h.filter(s => s.type === 'LOW').map(s => s.price),
+        ...swings4h.filter(s => s.type === 'LOW').map(s => s.price),
+        sessionLevels.asl,
+        sessionLevels.pdl,
+        volumeProfile.val,
+        ...obs1h.filter(o => !o.mitigated && o.type === 'BULLISH').map(o => o.high)
+      ].filter(p => p && !isNaN(p) && p < entryPrice);
 
-      tp1Price = opposingLows.length > 0 ? parseFloat(opposingLows[0].toFixed(2)) : parseFloat((entryPrice - Math.max(3.5, risk * 1.5)).toFixed(2));
-      tp2Price = opposingLows.length > 1 ? parseFloat(opposingLows[1].toFixed(2)) : parseFloat((entryPrice - Math.max(6.0, risk * 2.5)).toFixed(2));
-      tp3Price = opposingLows.length > 2 ? parseFloat(opposingLows[2].toFixed(2)) : parseFloat((entryPrice - Math.max(9.0, risk * 3.5)).toFixed(2));
+      const tp1Candidates = allLowPools
+        .filter(p => p <= entryPrice - 1.35 * risk && p >= entryPrice - 1.95 * risk)
+        .sort((a, b) => b - a);
+      tp1Price = tp1Candidates.length > 0
+        ? parseFloat(Math.min(entryPrice - 1.35 * risk, tp1Candidates[0] + 0.20).toFixed(2))
+        : parseFloat((entryPrice - Math.max(3.5, risk * 1.55)).toFixed(2));
+
+      const tp2Candidates = allLowPools
+        .filter(p => p <= Math.min(tp1Price - 0.5 * risk, entryPrice - 2.10 * risk) && p >= entryPrice - 3.10 * risk)
+        .sort((a, b) => b - a);
+      tp2Price = tp2Candidates.length > 0
+        ? parseFloat((tp2Candidates[0] + 0.25).toFixed(2))
+        : parseFloat((entryPrice - Math.max(6.0, risk * 2.45)).toFixed(2));
+
+      const tp3Candidates = allLowPools
+        .filter(p => p <= Math.min(tp2Price - 0.6 * risk, entryPrice - 3.20 * risk) && p >= entryPrice - 4.80 * risk)
+        .sort((a, b) => b - a);
+      tp3Price = tp3Candidates.length > 0
+        ? parseFloat((tp3Candidates[0] + 0.30).toFixed(2))
+        : parseFloat((entryPrice - Math.max(9.0, risk * 3.50)).toFixed(2));
     }
 
     const r1 = parseFloat((Math.abs(tp1Price - entryPrice) / risk).toFixed(2));
@@ -2602,6 +2692,9 @@ export class SignalsController implements OnModuleInit {
         volatilityPercentile: setup.volatilityMetrics.atrPercentile,
         sessionName: (setup.hierarchy?.level1_marketEnvironment?.session) || 'Active Session',
         dataQuality: setup.fiveGates.gate1_data.passed ? 'PRIME' : 'DEGRADED',
+        confidence: activeSignal ? Math.round(activeSignal.winProbability || 85) : (setup.opportunityScore || 85),
+        direction: activeSignal ? (activeSignal.direction as any) : setup.direction,
+        signalGrade: (activeSignal?.aiReasoning as any)?.signalGrade || setup.grade || 'A+ PRIME',
         activeSignal: activeSignal || null,
         fiveGatesAudit: auditGates,
         macro: {

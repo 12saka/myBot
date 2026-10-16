@@ -122,6 +122,9 @@ export interface GoldOverviewData {
   volatilityPercentile: number;
   sessionName: string;
   dataQuality: 'PRIME' | 'DEGRADED' | 'OFFLINE';
+  confidence?: number;
+  direction?: 'BUY' | 'SELL' | 'WAIT';
+  signalGrade?: string;
   activeSignal: any | null;
   fiveGatesAudit: GoldGateAudit[];
   macro: GoldMacroBarometer;

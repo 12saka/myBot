@@ -20,7 +20,7 @@ import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 import { AnimatePresence } from 'framer-motion';
 import { QuickTradeWidget } from '@/components/dashboard/QuickTradeWidget';
 import { QuizModal } from '@/components/academy/QuizModal';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, mapSignal } from '@/lib/api';
 
 const CONTAINER = {
   hidden: { opacity: 0 },
@@ -32,7 +32,7 @@ const ITEM = {
 };
 
 export default function DashboardPage() {
-  const { signals, autonomousActive, aiMode } = useAIStore();
+  const { signals, autonomousActive, aiMode, setSignals } = useAIStore();
   const { totalValue, totalPnl, totalPnlPct } = usePortfolioStore();
   const { tickers } = useMarketStore();
   const [activeTab, setActiveTab] = useState<'all' | 'crypto' | 'stocks' | 'forex'>('all');
@@ -72,6 +72,15 @@ export default function DashboardPage() {
       if (statsData) setStats(statsData);
     } catch (err) {
       console.warn('[Dashboard] Failed to fetch stats:', err);
+    }
+
+    try {
+      const rawSignals = await apiFetch<any[]>('/api/v2/signals?forceFresh=true');
+      if (Array.isArray(rawSignals)) {
+        setSignals(rawSignals.map(mapSignal));
+      }
+    } catch (err) {
+      console.warn('[Dashboard] Failed to fetch signals:', err);
     }
 
     try {
@@ -523,7 +532,9 @@ export default function DashboardPage() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-display font-bold text-white">{sig.symbol}</span>
-                    <Badge variant={sig.direction === 'BUY' ? 'buy' : 'sell'} size="xs">{sig.direction}</Badge>
+                    <Badge variant={sig.direction === 'BUY' ? 'buy' : 'sell'} size="xs">
+                      {sig.direction === 'BUY' ? 'BULLISH' : sig.direction === 'SELL' ? 'BEARISH' : 'WAIT'}
+                    </Badge>
                   </div>
                   <span className="text-[10px] text-slate-500">{sig.strategy}</span>
                 </div>

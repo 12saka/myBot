@@ -25,7 +25,7 @@ const NAV_GROUPS = [
       { href: '/terminal',   label: 'Terminal',     icon: Monitor          },
       { href: '/markets',    label: 'Markets',      icon: TrendingUp       },
       {
-        href: '/signals',
+        href: '/dashboard/engines/gold',
         label: 'Signals',
         icon: Zap,
         subItems: [
@@ -204,7 +204,7 @@ export function Sidebar() {
                 {group.items.map((item: any) => {
                   const { href, label, icon: Icon, subItems } = item;
                   const hasSubItems = Boolean(subItems && subItems.length > 0);
-                  const isSignals = href === '/signals';
+                  const isSignals = Boolean(hasSubItems || href.includes('engines'));
                   const isParentActive = pathname === href || (hasSubItems && subItems.some((s: any) => pathname === s.href || pathname?.startsWith(s.href + '/')));
 
                   return (
@@ -214,7 +214,7 @@ export function Sidebar() {
                           href={href}
                           onClick={() => {
                             if (!isCollapsed && hasSubItems) {
-                              setSignalsExpanded(true);
+                              setSignalsExpanded(prev => !prev);
                             }
                             setSidebarOpen(false);
                           }}
