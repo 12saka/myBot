@@ -8,10 +8,6 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-import {
-  LayoutDashboard, TrendingUp, Zap, Briefcase,
-  Wallet, Settings2, BookOpen, Bot, ChevronLeft,
-  ChevronRight, Bell, Shield, Activity, BarChart3,
   Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle, Monitor, Flame,
   Coins, ChevronDown
 } from 'lucide-react';
