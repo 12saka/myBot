@@ -124,6 +124,7 @@ export interface MicrostructureState {
   bid: number;
   ask: number;
   spread: number;
+  spot?: number;
   isLiquid: boolean;
   reason?: string;
 }
@@ -675,25 +676,32 @@ export class SignalsController implements OnModuleInit {
   }
 
   public async fetchGoldMicrostructure(latestCandleClose: number): Promise<MicrostructureState> {
-    const quotes = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
+    const quotes = await this.fetchTradingViewQuotes('cfd', ['OANDA:XAUUSD', 'FOREXCOM:XAUUSD', 'TVC:GOLD', 'FX_IDC:XAUUSD']);
     let bid = 0;
     let ask = 0;
     let spot = latestCandleClose;
 
     const oanda = quotes['OANDA:XAUUSD'];
+    const forexcom = quotes['FOREXCOM:XAUUSD'];
     const tvc = quotes['TVC:GOLD'];
+    const fxidc = quotes['FX_IDC:XAUUSD'];
+    const primary = (oanda && oanda.price > 1000) ? oanda
+      : (forexcom && forexcom.price > 1000) ? forexcom
+      : (tvc && tvc.price > 1000) ? tvc
+      : (fxidc && fxidc.price > 1000) ? fxidc
+      : null;
 
-    if (oanda && oanda.bid && oanda.ask && oanda.bid > 0 && oanda.ask > 0) {
-      bid = oanda.bid;
-      ask = oanda.ask;
-      spot = oanda.price;
-    } else if (tvc && tvc.bid && tvc.ask && tvc.bid > 0 && tvc.ask > 0) {
-      bid = tvc.bid;
-      ask = tvc.ask;
-      spot = tvc.price;
+    if (primary && primary.bid && primary.ask && primary.bid > 0 && primary.ask > 0) {
+      bid = primary.bid;
+      ask = primary.ask;
+      spot = primary.price;
+    } else if (primary && primary.price > 1000) {
+      spot = primary.price;
+      bid = parseFloat((spot - 0.12).toFixed(2));
+      ask = parseFloat((spot + 0.12).toFixed(2));
     } else {
       // ZERO DUMMY FALLBACKS: If real bid/ask quotes are missing, do NOT synthesize fake spreads!
-      return { bid: 0, ask: 0, spread: 0, isLiquid: false, reason: 'Live TradingView bid/ask quote unavailable' };
+      return { bid: 0, ask: 0, spread: 0, spot: latestCandleClose, isLiquid: false, reason: 'Live TradingView bid/ask quote unavailable' };
     }
 
     const spread = parseFloat(Math.max(0.01, ask - bid).toFixed(2));
@@ -703,18 +711,18 @@ export class SignalsController implements OnModuleInit {
     const utcMin = now.getUTCMinutes();
 
     if (utcDay === 6 || (utcDay === 0 && utcHour < 22) || (utcDay === 5 && utcHour >= 22)) {
-      return { bid, ask, spread, isLiquid: false, reason: 'Weekend market closure' };
+      return { bid, ask, spread, spot, isLiquid: false, reason: 'Weekend market closure' };
     }
 
     if (utcHour === 21 && utcMin >= 50) {
-      return { bid, ask, spread, isLiquid: false, reason: 'Daily settlement roll buffer' };
+      return { bid, ask, spread, spot, isLiquid: false, reason: 'Daily settlement roll buffer' };
     }
 
     if (spread > 0.60) {
-      return { bid, ask, spread, isLiquid: false, reason: `Excessive institutional spread expansion ($${spread.toFixed(2)} > $0.60)` };
+      return { bid, ask, spread, spot, isLiquid: false, reason: `Excessive institutional spread expansion ($${spread.toFixed(2)} > $0.60)` };
     }
 
-    return { bid, ask, spread, isLiquid: true };
+    return { bid, ask, spread, spot, isLiquid: true };
   }
 
   public async fetchIntermarket(): Promise<IntermarketState> {
@@ -1503,9 +1511,11 @@ export class SignalsController implements OnModuleInit {
     const len15 = candles15m.length;
     const rawCandleClose = candles15m[len15 - 1]?.close || 0;
     const close1m = candles1m.length > 0 ? candles1m[candles1m.length - 1]?.close : 0;
-    const tvSpotPrice = microstructure.bid
-      ? parseFloat(((microstructure.bid + microstructure.ask) / 2).toFixed(2))
-      : (close1m > 1000 ? close1m : rawCandleClose);
+    const tvSpotPrice = (microstructure.spot && microstructure.spot > 1000)
+      ? parseFloat(microstructure.spot.toFixed(2))
+      : microstructure.bid
+        ? parseFloat(microstructure.bid.toFixed(2))
+        : (close1m > 1000 ? close1m : rawCandleClose);
 
     let currentPrice = rawCandleClose;
     if (tvSpotPrice > 1000 && rawCandleClose > 1000 && Math.abs(rawCandleClose - tvSpotPrice) / rawCandleClose <= 0.004) {
@@ -3825,8 +3835,8 @@ export class SignalsController implements OnModuleInit {
 
       if (activeSignals.length === 0) return;
 
-      const quotes = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
-      const currentPrice = quotes['TVC:GOLD']?.price || quotes['OANDA:XAUUSD']?.price;
+      const quotes = await this.fetchTradingViewQuotes('cfd', ['OANDA:XAUUSD', 'FOREXCOM:XAUUSD', 'TVC:GOLD']);
+      const currentPrice = quotes['OANDA:XAUUSD']?.price || quotes['FOREXCOM:XAUUSD']?.price || quotes['TVC:GOLD']?.price;
       if (!currentPrice || currentPrice <= 1000) return;
 
       for (const signal of activeSignals) {

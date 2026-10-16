@@ -28,6 +28,7 @@ export class MarketsService implements OnModuleInit {
   ];
 
   private tickerCache: Record<string, { price: number; changePct24h: number; volume24h: number; timestamp: number }> = {};
+  private isUpdatingPrices = false;
 
   getCachedTicker(symbol: string): { price: number; changePct24h: number; volume24h: number } | null {
     const cached = this.tickerCache[symbol];
@@ -213,8 +214,10 @@ export class MarketsService implements OnModuleInit {
   // Poll live prices every 2.5 seconds for instant high-speed streaming
   @Interval(2500)
   async updateLivePrices() {
+    if (this.isUpdatingPrices) return;
+    this.isUpdatingPrices = true;
     try {
-      // 1. Fetch Crypto Prices & 24h Stats from Binance (including PAXGUSDT for Gold)
+      // 1. Fetch Crypto Prices & 24h Stats from Binance
       let cryptoPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       try {
         const binanceApiKey = process.env.BINANCE_KEY || process.env.BINANCE_API_KEY;
@@ -262,7 +265,7 @@ export class MarketsService implements OnModuleInit {
       } catch (err: any) {}
 
       // 2. Fetch Stocks, Indices, Commodities, Forex from Twelve Data (if key present) or Fast Yahoo Finance API
-      const nonCryptoSymbols = this.symbols;
+      const nonCryptoSymbols = this.symbols.filter(s => s.name !== 'GOLD' && s.name !== 'XAU/USD');
       let yahooPriceMap: Record<string, { price: number; changePct: number; volume: number }> = {};
       const twelveDataKey = process.env.TWELVE_DATA_API_KEY;
       let fetchedFromTwelveData = false;
@@ -290,7 +293,7 @@ export class MarketsService implements OnModuleInit {
         } catch (err: any) {}
       }
 
-      // Fast Yahoo Finance Batch Quoter (< 100ms response)
+      // Fast Yahoo Finance Batch Quoter (< 100ms response) for non-Gold symbols
       if (!fetchedFromTwelveData) {
         try {
           const yahooSymbolsQuery = nonCryptoSymbols.map(s => this.getYahooTicker(s.name)).join(',');
@@ -348,7 +351,7 @@ export class MarketsService implements OnModuleInit {
         console.warn(`[MarketsService] Forex fallback notice: ${err.message}`);
       }
 
-      // 2.5. Official TradingView Live Scanner Quotes (Top Priority for Spot & Futures)
+      // 2.5. Official TradingView Live Scanner Quotes (Top Priority for Spot Gold & Indices)
       let tvCfd: Record<string, any> = {};
       let tvAmerica: Record<string, any> = {};
       let tvCrypto: Record<string, any> = {};
@@ -356,32 +359,22 @@ export class MarketsService implements OnModuleInit {
 
       try {
         [tvCfd, tvAmerica, tvCrypto, tvForex] = await Promise.all([
-          this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']).catch(() => ({})),
+          this.fetchTradingViewQuotes('cfd', ['OANDA:XAUUSD', 'FOREXCOM:XAUUSD', 'TVC:GOLD', 'FX_IDC:XAUUSD']).catch(() => ({})),
           this.fetchTradingViewQuotes('america', ['DJ:DJI', 'NASDAQ:NDX', 'SP:SPX']).catch(() => ({})),
           this.fetchTradingViewQuotes('crypto', ['BINANCE:BTCUSDT', 'COINBASE:BTCUSD']).catch(() => ({})),
           this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD', 'FX_IDC:GBPUSD', 'FX_IDC:USDJPY']).catch(() => ({}))
         ]);
       } catch (e) {}
 
-      // High-availability Yahoo Chart v8 API for Crypto, Indices, Stocks, Commodities & Forex
+      // High-availability Yahoo Chart v8 API for non-Gold indices, stocks, commodities & forex (executed concurrently)
       const chartTickers = [
-        { name: 'BTC/USD', yahoo: 'BTC-USD' },
-        { name: 'ETH/USD', yahoo: 'ETH-USD' },
-        { name: 'SOL/USD', yahoo: 'SOL-USD' },
-        { name: 'BNB/USD', yahoo: 'BNB-USD' },
-        { name: 'XRP/USD', yahoo: 'XRP-USD' },
         { name: 'US30', yahoo: '^DJI' },
         { name: 'US100', yahoo: '^NDX' },
         { name: 'SPX500', yahoo: '^GSPC' },
         { name: 'DAX40', yahoo: '^GDAXI' },
-        { name: 'US10Y', yahoo: '^TNX' },
-        { name: 'DXY', yahoo: 'DX-Y.NYB' },
-        { name: 'VIX', yahoo: '^VIX' },
         { name: 'NQ', yahoo: 'NQ=F' },
         { name: 'YM', yahoo: 'YM=F' },
         { name: 'ES', yahoo: 'ES=F' },
-        { name: 'GOLD', yahoo: 'GC=F' },
-        { name: 'XAU/USD', yahoo: 'GC=F' },
         { name: 'OIL', yahoo: 'CL=F' },
         { name: 'AAPL', yahoo: 'AAPL' },
         { name: 'TSLA', yahoo: 'TSLA' },
@@ -393,25 +386,29 @@ export class MarketsService implements OnModuleInit {
         { name: 'USD/JPY', yahoo: 'USDJPY=X' },
       ];
 
-      for (const idxAsset of chartTickers) {
-        try {
-          const chartRes = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(idxAsset.yahoo)}?interval=1m&range=1d`);
-          if (chartRes.ok) {
-            const cData = await chartRes.json();
-            const meta = cData?.chart?.result?.[0]?.meta;
-            if (meta && meta.regularMarketPrice && meta.regularMarketPrice > 0) {
-              const price = parseFloat(meta.regularMarketPrice);
-              const prevClose = parseFloat(meta.chartPreviousClose || meta.previousClose || price);
-              const changePct = prevClose > 0 ? parseFloat((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0;
-              yahooPriceMap[idxAsset.yahoo] = {
-                price,
-                changePct,
-                volume: parseFloat(meta.regularMarketVolume || '0')
-              };
-            }
-          }
-        } catch (e) {}
-      }
+      await Promise.allSettled(
+        chartTickers
+          .filter(idxAsset => !yahooPriceMap[idxAsset.yahoo] || yahooPriceMap[idxAsset.yahoo].price <= 0)
+          .map(async (idxAsset) => {
+            try {
+              const chartRes = await this.fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(idxAsset.yahoo)}?interval=1m&range=1d`, {}, 3000);
+              if (chartRes.ok) {
+                const cData = await chartRes.json();
+                const meta = cData?.chart?.result?.[0]?.meta;
+                if (meta && meta.regularMarketPrice && meta.regularMarketPrice > 0) {
+                  const price = parseFloat(meta.regularMarketPrice);
+                  const prevClose = parseFloat(meta.chartPreviousClose || meta.previousClose || price);
+                  const changePct = prevClose > 0 ? parseFloat((((price - prevClose) / prevClose) * 100).toFixed(2)) : 0;
+                  yahooPriceMap[idxAsset.yahoo] = {
+                    price,
+                    changePct,
+                    volume: parseFloat(meta.regularMarketVolume || '0')
+                  };
+                }
+              }
+            } catch (e) {}
+          })
+      );
 
       // High-availability Stooq & Yahoo quoter for Indices & Commodities
       try {
@@ -452,6 +449,9 @@ export class MarketsService implements OnModuleInit {
         let currentPrice = lastCached ? lastCached.price : 0;
         let changePct24h = lastCached ? lastCached.changePct24h : 0;
         let volume24h = lastCached ? lastCached.volume24h : 0;
+        let liveGoldBid: number | undefined;
+        let liveGoldAsk: number | undefined;
+        let spotGoldResolvedOnTick = false;
 
         // PRIORITY 1: Official TradingView Live Scanner Quotes (Direct Interbank & Exchange parity)
         if (asset.name === 'BTC/USD' && tvCrypto['BINANCE:BTCUSDT']?.price > 10000) {
@@ -470,11 +470,28 @@ export class MarketsService implements OnModuleInit {
           currentPrice = tvAmerica['SP:SPX'].price;
           changePct24h = tvAmerica['SP:SPX'].changePct;
           volume24h = tvAmerica['SP:SPX'].volume || volume24h;
-        } else if ((asset.name === 'GOLD' || asset.name === 'XAU/USD') && (tvCfd['TVC:GOLD']?.price > 1000 || tvCfd['OANDA:XAUUSD']?.price > 1000)) {
-          const tvGold = tvCfd['TVC:GOLD']?.price > 1000 ? tvCfd['TVC:GOLD'] : tvCfd['OANDA:XAUUSD'];
-          currentPrice = tvGold.price;
-          changePct24h = tvGold.changePct;
+        } else if (
+          (asset.name === 'GOLD' || asset.name === 'XAU/USD') &&
+          (tvCfd['OANDA:XAUUSD']?.price > 1000 ||
+            tvCfd['FOREXCOM:XAUUSD']?.price > 1000 ||
+            tvCfd['TVC:GOLD']?.price > 1000 ||
+            tvCfd['FX_IDC:XAUUSD']?.price > 1000)
+        ) {
+          // Strictly prioritize OANDA:XAUUSD so topbar ticker & market store match the TradingView OANDA:XAUUSD chart 1:1
+          const tvGold =
+            tvCfd['OANDA:XAUUSD']?.price > 1000
+              ? tvCfd['OANDA:XAUUSD']
+              : tvCfd['FOREXCOM:XAUUSD']?.price > 1000
+              ? tvCfd['FOREXCOM:XAUUSD']
+              : tvCfd['TVC:GOLD']?.price > 1000
+              ? tvCfd['TVC:GOLD']
+              : tvCfd['FX_IDC:XAUUSD'];
+          currentPrice = parseFloat(Number(tvGold.price).toFixed(2));
+          changePct24h = parseFloat(Number(tvGold.changePct || 0).toFixed(2));
           volume24h = tvGold.volume || volume24h;
+          liveGoldBid = tvGold.bid && tvGold.bid > 1000 ? parseFloat(Number(tvGold.bid).toFixed(2)) : undefined;
+          liveGoldAsk = tvGold.ask && tvGold.ask > 1000 ? parseFloat(Number(tvGold.ask).toFixed(2)) : undefined;
+          spotGoldResolvedOnTick = true;
         } else if (asset.name === 'EUR/USD' && (tvForex['FX_IDC:EURUSD']?.price > 0.5 || tvForex['OANDA:EURUSD']?.price > 0.5)) {
           const tvEur = tvForex['FX_IDC:EURUSD']?.price > 0.5 ? tvForex['FX_IDC:EURUSD'] : tvForex['OANDA:EURUSD'];
           currentPrice = tvEur.price;
@@ -493,7 +510,7 @@ export class MarketsService implements OnModuleInit {
           currentPrice = binanceData.price;
           changePct24h = binanceData.changePct;
           volume24h = binanceData.volume;
-        } else {
+        } else if (asset.name !== 'GOLD' && asset.name !== 'XAU/USD') {
           const yahooTicker = this.getYahooTicker(asset.name);
           const yahooData = yahooPriceMap[yahooTicker];
           if (yahooData && yahooData.price > 0) {
@@ -538,70 +555,41 @@ export class MarketsService implements OnModuleInit {
           }
         }
 
-        // Real Gold Spot (XAU/USD) pricing: TradingView Forex/Interbank Spot Gold
-        // Strictly lock to real spot price. DO NOT use PAXG crypto proxy token.
+        // Real Gold Spot (XAU/USD) pricing: TradingView Forex/Interbank Spot Gold (OANDA:XAUUSD)
+        // Strictly lock to real spot price. NEVER use COMEX futures (GC=F) or PAXG crypto proxy token.
         if (asset.name === 'XAU/USD' || asset.name === 'GOLD') {
-          let spotFound = currentPrice > 1000;
+          let spotFound = spotGoldResolvedOnTick;
 
-          // Priority 2: Twelve Data real-time quote for XAU/USD (Identical to TradingView Spot Gold)
-          const tdKey = process.env.TWELVE_DATA_API_KEY;
-          if (!spotFound && tdKey) {
+          // Priority 2: Real Gold API Spot (true interbank XAU/USD spot)
+          if (!spotFound) {
             try {
-              const tdQuoteRes = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=XAU/USD&apikey=${tdKey}`, {}, 3000);
+              const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 2500);
+              if (spotRes.ok) {
+                const spotData = await spotRes.json();
+                if (spotData && Number(spotData.price) > 1000) {
+                  currentPrice = parseFloat(Number(spotData.price).toFixed(2));
+                  spotFound = true;
+                }
+              }
+            } catch (e) {}
+          }
+
+          // Priority 3: Twelve Data real-time quote for XAU/USD (Spot Gold)
+          const tdKey = process.env.TWELVE_DATA_API_KEY;
+          if (!spotFound && tdKey && tdKey !== 'demo') {
+            try {
+              const tdQuoteRes = await this.fetchWithTimeout(`https://api.twelvedata.com/quote?symbol=XAU/USD&apikey=${tdKey}`, {}, 2500);
               if (tdQuoteRes.ok) {
                 const tdQuote = await tdQuoteRes.json();
                 const quotePrice = Number(tdQuote.close || tdQuote.price);
                 if (quotePrice > 1000 && !tdQuote.code) {
-                  currentPrice = quotePrice;
-                  changePct24h = parseFloat(tdQuote.percent_change || '0');
+                  currentPrice = parseFloat(quotePrice.toFixed(2));
+                  changePct24h = parseFloat(Number(tdQuote.percent_change || '0').toFixed(2));
                   volume24h = parseFloat(tdQuote.volume || '0');
                   spotFound = true;
                 }
               }
             } catch (e) {}
-
-            if (!spotFound) {
-              try {
-                const tdRes = await this.fetchWithTimeout(`https://api.twelvedata.com/price?symbol=XAU/USD&apikey=${tdKey}`, {}, 2500);
-                if (tdRes.ok) {
-                  const tdData = await tdRes.json();
-                  if (tdData && Number(tdData.price) > 1000 && !tdData.code) {
-                    currentPrice = Number(tdData.price);
-                    spotFound = true;
-                    if (yahooPriceMap['GC=F']) {
-                      changePct24h = yahooPriceMap['GC=F'].changePct;
-                      volume24h = yahooPriceMap['GC=F'].volume;
-                    }
-                  }
-                }
-              } catch (e) {}
-            }
-          }
-
-          // Priority 2: Real Gold API spot
-          if (!spotFound) {
-            try {
-              const spotRes = await this.fetchWithTimeout('https://api.gold-api.com/price/XAU', {}, 3000);
-              if (spotRes.ok) {
-                const spotData = await spotRes.json();
-                if (spotData && Number(spotData.price) > 1000) {
-                  currentPrice = Number(spotData.price);
-                  spotFound = true;
-                  if (yahooPriceMap['GC=F']) {
-                    changePct24h = yahooPriceMap['GC=F'].changePct;
-                    volume24h = yahooPriceMap['GC=F'].volume;
-                  }
-                }
-              }
-            } catch (e) {}
-          }
-
-          // Priority 3: Yahoo COMEX GC=F futures
-          if (!spotFound && yahooPriceMap['GC=F'] && yahooPriceMap['GC=F'].price > 1000) {
-            currentPrice = yahooPriceMap['GC=F'].price;
-            changePct24h = yahooPriceMap['GC=F'].changePct;
-            volume24h = yahooPriceMap['GC=F'].volume;
-            spotFound = true;
           }
         }
 
@@ -619,8 +607,13 @@ export class MarketsService implements OnModuleInit {
           continue;
         }
  
-        const bidPrice = parseFloat(currentPrice.toFixed(4));
-        const askPrice = parseFloat((currentPrice * 1.0005).toFixed(4)); // 0.05% spread
+        const isGoldAsset = asset.name === 'GOLD' || asset.name === 'XAU/USD';
+        const bidPrice = isGoldAsset && liveGoldBid ? liveGoldBid : parseFloat(currentPrice.toFixed(isGoldAsset ? 2 : 4));
+        const askPrice = isGoldAsset && liveGoldAsk
+          ? liveGoldAsk
+          : isGoldAsset
+          ? parseFloat((currentPrice + 0.30).toFixed(2))
+          : parseFloat((currentPrice * 1.0005).toFixed(4));
         
         // Cache the metadata in memory
         this.tickerCache[asset.name] = {
@@ -637,7 +630,7 @@ export class MarketsService implements OnModuleInit {
         });
 
         // Also update the latest historical candle block close price
-        await this.updateLatestCandle(asset.name, bidPrice);
+        await this.updateLatestCandle(asset.name, currentPrice);
       }
 
       // 4. Update active signals lifecycle
@@ -705,6 +698,8 @@ export class MarketsService implements OnModuleInit {
       }
     } catch (error: any) {
       console.error('[MarketsService] Error updating live prices:', error.message);
+    } finally {
+      this.isUpdatingPrices = false;
     }
   }
 
@@ -987,8 +982,8 @@ export class MarketsService implements OnModuleInit {
           const tv = await this.fetchTradingViewQuotes('america', ['SP:SPX']);
           livePrice = tv['SP:SPX']?.price || 0;
         } else if (normSym === 'GOLD' || normSym.includes('XAU')) {
-          const tv = await this.fetchTradingViewQuotes('cfd', ['TVC:GOLD', 'OANDA:XAUUSD']);
-          livePrice = tv['TVC:GOLD']?.price || tv['OANDA:XAUUSD']?.price || 0;
+          const tv = await this.fetchTradingViewQuotes('cfd', ['OANDA:XAUUSD', 'FOREXCOM:XAUUSD', 'TVC:GOLD']);
+          livePrice = tv['OANDA:XAUUSD']?.price || tv['FOREXCOM:XAUUSD']?.price || tv['TVC:GOLD']?.price || 0;
         } else if (normSym.includes('EUR')) {
           const tv = await this.fetchTradingViewQuotes('forex', ['FX_IDC:EURUSD', 'OANDA:EURUSD']);
           livePrice = tv['FX_IDC:EURUSD']?.price || tv['OANDA:EURUSD']?.price || 0;
