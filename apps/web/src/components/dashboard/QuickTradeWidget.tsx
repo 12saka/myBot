@@ -207,7 +207,7 @@ export function QuickTradeWidget({
                     <div className="flex items-center justify-between">
                       <span className="text-slate-200 text-sm font-black">{symbol}</span>
                       <Badge variant={aiSignal.direction === 'BUY' ? 'buy' : 'sell'}>
-                        {aiSignal.direction}
+                        {aiSignal.direction === 'BUY' ? 'BULLISH' : 'BEARISH'}
                       </Badge>
                     </div>
                     
@@ -309,7 +309,7 @@ export function QuickTradeWidget({
                             : 'text-slate-400 hover:text-white'
                         }`}
                       >
-                        <TrendingUp size={14} /> BUY
+                        <TrendingUp size={14} /> BULLISH
                       </button>
                       <button
                         type="button"
@@ -320,7 +320,7 @@ export function QuickTradeWidget({
                             : 'text-slate-400 hover:text-white'
                         }`}
                       >
-                        <TrendingDown size={14} /> SELL
+                        <TrendingDown size={14} /> BEARISH
                       </button>
                     </div>
                   </div>
@@ -417,7 +417,7 @@ export function QuickTradeWidget({
                   <RefreshCw size={14} className="animate-spin" />
                 ) : (
                   <>
-                    <Zap size={14} /> Execute {(tradeMode === 'AI' && aiSignal ? aiSignal.direction : direction) === 'BUY' ? 'Buy Long' : 'Sell Short'}
+                    <Zap size={14} /> Execute {(tradeMode === 'AI' && aiSignal ? aiSignal.direction : direction) === 'BUY' ? 'Bullish Order' : 'Bearish Order'}
                   </>
                 )}
               </button>

@@ -124,7 +124,7 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
             </span>
 
             <Badge variant={isBuy ? 'buy' : isWait ? 'neutral' : 'sell'} size="sm">
-              {signal.direction}
+              {isBuy ? 'BULLISH' : isWait ? 'WAIT' : 'BEARISH'}
             </Badge>
 
             {/* Timeframe Badge */}
@@ -141,7 +141,7 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
               "bg-amber-500/15 text-amber-300 border-amber-500/35"
             )}>
               <span className="w-1.5 h-1.5 rounded-full bg-current" />
-              {orderType.replace(/_/g, ' ')}
+              {orderType.replace(/BUY/g, 'BULLISH').replace(/SELL/g, 'BEARISH').replace(/_/g, ' ')}
             </span>
 
             {/* Conviction Grade Badge */}
@@ -413,7 +413,7 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
 
         <button
           onClick={() => {
-            const text = `GOLD (XAU/USD) ${signal.direction} | Entry: ${fmtPrice(signal.entry)} | SL: ${fmtPrice(signal.stopLoss)} | TP1: ${fmtPrice(signal.tp1)} | TP2: ${fmtPrice(signal.tp2)}`;
+            const text = `GOLD (XAU/USD) ${isBuy ? 'BULLISH' : isWait ? 'WAIT' : 'BEARISH'} | Entry: ${fmtPrice(signal.entry)} | SL: ${fmtPrice(signal.stopLoss)} | TP1: ${fmtPrice(signal.tp1)} | TP2: ${fmtPrice(signal.tp2)}`;
             navigator.clipboard.writeText(text);
             toast.success('Gold trade plan copied to clipboard!');
           }}
@@ -426,10 +426,15 @@ function GoldSignalCard({ signal, onDelete, onViewChart }: GoldSignalCardProps) 
 
         <button
           onClick={() => setIsTradeOpen(true)}
-          className="col-span-2 sm:col-span-1 sm:flex-1 btn-primary py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-purple-500/20"
+          className={cn(
+            "col-span-2 sm:col-span-1 sm:flex-1 py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all",
+            isBuy ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20" :
+            isWait ? "bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20" :
+            "bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20"
+          )}
         >
-          <Zap size={14} className="fill-current text-amber-300" />
-          <span>Execute Trade</span>
+          <Zap size={14} className="fill-current text-white" />
+          <span>{isBuy ? 'Execute Bullish Order' : isWait ? 'Review Gate Clearance' : 'Execute Bearish Order'}</span>
         </button>
       </div>
 
@@ -508,6 +513,7 @@ export default function SignalsPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'15m' | '5m' | '1h' | '4h'>('15m');
+  const [directionFilter, setDirectionFilter] = useState<'ALL' | 'BULLISH' | 'BEARISH'>('ALL');
   const [selectedChartSignal, setSelectedChartSignal] = useState<AISignal | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
 
@@ -603,15 +609,17 @@ export default function SignalsPage() {
       setSignals([newSignal, ...signals.filter(s => s.id !== newSignal.id && (s.symbol || '').toUpperCase().includes('GOLD'))]);
 
       if (!silent && toastId) {
+        const dirLabel = newSignal.direction === 'BUY' ? 'BULLISH' : 'BEARISH';
         toast.success(
-          `Institutional ${newSignal.direction} signal active on Gold! (EV: +${(newSignal.aiReasoning as any)?.tradePath?.expectedValueR || '0.85'}R)`,
+          `Institutional ${dirLabel} signal active on Gold! (EV: +${(newSignal.aiReasoning as any)?.tradePath?.expectedValueR || '0.85'}R)`,
           { id: toastId, duration: 5000 }
         );
       }
 
       if (notificationsEnabled) {
+        const dirLabel = newSignal.direction === 'BUY' ? 'BULLISH' : 'BEARISH';
         playSignalChime('NEW_SIGNAL');
-        sendDeviceNotification(`XAU/USD ${newSignal.direction} Signal`, {
+        sendDeviceNotification(`XAU/USD ${dirLabel} Signal`, {
           body: `5-Gate Cleared Setup at $${newSignal.entry.toFixed(2)} targeting TP1 $${newSignal.tp1.toFixed(2)}.`
         });
       }
@@ -642,7 +650,16 @@ export default function SignalsPage() {
     return isGold && (s.direction === 'BUY' || s.direction === 'SELL');
   });
 
-  const activeSetups = goldSignals;
+  const bullishCount = goldSignals.filter(s => s.direction === 'BUY').length;
+  const bearishCount = goldSignals.filter(s => s.direction === 'SELL').length;
+
+  const filteredSignals = goldSignals.filter(s => {
+    if (directionFilter === 'BULLISH') return s.direction === 'BUY';
+    if (directionFilter === 'BEARISH') return s.direction === 'SELL';
+    return true;
+  });
+
+  const activeSetups = filteredSignals;
   const avgConfidence = goldSignals.length > 0
     ? Math.round(goldSignals.reduce((a, b) => a + b.confidence, 0) / goldSignals.length)
     : null;
@@ -900,11 +917,41 @@ export default function SignalsPage() {
           <span>•</span>
           <span>Engine Conviction: <strong className="text-emerald-400">{avgConfidence !== null ? `${avgConfidence}%` : '—'}</strong></span>
         </div>
+        {/* Direction Bias Filter Tabs */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-950/80 border border-white/10 rounded-xl">
+          {[
+            { id: 'ALL', label: 'All', count: goldSignals.length, activeCls: 'bg-purple-600 text-white shadow-purple-500/25' },
+            { id: 'BULLISH', label: 'Bullish', count: bullishCount, activeCls: 'bg-emerald-600 text-white shadow-emerald-500/25' },
+            { id: 'BEARISH', label: 'Bearish', count: bearishCount, activeCls: 'bg-rose-600 text-white shadow-rose-500/25' },
+          ].map(f => {
+            const isSelected = directionFilter === f.id;
+            return (
+              <button
+                key={f.id}
+                onClick={() => setDirectionFilter(f.id as any)}
+                className={cn(
+                  'flex items-center gap-1.5 py-1 px-2.5 rounded-lg font-mono text-xs font-bold transition-all cursor-pointer select-none',
+                  isSelected
+                    ? cn(f.activeCls, 'shadow-md')
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                )}
+              >
+                <span>{f.label}</span>
+                <span className={cn(
+                  "px-1.5 py-0.2 rounded text-[10px] font-mono font-bold",
+                  isSelected ? "bg-black/25 text-white" : "bg-white/5 text-slate-500"
+                )}>
+                  {f.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* 4. Gold Signal Cards Feed */}
       <motion.div variants={CONTAINER} initial="hidden" animate="show" className="space-y-5">
-        {goldSignals.map((signal) => (
+        {filteredSignals.map((signal) => (
           <GoldSignalCard
             key={signal.id}
             signal={signal}
@@ -913,7 +960,7 @@ export default function SignalsPage() {
           />
         ))}
 
-        {goldSignals.length === 0 && (
+        {filteredSignals.length === 0 && (
           <div className="glass-card rounded-2xl p-6 sm:p-10 border border-purple-500/20 bg-gradient-to-b from-purple-950/20 via-slate-950/40 to-slate-950/80 space-y-6 relative overflow-hidden shadow-2xl">
             {/* Ambient Background Glow */}
             <div className="absolute top-0 right-1/4 w-96 h-36 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -1048,7 +1095,7 @@ export default function SignalsPage() {
                 <div className="flex items-center gap-2.5">
                   <span className="font-display font-bold text-white text-lg">XAU/USD Chart Analysis</span>
                   <Badge variant={selectedChartSignal.direction === 'BUY' ? 'buy' : 'sell'}>
-                    {selectedChartSignal.direction}
+                    {selectedChartSignal.direction === 'BUY' ? 'BULLISH' : 'BEARISH'}
                   </Badge>
                   <span className="text-xs font-mono text-slate-400">
                     Entry: ${selectedChartSignal.entry.toFixed(2)} • SL: ${selectedChartSignal.stopLoss.toFixed(2)} • TP1: ${selectedChartSignal.tp1.toFixed(2)}

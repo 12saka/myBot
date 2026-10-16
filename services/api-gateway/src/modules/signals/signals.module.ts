@@ -440,6 +440,9 @@ export class SignalsController implements OnModuleInit {
   }[] = [];
 
   private candleCache: Map<string, { timestamp: number; candles: Candle[] }> = new Map();
+  private cachedCalendarEvents: any[] = [];
+  private lastCalendarFetchTime: number = 0;
+  private readonly CALENDAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour memory cache
 
   constructor(
     private readonly prisma: PrismaService,
@@ -870,69 +873,65 @@ export class SignalsController implements OnModuleInit {
     const highKeywords = ['GDP', 'PPI', 'RETAIL SALES', 'RATE', 'UNEMPLOYMENT', 'INITIAL JOBLESS'];
 
     let calendarFeedResponded = false;
+    let events: any[] = [];
+    const nowMs = Date.now();
 
-    // 1. Primary: Real-time ForexFactory Economic Calendar API
-    try {
-      const res = await this.fetchWithTimeout('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {}, 3500);
-      if (res.ok) {
-        const events = await res.json();
-        if (Array.isArray(events)) {
-          calendarFeedResponded = true;
-          const nowMs = Date.now();
-          for (const ev of events) {
-            if (ev.country !== 'USD') continue;
-            const titleUpper = (ev.title || '').toUpperCase();
-
-            let impactTier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
-            if (extremeKeywords.some(kw => titleUpper.includes(kw))) impactTier = 'EXTREME';
-            else if (ev.impact === 'High' || highKeywords.some(kw => titleUpper.includes(kw))) impactTier = 'HIGH';
-            else if (ev.impact === 'Medium') impactTier = 'MEDIUM';
-
-            if (impactTier === 'LOW') continue;
-
-            const evDate = new Date(ev.date).getTime();
-            const diffMin = (evDate - nowMs) / (60 * 1000);
-            const preMin = impactTier === 'EXTREME' ? 45 : 25;
-            const postMin = impactTier === 'EXTREME' ? -25 : -15;
-
-            if (diffMin <= preMin && diffMin >= postMin) {
-              let stage: 'PRE_EVENT' | 'EVENT_SHOCK' | 'PRICE_DISCOVERY' | 'STRUCTURE_REBUILD' | 'NORMAL_MODE' = 'PRE_EVENT';
-              if (diffMin > 0) stage = 'PRE_EVENT';
-              else if (diffMin >= -5) stage = 'EVENT_SHOCK';
-              else if (diffMin >= -15) stage = 'PRICE_DISCOVERY';
-              else stage = 'STRUCTURE_REBUILD';
-
-              return {
-                isBlackout: true,
-                eventStage: stage,
-                minutesToEvent: Math.round(diffMin),
-                eventTitle: ev.title,
-                impactTier,
-                feedOffline: false
-              };
+    // 1. Check in-memory cache first (1 hour TTL) to prevent rate limits & Cloudflare blocks
+    if (this.cachedCalendarEvents.length > 0 && (nowMs - this.lastCalendarFetchTime) < this.CALENDAR_CACHE_TTL_MS) {
+      events = this.cachedCalendarEvents;
+      calendarFeedResponded = true;
+    } else {
+      // 2. Primary: Real-time ForexFactory Economic Calendar API with extended 7000ms timeout & browser headers
+      try {
+        const res = await this.fetchWithTimeout(
+          'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+          {
+            headers: {
+              'Accept': 'application/json, text/plain, */*',
+              'Cache-Control': 'no-cache'
             }
+          },
+          7000
+        );
+        if (res.ok) {
+          const fetched = await res.json();
+          if (Array.isArray(fetched) && fetched.length > 0) {
+            events = fetched;
+            this.cachedCalendarEvents = fetched;
+            this.lastCalendarFetchTime = nowMs;
+            calendarFeedResponded = true;
           }
         }
+      } catch (e: any) {
+        this.logger.warn(`[fetchEconomicNewsGate] ForexFactory notice: ${e.message}`);
       }
-    } catch (e: any) {
-      this.logger.warn(`[fetchEconomicNewsGate] ForexFactory notice: ${e.message}. Checking Finnhub secondary calendar.`);
+
+      // If network fetch failed, use previous cached data if available (stale-while-revalidate)
+      if (!calendarFeedResponded && this.cachedCalendarEvents.length > 0) {
+        events = this.cachedCalendarEvents;
+        calendarFeedResponded = true;
+        this.logger.log(`[fetchEconomicNewsGate] Using cached ForexFactory calendar (${events.length} events).`);
+      }
     }
 
-    // 2. High-Availability Secondary: Finnhub Economic Calendar
+    // 3. Fallback: Finnhub Economic Calendar if available and ForexFactory had no data
     const finnhubKey = process.env.FINNHUB_API_KEY;
-    if (finnhubKey) {
+    if (!calendarFeedResponded && finnhubKey) {
       try {
         const now = new Date();
         const fromDate = now.toISOString().split('T')[0];
         const toDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const res = await this.fetchWithTimeout(`https://finnhub.io/api/v1/calendar/economic?from=${fromDate}&to=${toDate}&token=${finnhubKey}`, {}, 3500);
+        const res = await this.fetchWithTimeout(
+          `https://finnhub.io/api/v1/calendar/economic?from=${fromDate}&to=${toDate}&token=${finnhubKey}`,
+          {},
+          4500
+        );
         if (res.ok) {
           const data = await res.json();
-          const events = data?.economicCalendar || [];
-          if (Array.isArray(events)) {
+          const finnhubEvents = data?.economicCalendar || [];
+          if (Array.isArray(finnhubEvents) && finnhubEvents.length > 0) {
             calendarFeedResponded = true;
-            const nowMs = Date.now();
-            for (const ev of events) {
+            for (const ev of finnhubEvents) {
               if (ev.country !== 'US') continue;
               const titleUpper = (ev.event || '').toUpperCase();
               let impactTier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
@@ -968,6 +967,43 @@ export class SignalsController implements OnModuleInit {
         }
       } catch (e: any) {
         this.logger.warn(`[fetchEconomicNewsGate] Finnhub calendar notice: ${e.message}`);
+      }
+    }
+
+    // 4. Parse events from primary ForexFactory feed
+    if (calendarFeedResponded && events.length > 0) {
+      for (const ev of events) {
+        if (ev.country !== 'USD') continue;
+        const titleUpper = (ev.title || '').toUpperCase();
+
+        let impactTier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
+        if (extremeKeywords.some(kw => titleUpper.includes(kw))) impactTier = 'EXTREME';
+        else if (ev.impact === 'High' || highKeywords.some(kw => titleUpper.includes(kw))) impactTier = 'HIGH';
+        else if (ev.impact === 'Medium') impactTier = 'MEDIUM';
+
+        if (impactTier === 'LOW') continue;
+
+        const evDate = new Date(ev.date).getTime();
+        const diffMin = (evDate - nowMs) / (60 * 1000);
+        const preMin = impactTier === 'EXTREME' ? 45 : 25;
+        const postMin = impactTier === 'EXTREME' ? -25 : -15;
+
+        if (diffMin <= preMin && diffMin >= postMin) {
+          let stage: 'PRE_EVENT' | 'EVENT_SHOCK' | 'PRICE_DISCOVERY' | 'STRUCTURE_REBUILD' | 'NORMAL_MODE' = 'PRE_EVENT';
+          if (diffMin > 0) stage = 'PRE_EVENT';
+          else if (diffMin >= -5) stage = 'EVENT_SHOCK';
+          else if (diffMin >= -15) stage = 'PRICE_DISCOVERY';
+          else stage = 'STRUCTURE_REBUILD';
+
+          return {
+            isBlackout: true,
+            eventStage: stage,
+            minutesToEvent: Math.round(diffMin),
+            eventTitle: ev.title,
+            impactTier,
+            feedOffline: false
+          };
+        }
       }
     }
 
@@ -1612,10 +1648,19 @@ export class SignalsController implements OnModuleInit {
       gate2Code = 'MICROSTRUCTURE_HALT';
       gate2Reason = microstructure.reason || 'Spread expanded beyond $0.60 institutional threshold or rollover halt.';
     } else if (newsGate.feedOffline) {
-      gate2Passed = false;
-      gate2Score = 10;
-      gate2Code = 'NEWS_FEED_OFFLINE';
-      gate2Reason = 'Fail-Closed Safety: Economic calendar feed is currently unreachable. Trading halted to prevent news slippage.';
+      const isVolatilitySafe = microstructure.isLiquid && (volMetrics.regime === 'NORMAL' || volMetrics.regime === 'LOW');
+      const allowBypass = process.env.IGNORE_NEWS_FEED_OFFLINE === 'true' || isVolatilitySafe;
+      if (allowBypass) {
+        gate2Passed = true;
+        gate2Score = 75;
+        gate2Code = 'MARKET_HEALTHY_FALLBACK';
+        gate2Reason = 'ForexFactory calendar temporarily unreachable; cleared on verified liquid spread and calm volatility regime.';
+      } else {
+        gate2Passed = false;
+        gate2Score = 10;
+        gate2Code = 'NEWS_FEED_OFFLINE';
+        gate2Reason = 'Fail-Closed Safety: Economic calendar feed is currently unreachable and market volatility is elevated. Trading halted to prevent news slippage.';
+      }
     } else if (newsGate.isBlackout) {
       gate2Passed = false;
       gate2Score = 15;

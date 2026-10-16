@@ -8,7 +8,12 @@ import {
   LayoutDashboard, TrendingUp, Zap, Briefcase,
   Wallet, Settings2, BookOpen, Bot, ChevronLeft,
   ChevronRight, Bell, Shield, Activity, BarChart3,
-  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle, Monitor, Flame
+import {
+  LayoutDashboard, TrendingUp, Zap, Briefcase,
+  Wallet, Settings2, BookOpen, Bot, ChevronLeft,
+  ChevronRight, Bell, Shield, Activity, BarChart3,
+  Cpu, LogOut, User, Newspaper, ShieldAlert, GraduationCap, MessageCircle, Monitor, Flame,
+  Coins, ChevronDown
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
 import { useAIStore } from '@/store/useAIStore';
@@ -23,7 +28,16 @@ const NAV_GROUPS = [
       { href: '/dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
       { href: '/terminal',   label: 'Terminal',     icon: Monitor          },
       { href: '/markets',    label: 'Markets',      icon: TrendingUp       },
-      { href: '/signals',    label: 'Signals',      icon: Zap              },
+      {
+        href: '/signals',
+        label: 'Signals',
+        icon: Zap,
+        subItems: [
+          { href: '/dashboard/engines/gold', label: 'MasterGold', icon: Coins, tag: 'XAU' },
+          { href: '/dashboard/engines/nasdaq', label: 'Am_100', icon: Cpu, tag: 'NQ' },
+          { href: '/dashboard/engines/btc', label: 'MrCrypto-btc', icon: Activity, tag: 'BTC' },
+        ]
+      },
       { href: '/portfolio',  label: 'Portfolio',    icon: Briefcase        },
     ],
   },
@@ -37,7 +51,6 @@ const NAV_GROUPS = [
   {
     label: 'Intelligence',
     items: [
-      { href: '/dashboard/engines/gold', label: 'Gold Engine', icon: Flame },
       { href: '/copilot',    label: 'Copilot',      icon: Bot              },
       { href: '/automation', label: 'Automation',   icon: Cpu              },
       { href: '/news',       label: 'News',         icon: Newspaper        },
@@ -61,6 +74,15 @@ export function Sidebar() {
   const activeSignalsCount = signals.filter(s => s.direction === 'BUY' || s.direction === 'SELL').length;
 
   const [isMobile, setIsMobile] = useState(false);
+  const isSignalsActive = pathname?.startsWith('/signals') || pathname?.startsWith('/dashboard/engines');
+  const [signalsExpanded, setSignalsExpanded] = useState(true);
+
+  useEffect(() => {
+    if (isSignalsActive) {
+      setSignalsExpanded(true);
+    }
+  }, [isSignalsActive]);
+
   useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth < 768);
@@ -183,46 +205,123 @@ export function Sidebar() {
                 </div>
               )}
               <div className="px-2 space-y-0.5">
-                {group.items.map(({ href, label, icon: Icon }) => {
-                  const isActive = pathname === href || pathname?.startsWith(href + '/');
+                {group.items.map((item: any) => {
+                  const { href, label, icon: Icon, subItems } = item;
+                  const hasSubItems = Boolean(subItems && subItems.length > 0);
                   const isSignals = href === '/signals';
+                  const isParentActive = pathname === href || (hasSubItems && subItems.some((s: any) => pathname === s.href || pathname?.startsWith(s.href + '/')));
+
                   return (
-                    <Link
-                      key={href}
-                      href={href}
-                      onClick={() => setSidebarOpen(false)}
-                      className={cn('sidebar-link group relative', isActive && 'active')}
-                      title={isCollapsed ? label : undefined}
-                    >
-                      <Icon
-                        size={18}
-                        className={cn(
-                          'flex-shrink-0 transition-colors',
-                          isActive ? 'text-purple-400' : 'text-slate-500 group-hover:text-slate-300'
-                        )}
-                      />
-                      <AnimatePresence>
-                        {!isCollapsed ? (
-                          <motion.span
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            className="whitespace-nowrap flex items-center justify-between flex-1 min-w-0"
-                          >
-                            <span>{label}</span>
-                            {isSignals && activeSignalsCount > 0 && (
-                              <span className="ml-2 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
-                                {activeSignalsCount} LIVE
-                              </span>
+                    <div key={href} className="space-y-0.5">
+                      <div className="flex items-center">
+                        <Link
+                          href={href}
+                          onClick={() => {
+                            if (!isCollapsed && hasSubItems) {
+                              setSignalsExpanded(true);
+                            }
+                            setSidebarOpen(false);
+                          }}
+                          className={cn('sidebar-link group relative flex-1', isParentActive && 'active')}
+                          title={isCollapsed ? label : undefined}
+                        >
+                          <Icon
+                            size={18}
+                            className={cn(
+                              'flex-shrink-0 transition-colors',
+                              isParentActive ? 'text-purple-400' : 'text-slate-500 group-hover:text-slate-300'
                             )}
-                          </motion.span>
-                        ) : (
-                          isSignals && activeSignalsCount > 0 && (
-                            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                          )
+                          />
+                          <AnimatePresence>
+                            {!isCollapsed ? (
+                              <motion.span
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="whitespace-nowrap flex items-center justify-between flex-1 min-w-0"
+                              >
+                                <span>{label}</span>
+                                <div className="flex items-center gap-1.5 ml-2">
+                                  {isSignals && activeSignalsCount > 0 && (
+                                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                                      {activeSignalsCount} LIVE
+                                    </span>
+                                  )}
+                                </div>
+                              </motion.span>
+                            ) : (
+                              isSignals && activeSignalsCount > 0 && (
+                                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                              )
+                            )}
+                          </AnimatePresence>
+                        </Link>
+
+                        {!isCollapsed && hasSubItems && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSignalsExpanded(!signalsExpanded);
+                            }}
+                            className="p-2 text-slate-500 hover:text-slate-300 hover:bg-white/5 rounded-lg transition-colors cursor-pointer mr-1"
+                            title={signalsExpanded ? 'Collapse sub-items' : 'Expand sub-items'}
+                          >
+                            <ChevronDown
+                              size={14}
+                              className={cn('transition-transform duration-200', signalsExpanded ? 'rotate-180 text-purple-400' : 'rotate-0')}
+                            />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Sub-Items dropdown */}
+                      <AnimatePresence>
+                        {!isCollapsed && hasSubItems && signalsExpanded && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.2, ease: 'easeInOut' }}
+                            className="overflow-hidden pl-7 pr-1 space-y-1 pt-0.5"
+                          >
+                            {subItems.map((sub: any) => {
+                              const SubIcon = sub.icon;
+                              const isSubActive = pathname === sub.href || pathname?.startsWith(sub.href + '/');
+                              return (
+                                <Link
+                                  key={sub.href}
+                                  href={sub.href}
+                                  onClick={() => setSidebarOpen(false)}
+                                  className={cn(
+                                    'flex items-center justify-between px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 group relative',
+                                    isSubActive
+                                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm shadow-amber-500/10'
+                                      : 'text-slate-400 hover:text-amber-200 hover:bg-white/5 border border-transparent'
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <SubIcon size={14} className={cn('flex-shrink-0 transition-colors', isSubActive ? 'text-amber-400' : 'text-amber-400/70 group-hover:text-amber-300')} />
+                                    <span className="truncate">{sub.label}</span>
+                                  </div>
+                                  {sub.tag && (
+                                    <span className={cn(
+                                      'text-[9px] font-mono font-bold px-1.5 py-0.2 rounded border',
+                                      isSubActive
+                                        ? 'bg-amber-500/25 text-amber-200 border-amber-500/40'
+                                        : 'bg-white/5 text-slate-400 border-white/10 group-hover:border-amber-500/20 group-hover:text-amber-300'
+                                    )}>
+                                      {sub.tag}
+                                    </span>
+                                  )}
+                                </Link>
+                              );
+                            })}
+                          </motion.div>
                         )}
                       </AnimatePresence>
-                    </Link>
+                    </div>
                   );
                 })}
               </div>
