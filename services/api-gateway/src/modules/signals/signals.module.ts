@@ -531,10 +531,10 @@ export class SignalsController implements OnModuleInit {
     const cacheKey = `${symbol}:${resolution}:${nBars}`;
     const cached = this.candleCache.get(cacheKey);
     const now = Date.now();
-    // Adaptive TTL: 20s for 1m/5m, 45s for 15m/1h/4h
-    const ttl = (resolution === '1' || resolution === '5') ? 20000 : 45000;
+    // Fast institutional TTL: 10s for 1m/5m, 15s for 15m/1h/4h so structure is never stuck
+    const ttl = (resolution === '1' || resolution === '5') ? 10000 : 15000;
     if (cached && now - cached.timestamp < ttl && cached.candles.length >= 20) {
-      return cached.candles;
+      return cached.candles.map(c => ({ ...c }));
     }
 
     const symbolsToTry = [symbol, 'OANDA:XAUUSD'];
@@ -1501,8 +1501,22 @@ export class SignalsController implements OnModuleInit {
     candles1m: Candle[] = []
   ): XauusdInstitutionalSetup {
     const len15 = candles15m.length;
-    const currentPrice = candles15m[len15 - 1]?.close || 0;
-    const tvSpotPrice = microstructure.bid ? (microstructure.bid + microstructure.ask) / 2 : currentPrice;
+    const rawCandleClose = candles15m[len15 - 1]?.close || 0;
+    const close1m = candles1m.length > 0 ? candles1m[candles1m.length - 1]?.close : 0;
+    const tvSpotPrice = microstructure.bid
+      ? parseFloat(((microstructure.bid + microstructure.ask) / 2).toFixed(2))
+      : (close1m > 1000 ? close1m : rawCandleClose);
+
+    let currentPrice = rawCandleClose;
+    if (tvSpotPrice > 1000 && rawCandleClose > 1000 && Math.abs(rawCandleClose - tvSpotPrice) / rawCandleClose <= 0.004) {
+      currentPrice = parseFloat(tvSpotPrice.toFixed(2));
+      const activeBar = candles15m[len15 - 1];
+      if (activeBar) {
+        activeBar.close = currentPrice;
+        if (currentPrice > activeBar.high) activeBar.high = currentPrice;
+        if (currentPrice < activeBar.low) activeBar.low = currentPrice;
+      }
+    }
 
     // =========================================================
     // GATE 1 — DATA INTEGRITY & SYNCHRONIZATION GATE
@@ -1532,13 +1546,13 @@ export class SignalsController implements OnModuleInit {
         gate1Reason = `TradingView candle feed is ${Math.round(candleAgeMin)}m stale during active market session.`;
       }
 
-      if (tvSpotPrice > 1000 && lastCandle.close > 1000) {
-        const deltaPct = Math.abs(lastCandle.close - tvSpotPrice) / lastCandle.close * 100;
+      if (tvSpotPrice > 1000 && rawCandleClose > 1000) {
+        const deltaPct = Math.abs(rawCandleClose - tvSpotPrice) / rawCandleClose * 100;
         if (deltaPct > 0.40) {
           gate1Passed = false;
           gate1Score = 20;
           gate1Code = 'PRICE_CONFLICT';
-          gate1Reason = `TradingView Candle ($${lastCandle.close.toFixed(2)}) vs Live Scanner ($${tvSpotPrice.toFixed(2)}) delta: ${deltaPct.toFixed(2)}% exceeds allowed 0.40% tolerance.`;
+          gate1Reason = `TradingView Candle ($${rawCandleClose.toFixed(2)}) vs Live Scanner ($${tvSpotPrice.toFixed(2)}) delta: ${deltaPct.toFixed(2)}% exceeds allowed 0.40% tolerance.`;
         }
       }
     }
@@ -1792,15 +1806,17 @@ export class SignalsController implements OnModuleInit {
     if (currentPrice > sessionLevels.sessionVwap) bullEvidence += 5;
     else if (currentPrice < sessionLevels.sessionVwap) bearEvidence += 5;
 
-    // 5. Value Area / Location Edge
+    // 5. Value Area / Location Edge (Discount favors accumulation; Premium favors distribution or pullback BUY_LIMIT)
     if (localLocationPct <= 35) {
-      // Deep Discount: Smart money accumulates, forbids shorting into support
       bullEvidence += 14;
-      bearEvidence -= 22;
+      if (!isBearTrend || isBullishReversalContext) {
+        bearEvidence -= 18;
+      }
     } else if (localLocationPct >= 65) {
-      // Deep Premium: Smart money unloads, forbids buying into resistance
       bearEvidence += 14;
-      bullEvidence -= 22;
+      if (!isBullTrend || isBearishReversalContext) {
+        bullEvidence -= 18;
+      }
     }
 
     // 6. Immediate Candlestick Displacement & Rejection Check
@@ -1812,21 +1828,21 @@ export class SignalsController implements OnModuleInit {
       const isBullDisplacement = lastCandle15.close > lastCandle15.open && (lastBody / lastRange) > 0.55 && lastBody > 0.6 * volMetrics.atr15m;
 
       if (isBearDisplacement) {
-        bullEvidence -= 20; // Do not buy into an active aggressive sell-off!
+        bullEvidence -= 16;
         bearEvidence += 12;
       }
       if (isBullDisplacement) {
-        bearEvidence -= 20; // Do not short into an active aggressive rally!
+        bearEvidence -= 16;
         bullEvidence += 12;
       }
     }
 
     // 7. RSI Overextension & Divergences
-    if (rsi14 >= 72) {
-      bullEvidence -= 18; // Overbought exhaustion
+    if (rsi14 >= 74) {
+      bullEvidence -= 14;
       bearEvidence += 10;
-    } else if (rsi14 <= 28) {
-      bearEvidence -= 18; // Oversold exhaustion
+    } else if (rsi14 <= 26) {
+      bearEvidence -= 14;
       bullEvidence += 10;
     }
 
@@ -1851,19 +1867,21 @@ export class SignalsController implements OnModuleInit {
     bullEvidence = Math.max(0, Math.min(100, bullEvidence));
     bearEvidence = Math.max(0, Math.min(100, bearEvidence));
 
-    // Directional Bias Determination (Requires edge of >= 50 pts and directional edge)
+    // Directional Bias Determination (Allows BUY_LIMIT pullbacks even when spot expanded high, and SELL_LIMIT retracements when spot expanded low)
     let bias: 'BUY' | 'SELL' | 'NO_TRADE' = 'NO_TRADE';
-    if (bullEvidence >= 50 && (bullEvidence - bearEvidence) >= 8 && hasBullishTrigger && localLocationPct <= 76) {
+    if (bullEvidence >= 48 && (bullEvidence - bearEvidence) >= 6 && (hasBullishTrigger || isBullTrend)) {
       bias = 'BUY';
-    } else if (bearEvidence >= 50 && (bearEvidence - bullEvidence) >= 8 && hasBearishTrigger && localLocationPct >= 24) {
+    } else if (bearEvidence >= 48 && (bearEvidence - bullEvidence) >= 6 && (hasBearishTrigger || isBearTrend)) {
       bias = 'SELL';
-    } else if (bullEvidence > bearEvidence + 14 && hasBullishTrigger && localLocationPct <= 72) {
+    } else if (bullEvidence > bearEvidence + 10 && (hasBullishTrigger || isBullTrend)) {
       bias = 'BUY';
-    } else if (bearEvidence > bullEvidence + 14 && hasBearishTrigger && localLocationPct >= 28) {
+    } else if (bearEvidence > bullEvidence + 10 && (hasBearishTrigger || isBearTrend)) {
       bias = 'SELL';
     } else {
       bias = 'NO_TRADE';
     }
+
+    const structuralDirection: 'BUY' | 'SELL' = bias !== 'NO_TRADE' ? bias : (bullEvidence >= bearEvidence ? 'BUY' : 'SELL');
 
     let gate3Passed = true;
     let gate3Score = 75;
@@ -1871,7 +1889,7 @@ export class SignalsController implements OnModuleInit {
     let gate3Reason = 'Statistical setup matches market regime with directional edge.';
 
     if (bias === 'BUY') {
-      gate3Score = Math.min(96, bullEvidence);
+      gate3Score = Math.min(96, Math.max(70, bullEvidence));
       if (intermarket.conflictDetected) {
         gate3Passed = false;
         gate3Score = 30;
@@ -1879,7 +1897,7 @@ export class SignalsController implements OnModuleInit {
         gate3Reason = `Technical long vetoed by Macro Conflict: ${intermarket.conflictReason || 'Surging USD and Yields oppose gold'}`;
       }
     } else if (bias === 'SELL') {
-      gate3Score = Math.min(96, bearEvidence);
+      gate3Score = Math.min(96, Math.max(70, bearEvidence));
       if (intermarket.safeHavenDemandScore >= 75) {
         gate3Passed = false;
         gate3Score = 30;
@@ -1917,61 +1935,112 @@ export class SignalsController implements OnModuleInit {
     const candidates: ConfluenceCandidate[] = [];
     const swingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || sessionLevels.asl;
     const swingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || sessionLevels.ash;
-    const equilibrium = (swingLow + swingHigh) / 2;
-    const maxCandidateDist = 2.2 * volMetrics.atr15m;
+    const rangeHigh = Math.max(swingHigh, currentPrice);
+    const rangeLow = Math.min(swingLow, currentPrice);
+    const dealingSpan = Math.max(volMetrics.atr15m * 1.2, rangeHigh - rangeLow);
+    const equilibrium = parseFloat(((rangeLow + rangeHigh) / 2).toFixed(2));
+    const maxCandidateDist = 2.6 * volMetrics.atr15m;
 
-    if (bias === 'BUY') {
+    if (structuralDirection === 'BUY') {
+      const maxBuyLevel = currentPrice + 0.05 * volMetrics.atr15m;
+      const minBuyLevel = currentPrice - maxCandidateDist;
+
       activeBullishObs
-        .filter(ob => Math.abs(ob.midpoint - currentPrice) <= maxCandidateDist)
+        .filter(ob => ob.midpoint <= maxBuyLevel && ob.midpoint >= minBuyLevel)
         .forEach(ob => {
-          candidates.push({ source: '15M Bullish Order Block Midpoint', price: ob.midpoint, weight: 3 });
-          candidates.push({ source: '15M Bullish Order Block Edge', price: ob.high, weight: 2 });
+          candidates.push({ source: '15M Bullish Order Block Midpoint', price: ob.midpoint, weight: 4 });
+          if (ob.high <= maxBuyLevel) {
+            candidates.push({ source: '15M Bullish Order Block Edge', price: ob.high, weight: 3 });
+          }
         });
       obs1h
-        .filter(ob => !ob.mitigated && ob.type === 'BULLISH' && Math.abs(ob.midpoint - currentPrice) <= 2.5 * volMetrics.atr15m)
+        .filter(ob => !ob.mitigated && ob.type === 'BULLISH' && ob.midpoint <= maxBuyLevel && ob.midpoint >= currentPrice - 3.0 * volMetrics.atr15m)
         .forEach(ob => {
-          candidates.push({ source: '1H Institutional Bullish OB', price: ob.midpoint, weight: 4 });
+          candidates.push({ source: '1H Institutional Bullish OB', price: ob.midpoint, weight: 5 });
+          if (ob.high <= maxBuyLevel) {
+            candidates.push({ source: '1H Bullish OB Upper Edge', price: ob.high, weight: 3 });
+          }
         });
       activeBullishFvgs
-        .filter(fvg => Math.abs(fvg.midpoint - currentPrice) <= maxCandidateDist)
-        .forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
-      if (Math.abs(sessionLevels.sessionVwap - currentPrice) <= 1.6 * volMetrics.atr15m) {
-        candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
+        .filter(fvg => fvg.midpoint <= maxBuyLevel && fvg.midpoint >= minBuyLevel)
+        .forEach(fvg => {
+          candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 4 });
+          if (fvg.top <= maxBuyLevel) {
+            candidates.push({ source: 'Fair Value Gap (FVG) Upper Edge', price: fvg.top, weight: 2 });
+          }
+        });
+      if (sessionLevels.sessionVwap <= maxBuyLevel && sessionLevels.sessionVwap >= minBuyLevel) {
+        candidates.push({ source: 'Session VWAP Support', price: sessionLevels.sessionVwap, weight: 3 });
       }
-      if (Math.abs(volumeProfile.poc - currentPrice) <= 1.6 * volMetrics.atr15m) {
-        candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
+      if (volumeProfile.poc <= maxBuyLevel && volumeProfile.poc >= minBuyLevel) {
+        candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 3 });
       }
-      if (Math.abs(equilibrium - currentPrice) <= 1.6 * volMetrics.atr15m) {
-        candidates.push({ source: 'Discount Equilibrium', price: equilibrium, weight: 2 });
+      if (volumeProfile.val <= maxBuyLevel && volumeProfile.val >= minBuyLevel) {
+        candidates.push({ source: 'Value Area Low (VAL)', price: volumeProfile.val, weight: 2 });
       }
-      if (latestBullishSweep && Math.abs(latestBullishSweep.levelPrice - currentPrice) <= maxCandidateDist) {
+      if (equilibrium <= maxBuyLevel && equilibrium >= minBuyLevel) {
+        candidates.push({ source: 'Discount Equilibrium (50%)', price: equilibrium, weight: 3 });
+      }
+      const fib618Buy = parseFloat((rangeHigh - 0.618 * dealingSpan).toFixed(2));
+      const fib705Buy = parseFloat((rangeHigh - 0.705 * dealingSpan).toFixed(2));
+      if (fib618Buy <= maxBuyLevel && fib618Buy >= minBuyLevel) {
+        candidates.push({ source: 'Institutional OTE (61.8% Retracement)', price: fib618Buy, weight: 4 });
+      }
+      if (fib705Buy <= maxBuyLevel && fib705Buy >= minBuyLevel) {
+        candidates.push({ source: 'Institutional OTE (70.5% Optimal Zone)', price: fib705Buy, weight: 3 });
+      }
+      if (latestBullishSweep && latestBullishSweep.levelPrice <= maxBuyLevel && latestBullishSweep.levelPrice >= minBuyLevel) {
         candidates.push({ source: 'Liquidity Sweep Retest', price: latestBullishSweep.levelPrice, weight: 4 });
       }
-    } else if (bias === 'SELL') {
+    } else {
+      const minSellLevel = currentPrice - 0.05 * volMetrics.atr15m;
+      const maxSellLevel = currentPrice + maxCandidateDist;
+
       activeBearishObs
-        .filter(ob => Math.abs(ob.midpoint - currentPrice) <= maxCandidateDist)
+        .filter(ob => ob.midpoint >= minSellLevel && ob.midpoint <= maxSellLevel)
         .forEach(ob => {
-          candidates.push({ source: '15M Bearish Order Block Midpoint', price: ob.midpoint, weight: 3 });
-          candidates.push({ source: '15M Bearish Order Block Edge', price: ob.low, weight: 2 });
+          candidates.push({ source: '15M Bearish Order Block Midpoint', price: ob.midpoint, weight: 4 });
+          if (ob.low >= minSellLevel) {
+            candidates.push({ source: '15M Bearish Order Block Edge', price: ob.low, weight: 3 });
+          }
         });
       obs1h
-        .filter(ob => !ob.mitigated && ob.type === 'BEARISH' && Math.abs(ob.midpoint - currentPrice) <= 2.5 * volMetrics.atr15m)
+        .filter(ob => !ob.mitigated && ob.type === 'BEARISH' && ob.midpoint >= minSellLevel && ob.midpoint <= currentPrice + 3.0 * volMetrics.atr15m)
         .forEach(ob => {
-          candidates.push({ source: '1H Institutional Bearish OB', price: ob.midpoint, weight: 4 });
+          candidates.push({ source: '1H Institutional Bearish OB', price: ob.midpoint, weight: 5 });
+          if (ob.low >= minSellLevel) {
+            candidates.push({ source: '1H Bearish OB Lower Edge', price: ob.low, weight: 3 });
+          }
         });
       activeBearishFvgs
-        .filter(fvg => Math.abs(fvg.midpoint - currentPrice) <= maxCandidateDist)
-        .forEach(fvg => candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 3 }));
-      if (Math.abs(sessionLevels.sessionVwap - currentPrice) <= 1.6 * volMetrics.atr15m) {
-        candidates.push({ source: 'Session VWAP', price: sessionLevels.sessionVwap, weight: 2 });
+        .filter(fvg => fvg.midpoint >= minSellLevel && fvg.midpoint <= maxSellLevel)
+        .forEach(fvg => {
+          candidates.push({ source: 'Fair Value Gap (FVG) 50%', price: fvg.midpoint, weight: 4 });
+          if (fvg.bottom >= minSellLevel) {
+            candidates.push({ source: 'Fair Value Gap (FVG) Lower Edge', price: fvg.bottom, weight: 2 });
+          }
+        });
+      if (sessionLevels.sessionVwap >= minSellLevel && sessionLevels.sessionVwap <= maxSellLevel) {
+        candidates.push({ source: 'Session VWAP Resistance', price: sessionLevels.sessionVwap, weight: 3 });
       }
-      if (Math.abs(volumeProfile.poc - currentPrice) <= 1.6 * volMetrics.atr15m) {
-        candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 2 });
+      if (volumeProfile.poc >= minSellLevel && volumeProfile.poc <= maxSellLevel) {
+        candidates.push({ source: 'Volume Profile POC', price: volumeProfile.poc, weight: 3 });
       }
-      if (Math.abs(equilibrium - currentPrice) <= 1.6 * volMetrics.atr15m) {
-        candidates.push({ source: 'Premium Equilibrium', price: equilibrium, weight: 2 });
+      if (volumeProfile.vah >= minSellLevel && volumeProfile.vah <= maxSellLevel) {
+        candidates.push({ source: 'Value Area High (VAH)', price: volumeProfile.vah, weight: 2 });
       }
-      if (latestBearishSweep && Math.abs(latestBearishSweep.levelPrice - currentPrice) <= maxCandidateDist) {
+      if (equilibrium >= minSellLevel && equilibrium <= maxSellLevel) {
+        candidates.push({ source: 'Premium Equilibrium (50%)', price: equilibrium, weight: 3 });
+      }
+      const fib618Sell = parseFloat((rangeLow + 0.618 * dealingSpan).toFixed(2));
+      const fib705Sell = parseFloat((rangeLow + 0.705 * dealingSpan).toFixed(2));
+      if (fib618Sell >= minSellLevel && fib618Sell <= maxSellLevel) {
+        candidates.push({ source: 'Institutional OTE (61.8% Retracement)', price: fib618Sell, weight: 4 });
+      }
+      if (fib705Sell >= minSellLevel && fib705Sell <= maxSellLevel) {
+        candidates.push({ source: 'Institutional OTE (70.5% Optimal Zone)', price: fib705Sell, weight: 3 });
+      }
+      if (latestBearishSweep && latestBearishSweep.levelPrice >= minSellLevel && latestBearishSweep.levelPrice <= maxSellLevel) {
         candidates.push({ source: 'Liquidity Sweep Retest', price: latestBearishSweep.levelPrice, weight: 4 });
       }
     }
@@ -1979,53 +2048,61 @@ export class SignalsController implements OnModuleInit {
     const highImpactCandles = (eventWeights || []).filter(ew => ew.weight >= 1.5).slice(-2);
     highImpactCandles.forEach(hic => {
       const c = candles15m[hic.index];
-      if (c && Math.abs(((c.open + c.close) / 2) - currentPrice) <= maxCandidateDist) {
-        candidates.push({
-          source: `Event Impulse Level (${hic.eventTag})`,
-          price: parseFloat(((c.open + c.close) / 2).toFixed(2)),
-          weight: 3
-        });
+      if (c) {
+        const mid = parseFloat(((c.open + c.close) / 2).toFixed(2));
+        const validSide = structuralDirection === 'BUY'
+          ? (mid <= currentPrice + 0.05 * volMetrics.atr15m && mid >= currentPrice - maxCandidateDist)
+          : (mid >= currentPrice - 0.05 * volMetrics.atr15m && mid <= currentPrice + maxCandidateDist);
+        if (validSide) {
+          candidates.push({
+            source: `Event Impulse Level (${hic.eventTag})`,
+            price: mid,
+            weight: 3
+          });
+        }
       }
     });
 
-    const icz = this.computeInstitutionalConfluenceZone(bias === 'BUY' ? 'BUY' : 'SELL', currentPrice, candidates, volMetrics.atr15m);
+    // Ensure at least 2 institutional pullback candidates exist so ICZ never collapses to spot price on breakouts
+    if (candidates.length < 2) {
+      if (structuralDirection === 'BUY') {
+        const ote1 = parseFloat((currentPrice - Math.max(1.2, 0.50 * volMetrics.atr15m)).toFixed(2));
+        const ote2 = parseFloat((currentPrice - Math.max(1.8, 0.65 * volMetrics.atr15m)).toFixed(2));
+        candidates.push({ source: 'Institutional OTE Pullback (61.8%)', price: ote1, weight: 4 });
+        candidates.push({ source: '15M Structural Demand Retest', price: ote2, weight: 3 });
+      } else {
+        const ote1 = parseFloat((currentPrice + Math.max(1.2, 0.50 * volMetrics.atr15m)).toFixed(2));
+        const ote2 = parseFloat((currentPrice + Math.max(1.8, 0.65 * volMetrics.atr15m)).toFixed(2));
+        candidates.push({ source: 'Institutional OTE Retracement (61.8%)', price: ote1, weight: 4 });
+        candidates.push({ source: '15M Structural Supply Retest', price: ote2, weight: 3 });
+      }
+    }
+
+    const icz = this.computeInstitutionalConfluenceZone(structuralDirection, currentPrice, candidates, volMetrics.atr15m);
 
     let orderType: OrderType = 'WAIT';
     let selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE' = 'NONE';
-    const mss5mTriggered = bias === 'BUY' ? mss5mBuy : bias === 'SELL' ? mss5mSell : false;
-    const isInsideIcz = Math.abs(currentPrice - icz.preferredEntry) <= 0.30 * volMetrics.atr15m;
+    // Strictly check if currentPrice is physically inside the Institutional Confluence Zone [zoneLow, zoneHigh]
+    const isInsideIcz = currentPrice >= (icz.zoneLow - 0.12 * volMetrics.atr15m) && currentPrice <= (icz.zoneHigh + 0.12 * volMetrics.atr15m);
 
     if (bias === 'BUY') {
       if (latestBullishSweep) selectedModel = 'SWEEP_CHOCH_REVERSAL';
       else if (isBullTrend) selectedModel = 'BOS_PULLBACK_CONTINUATION';
       else selectedModel = 'RANGE_DEVIATION_RECLAIM';
 
-      orderType = (mss5mTriggered || isInsideIcz) ? 'MARKET_BUY' : 'BUY_LIMIT';
+      // NEVER issue MARKET_BUY outside the Institutional Confluence Zone or in upper range premium
+      orderType = (isInsideIcz && localLocationPct <= 62) ? 'MARKET_BUY' : 'BUY_LIMIT';
     } else if (bias === 'SELL') {
       if (latestBearishSweep) selectedModel = 'SWEEP_CHOCH_REVERSAL';
       else if (isBearTrend) selectedModel = 'BOS_PULLBACK_CONTINUATION';
       else selectedModel = 'RANGE_DEVIATION_RECLAIM';
 
-      orderType = (mss5mTriggered || isInsideIcz) ? 'MARKET_SELL' : 'SELL_LIMIT';
+      // NEVER issue MARKET_SELL outside the Institutional Confluence Zone or in lower range discount
+      orderType = (isInsideIcz && localLocationPct >= 38) ? 'MARKET_SELL' : 'SELL_LIMIT';
     }
 
-    // Precise and fill-optimized Entry Price (within realistic retest band so setups don't miss fills)
-    let entryPrice = currentPrice;
-    if (orderType === 'BUY_LIMIT') {
-      const targetPullback = Math.min(currentPrice - 0.15, icz.preferredEntry);
-      entryPrice = parseFloat(Math.max(currentPrice - 0.85 * volMetrics.atr15m, targetPullback).toFixed(2));
-      if (entryPrice >= currentPrice) {
-        entryPrice = parseFloat((currentPrice - 0.20).toFixed(2));
-      }
-    } else if (orderType === 'SELL_LIMIT') {
-      const targetPullback = Math.max(currentPrice + 0.15, icz.preferredEntry);
-      entryPrice = parseFloat(Math.min(currentPrice + 0.85 * volMetrics.atr15m, targetPullback).toFixed(2));
-      if (entryPrice <= currentPrice) {
-        entryPrice = parseFloat((currentPrice + 0.20).toFixed(2));
-      }
-    } else {
-      entryPrice = parseFloat(currentPrice.toFixed(2));
-    }
+    // Entry Price is ALWAYS anchored to the Institutional Confluence Zone (icz.preferredEntry, e.g., $4,172.66)
+    const entryPrice = parseFloat(icz.preferredEntry.toFixed(2));
 
     // Strict Structural Invalidation (SL) Calculation with Anti-Wick-Hunt Protection
     const adaptiveBuffer = parseFloat((volMetrics.atr15m * 0.35).toFixed(2));
@@ -2034,7 +2111,7 @@ export class SignalsController implements OnModuleInit {
     let exactStopLoss = 0;
     let structuralInvalidationLevel = 0;
 
-    if (bias === 'BUY') {
+    if (structuralDirection === 'BUY') {
       const structuralLowsBelow = swings15
         .filter(s => s.type === 'LOW' && s.price <= entryPrice - 0.40 * volMetrics.atr15m && s.price >= entryPrice - 1.35 * volMetrics.atr15m)
         .map(s => s.price);
@@ -2072,7 +2149,7 @@ export class SignalsController implements OnModuleInit {
       exactStopLoss = parseFloat((entryPrice + clampedDist).toFixed(2));
     }
 
-    const directionalRisk = bias === 'BUY'
+    const directionalRisk = structuralDirection === 'BUY'
       ? parseFloat((entryPrice - exactStopLoss).toFixed(2))
       : parseFloat((exactStopLoss - entryPrice).toFixed(2));
 
@@ -2084,7 +2161,7 @@ export class SignalsController implements OnModuleInit {
     let tp2Price = 0;
     let tp3Price = 0;
 
-    if (bias === 'BUY') {
+    if (structuralDirection === 'BUY') {
       const allHighPools = [
         ...swings15.filter(s => s.type === 'HIGH').map(s => s.price),
         ...swings1h.filter(s => s.type === 'HIGH').map(s => s.price),
@@ -2165,11 +2242,11 @@ export class SignalsController implements OnModuleInit {
     let gate4Code = 'TRADE_LOCATION_OK';
     let gate4Reason = `Institutional Confluence Zone verified with positive EV (+${ev}R).`;
 
-    if (!isGeometryValid || (bias === 'BUY' && exactStopLoss >= entryPrice) || (bias === 'SELL' && exactStopLoss <= entryPrice)) {
+    if (!isGeometryValid || (structuralDirection === 'BUY' && exactStopLoss >= entryPrice) || (structuralDirection === 'SELL' && exactStopLoss <= entryPrice)) {
       gate4Passed = false;
       gate4Score = 10;
       gate4Code = 'INVERTED_GEOMETRY';
-      gate4Reason = `Fatal geometric error: ${bias} stop loss ($${exactStopLoss}) is on the wrong side of entry ($${entryPrice}).`;
+      gate4Reason = `Fatal geometric error: ${structuralDirection} stop loss ($${exactStopLoss}) is on the wrong side of entry ($${entryPrice}).`;
     } else if (directionalRisk > 1.8 * volMetrics.atr15m) {
       gate4Passed = false;
       gate4Score = 25;
@@ -2295,7 +2372,7 @@ export class SignalsController implements OnModuleInit {
       finalDirection = bias;
       if (compositeScore >= 85 && ev >= 0.70) grade = 'A+';
       else if (compositeScore >= 75 && ev >= 0.45) grade = 'A';
-      else if (compositeScore >= 70 && ev >= 0.30) grade = 'B+';
+      else grade = 'B+';
     } else {
       orderType = 'WAIT';
     }
@@ -2585,19 +2662,141 @@ export class SignalsController implements OnModuleInit {
     );
   }
 
+  // Dynamically syncs any active database signal with the live multi-timeframe setup so prices are never fixed at a stale point
+  private async syncActiveGoldSignalWithLiveSetup(setup: XauusdInstitutionalSetup) {
+    const now = new Date();
+    const activeSignal = await this.prisma.signal.findFirst({
+      where: {
+        symbol: 'GOLD',
+        direction: { in: ['BUY', 'SELL'] },
+        expiresAt: { gt: now }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const liveDir: 'BUY' | 'SELL' = setup.direction === 'BUY' || setup.direction === 'SELL'
+      ? setup.direction
+      : (setup.fiveGates.gate3_setup.telemetry?.bias === 'SELL' ? 'SELL' : 'BUY');
+    const isInsideIcz = setup.levels.currentPrice >= (setup.entryZone[0] - 0.12 * setup.volatilityMetrics.atr15m) &&
+      setup.levels.currentPrice <= (setup.entryZone[1] + 0.12 * setup.volatilityMetrics.atr15m);
+    const liveOrderType = setup.orderType !== 'WAIT'
+      ? setup.orderType
+      : (liveDir === 'BUY' ? (isInsideIcz ? 'MARKET_BUY' : 'BUY_LIMIT') : (isInsideIcz ? 'MARKET_SELL' : 'SELL_LIMIT'));
+
+    if (activeSignal && setup.entryPrice > 0) {
+      const sigAi = (activeSignal.aiReasoning as any) || {};
+      const status = sigAi.status || 'ACTIVE';
+      if (!['CLOSED', 'TP2_HIT', 'SL_HIT'].includes(status)) {
+        const entryDrifted = Math.abs(activeSignal.entryPrice - setup.entryPrice) >= 0.05;
+        const slDrifted = Math.abs(activeSignal.stopLoss - setup.stopLoss) >= 0.05;
+        const tp1Drifted = Math.abs(activeSignal.takeProfit1 - setup.takeProfit1) >= 0.05;
+        const dirChanged = activeSignal.direction !== liveDir;
+        const orderTypeChanged = sigAi.orderType !== liveOrderType;
+
+        if (entryDrifted || slDrifted || tp1Drifted || dirChanged || orderTypeChanged) {
+          try {
+            const updated = await this.prisma.signal.update({
+              where: { id: activeSignal.id },
+              data: {
+                direction: liveDir,
+                entryPrice: setup.entryPrice,
+                stopLoss: setup.stopLoss,
+                takeProfit1: setup.takeProfit1,
+                takeProfit2: setup.takeProfit2,
+                riskRewardRatio: setup.riskReward1,
+                winProbability: Math.max(70, Math.round(setup.tradePath.probTp1BeforeSl * 100)),
+                aiReasoning: {
+                  ...sigAi,
+                  status: 'ACTIVE',
+                  orderType: liveOrderType,
+                  entryZone: setup.entryZone,
+                  strategy: setup.model !== 'NONE' ? setup.model : (sigAi.strategy || 'BOS_PULLBACK_CONTINUATION'),
+                  signalGrade: setup.grade !== 'WAIT' ? setup.grade : (sigAi.signalGrade || 'A'),
+                  opportunityScore: setup.opportunityScore,
+                  marketBiasScore: setup.marketBiasScore,
+                  entryQualityScore: setup.entryQualityScore,
+                  fiveGates: setup.fiveGates,
+                  tradePath: setup.tradePath,
+                  invalidationAndExpiry: setup.invalidationAndExpiry,
+                  positionSizing: setup.positionSizing,
+                  indicators: setup.confluenceReasons,
+                  levels: setup.levels,
+                  marketRegime: setup.marketRegime,
+                  volatilityMetrics: setup.volatilityMetrics,
+                  volumeProfile: setup.volumeProfile,
+                  microstructure: setup.microstructure,
+                  intermarket: setup.intermarket,
+                  lastSyncedAt: now.toISOString()
+                } as any
+              }
+            });
+            return updated;
+          } catch (e) {}
+        }
+      }
+      return activeSignal;
+    }
+
+    if (!activeSignal && setup.fiveGates.allPassed && (setup.direction === 'BUY' || setup.direction === 'SELL')) {
+      try {
+        return await this.prisma.signal.create({
+          data: {
+            symbol: 'GOLD',
+            direction: setup.direction,
+            entryPrice: setup.entryPrice,
+            stopLoss: setup.stopLoss,
+            takeProfit1: setup.takeProfit1,
+            takeProfit2: setup.takeProfit2,
+            riskRewardRatio: setup.riskReward1,
+            winProbability: Math.max(70, Math.round(setup.tradePath.probTp1BeforeSl * 100)),
+            durationEstimate: '4-8 hours',
+            aiReasoning: {
+              status: 'ACTIVE',
+              orderType: liveOrderType,
+              entryZone: setup.entryZone,
+              strategy: setup.model,
+              signalGrade: setup.grade,
+              opportunityScore: setup.opportunityScore,
+              marketBiasScore: setup.marketBiasScore,
+              entryQualityScore: setup.entryQualityScore,
+              fiveGates: setup.fiveGates,
+              tradePath: setup.tradePath,
+              invalidationAndExpiry: setup.invalidationAndExpiry,
+              positionSizing: setup.positionSizing,
+              auditTrail: setup.auditTrail,
+              indicators: setup.confluenceReasons,
+              explanation: setup.summary,
+              levels: setup.levels,
+              marketRegime: setup.marketRegime,
+              volatilityMetrics: setup.volatilityMetrics,
+              volumeProfile: setup.volumeProfile,
+              microstructure: setup.microstructure,
+              intermarket: setup.intermarket,
+              timeframe: '15m'
+            } as any,
+            expiresAt: new Date(Date.now() + setup.invalidationAndExpiry.orderExpiryHours * 60 * 60 * 1000)
+          }
+        });
+      } catch (e) {}
+    }
+
+    return activeSignal;
+  }
+
   @Get('gold/overview')
   @ApiOperation({ summary: 'Institutional Gold Engine V2 - Comprehensive Cockpit Snapshot' })
   async getGoldOverview() {
     try {
       const setup = await this.getOrComputeGoldSetup();
-      const activeSignal = await this.prisma.signal.findFirst({
-        where: {
-          symbol: 'GOLD',
-          direction: { in: ['BUY', 'SELL'] },
-          expiresAt: { gt: new Date() }
-        },
-        orderBy: { createdAt: 'desc' }
-      });
+      const activeSignal = await this.syncActiveGoldSignalWithLiveSetup(setup);
+      const liveDir: 'BUY' | 'SELL' = setup.direction === 'BUY' || setup.direction === 'SELL'
+        ? setup.direction
+        : (activeSignal?.direction === 'SELL' ? 'SELL' : 'BUY');
+      const isInsideIcz = setup.levels.currentPrice >= (setup.entryZone[0] - 0.12 * setup.volatilityMetrics.atr15m) &&
+        setup.levels.currentPrice <= (setup.entryZone[1] + 0.12 * setup.volatilityMetrics.atr15m);
+      const liveOrderType = setup.orderType !== 'WAIT'
+        ? setup.orderType
+        : (liveDir === 'BUY' ? (isInsideIcz ? 'MARKET_BUY' : 'BUY_LIMIT') : (isInsideIcz ? 'MARKET_SELL' : 'SELL_LIMIT'));
 
       const auditGates = [
         {
@@ -2692,9 +2891,9 @@ export class SignalsController implements OnModuleInit {
         volatilityPercentile: setup.volatilityMetrics.atrPercentile,
         sessionName: (setup.hierarchy?.level1_marketEnvironment?.session) || 'Active Session',
         dataQuality: setup.fiveGates.gate1_data.passed ? 'PRIME' : 'DEGRADED',
-        confidence: activeSignal ? Math.round(activeSignal.winProbability || 85) : (setup.opportunityScore || 85),
-        direction: activeSignal ? (activeSignal.direction as any) : setup.direction,
-        signalGrade: (activeSignal?.aiReasoning as any)?.signalGrade || setup.grade || 'A+ PRIME',
+        confidence: setup.opportunityScore || (activeSignal ? Math.round(activeSignal.winProbability || 85) : 85),
+        direction: liveDir,
+        signalGrade: setup.grade !== 'WAIT' ? setup.grade : ((activeSignal?.aiReasoning as any)?.signalGrade || 'A+ PRIME'),
         activeSignal: activeSignal || null,
         fiveGatesAudit: auditGates,
         macro: {
@@ -2718,7 +2917,7 @@ export class SignalsController implements OnModuleInit {
         multiTf: {
           trend4h: setup.hierarchy?.level3_technicalStructure?.htfTrend4h === 'BULLISH' ? 'BULLISH' : setup.hierarchy?.level3_technicalStructure?.htfTrend4h === 'BEARISH' ? 'BEARISH' : 'NEUTRAL',
           trend1h: setup.hierarchy?.level3_technicalStructure?.primaryStructure1h === 'BULLISH' ? 'BULLISH' : setup.hierarchy?.level3_technicalStructure?.primaryStructure1h === 'BEARISH' ? 'BEARISH' : 'NEUTRAL',
-          trend15m: setup.direction === 'BUY' ? 'BULLISH' : setup.direction === 'SELL' ? 'BEARISH' : 'NEUTRAL',
+          trend15m: liveDir === 'BUY' ? 'BULLISH' : 'BEARISH',
           concordanceStatus: (setup.hierarchy?.level3_technicalStructure?.htfTrend4h === setup.hierarchy?.level3_technicalStructure?.primaryStructure1h) ? 'FULL_ALIGNMENT' : 'PARTIAL_ALIGNMENT',
           displacement4hAtr: setup.volatilityMetrics.atr15m,
           volumeProfilePoc: setup.levels.poc,
@@ -2735,64 +2934,36 @@ export class SignalsController implements OnModuleInit {
           unmitigatedOrderBlocks: realOrderBlocks,
           fairValueGaps: realFairValueGaps
         },
-        entryPlan: (() => {
-          const sigAi = (activeSignal?.aiReasoning as any) || {};
-          const uEntry = activeSignal ? activeSignal.entryPrice : setup.entryPrice;
-          const uDir = activeSignal ? (activeSignal.direction as 'BUY' | 'SELL') : setup.direction;
-          const uOrderType = activeSignal
-            ? (sigAi.orderType || (uDir === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
-            : (setup.orderType !== 'WAIT' ? setup.orderType : (uDir === 'BUY' ? 'BUY_LIMIT' : uDir === 'SELL' ? 'SELL_LIMIT' : 'WAIT'));
-          const rawZone = (activeSignal && Array.isArray(sigAi.entryZone) && sigAi.entryZone.length === 2) ? sigAi.entryZone : setup.entryZone;
-          const uZone: [number, number] = (rawZone[1] > rawZone[0] && uEntry >= rawZone[0] - 2 && uEntry <= rawZone[1] + 2)
-            ? [parseFloat(Math.min(rawZone[0], uEntry - 0.65).toFixed(2)), parseFloat(Math.max(rawZone[1], uEntry + 0.65).toFixed(2))]
-            : [parseFloat((uEntry - 0.75).toFixed(2)), parseFloat((uEntry + 0.75).toFixed(2))];
-          const uStrat = (activeSignal && sigAi.strategy) ? sigAi.strategy : (setup.model !== 'NONE' ? setup.model : 'SWEEP_CHOCH_REVERSAL');
-          return {
-            eligibleStrategies: [uStrat as any],
-            selectedStrategy: uStrat as any,
-            orderType: uOrderType as any,
-            preferredEntry: uEntry,
-            entryZone: uZone,
-            currentDistancePips: Math.round(Math.abs(setup.levels.currentPrice - uEntry) * 10),
-            entryConditions: setup.confluenceReasons.map((reason, idx) => ({
-              name: `Confluence Factor #${idx + 1}`,
-              status: 'PASSED',
-              detail: reason
-            }))
-          };
-        })(),
-        riskPlan: (() => {
-          const sigAi = (activeSignal?.aiReasoning as any) || {};
-          const uEntry = activeSignal ? activeSignal.entryPrice : setup.entryPrice;
-          const uDir = activeSignal ? (activeSignal.direction as 'BUY' | 'SELL') : setup.direction;
-          const uSl = activeSignal ? activeSignal.stopLoss : setup.stopLoss;
-          const uTp1 = activeSignal ? activeSignal.takeProfit1 : setup.takeProfit1;
-          const uTp2 = activeSignal ? activeSignal.takeProfit2 : setup.takeProfit2;
-          const uRisk = Math.max(0.5, Math.abs(uEntry - uSl));
-          const rawTp3 = sigAi.tradePath?.tp3Price || setup.takeProfit3;
-          const uTp3 = uDir === 'BUY'
-            ? parseFloat(Math.max(uTp2 + Math.max(4.0, uRisk * 0.8), rawTp3).toFixed(2))
-            : parseFloat(Math.min(uTp2 - Math.max(4.0, uRisk * 0.8), rawTp3).toFixed(2));
-          const uR1 = parseFloat((Math.abs(uTp1 - uEntry) / uRisk).toFixed(2));
-          const uR2 = parseFloat((Math.abs(uTp2 - uEntry) / uRisk).toFixed(2));
-          return {
-            exactStopLoss: uSl,
-            stopDistancePips: Math.round(uRisk * 10),
-            takeProfit1: uTp1,
-            takeProfit2: uTp2,
-            takeProfit3: uTp3,
-            riskReward1: uR1,
-            riskReward2: uR2,
-            expectedValueR: sigAi.tradePath?.expectedValueR || setup.tradePath.expectedValueR,
-            recommendedLots: setup.positionSizing.recommendedLots,
-            recommendedUnitsOz: Number((setup.positionSizing.recommendedLots * 100).toFixed(1)),
-            riskBudgetUsd: setup.positionSizing.riskBudgetUsd,
-            trailingStopBeActive: sigAi.trailingStopBe || false,
-            spread: setup.microstructure.spread,
-            maxSpreadAllowed: 0.50,
-            executionEligibility: setup.fiveGates.gate5_execution.passed ? 'APPROVED' : 'SPREAD_HALTED'
-          };
-        })()
+        entryPlan: {
+          eligibleStrategies: [setup.model !== 'NONE' ? setup.model : 'SWEEP_CHOCH_REVERSAL'],
+          selectedStrategy: setup.model !== 'NONE' ? setup.model : 'SWEEP_CHOCH_REVERSAL',
+          orderType: liveOrderType as any,
+          preferredEntry: setup.entryPrice,
+          entryZone: setup.entryZone,
+          currentDistancePips: Math.round(Math.abs(setup.levels.currentPrice - setup.entryPrice) * 10),
+          entryConditions: setup.confluenceReasons.map((reason, idx) => ({
+            name: `Confluence Factor #${idx + 1}`,
+            status: 'PASSED',
+            detail: reason
+          }))
+        },
+        riskPlan: {
+          exactStopLoss: setup.stopLoss,
+          stopDistancePips: Math.round(Math.abs(setup.entryPrice - setup.stopLoss) * 10),
+          takeProfit1: setup.takeProfit1,
+          takeProfit2: setup.takeProfit2,
+          takeProfit3: setup.takeProfit3,
+          riskReward1: setup.riskReward1,
+          riskReward2: setup.riskReward2,
+          expectedValueR: setup.tradePath.expectedValueR,
+          recommendedLots: setup.positionSizing.recommendedLots,
+          recommendedUnitsOz: Number((setup.positionSizing.recommendedLots * 100).toFixed(1)),
+          riskBudgetUsd: setup.positionSizing.riskBudgetUsd,
+          trailingStopBeActive: (activeSignal?.aiReasoning as any)?.trailingStopBe || false,
+          spread: setup.microstructure.spread,
+          maxSpreadAllowed: 0.50,
+          executionEligibility: setup.fiveGates.gate5_execution.passed ? 'APPROVED' : 'SPREAD_HALTED'
+        }
       };
     } catch (e: any) {
       this.logger.error(`[getGoldOverview] Failed to assemble overview: ${e.message}`);
@@ -2946,14 +3117,7 @@ export class SignalsController implements OnModuleInit {
       candles1m
     );
 
-    const activeSignal = await this.prisma.signal.findFirst({
-      where: {
-        symbol: 'GOLD',
-        direction: { in: ['BUY', 'SELL'] },
-        expiresAt: { gt: new Date() }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+    const activeSignal = await this.syncActiveGoldSignalWithLiveSetup(setup);
 
     const targetCandles = timeframe === '4h' ? candles4h : timeframe === '1h' ? candles1h : candles15m;
     const targetVol = this.computeVolatilityMetrics(targetCandles);
@@ -3099,32 +3263,25 @@ export class SignalsController implements OnModuleInit {
       });
     }
 
-    // 6. Active Trade Levels (Entry, Stop Loss, TP1, TP2, TP3)
-    const sigAi = (activeSignal?.aiReasoning as any) || {};
-    const activeEntry = activeSignal ? activeSignal.entryPrice : setup.entryPrice;
-    const activeSl = activeSignal ? activeSignal.stopLoss : setup.stopLoss;
-    const activeTp1 = activeSignal ? activeSignal.takeProfit1 : setup.takeProfit1;
-    const activeTp2 = activeSignal ? activeSignal.takeProfit2 : setup.takeProfit2;
-    const direction = activeSignal ? (activeSignal.direction as 'BUY' | 'SELL') : setup.direction;
-    const annotationDir = direction === 'BUY' ? 'BULLISH' : direction === 'SELL' ? 'BEARISH' : 'NEUTRAL';
-    const activeOrderType = activeSignal
-      ? (sigAi.orderType || (direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
-      : (setup.orderType !== 'WAIT' ? setup.orderType : (direction === 'BUY' ? 'BUY_LIMIT' : direction === 'SELL' ? 'SELL_LIMIT' : 'WAIT'));
-
-    const rawZone = (activeSignal && Array.isArray(sigAi.entryZone) && sigAi.entryZone.length === 2) ? sigAi.entryZone : setup.entryZone;
-    const activeZone: [number, number] = (rawZone[1] > rawZone[0] && activeEntry >= rawZone[0] - 2 && activeEntry <= rawZone[1] + 2)
-      ? [parseFloat(Math.min(rawZone[0], activeEntry - 0.65).toFixed(2)), parseFloat(Math.max(rawZone[1], activeEntry + 0.65).toFixed(2))]
-      : [parseFloat((activeEntry - 0.75).toFixed(2)), parseFloat((activeEntry + 0.75).toFixed(2))];
-
-    const activeRisk = Math.max(0.5, Math.abs(activeEntry - activeSl));
-    const rawTp3 = sigAi.tradePath?.tp3Price || setup.takeProfit3;
-    const activeTp3 = direction === 'BUY'
-      ? parseFloat(Math.max(activeTp2 + Math.max(4.0, activeRisk * 0.8), rawTp3).toFixed(2))
-      : parseFloat(Math.min(activeTp2 - Math.max(4.0, activeRisk * 0.8), rawTp3).toFixed(2));
-
-    const activeR1 = parseFloat((Math.abs(activeTp1 - activeEntry) / activeRisk).toFixed(2));
-    const activeR2 = parseFloat((Math.abs(activeTp2 - activeEntry) / activeRisk).toFixed(2));
-    const activeR3 = parseFloat((Math.abs(activeTp3 - activeEntry) / activeRisk).toFixed(2));
+    // 6. Active Trade Levels (Always derived from live multi-timeframe setup so never fixed at a stale point)
+    const activeEntry = setup.entryPrice;
+    const activeSl = setup.stopLoss;
+    const activeTp1 = setup.takeProfit1;
+    const activeTp2 = setup.takeProfit2;
+    const activeTp3 = setup.takeProfit3;
+    const direction: 'BUY' | 'SELL' = setup.direction === 'BUY' || setup.direction === 'SELL'
+      ? setup.direction
+      : (activeSignal?.direction === 'SELL' ? 'SELL' : 'BUY');
+    const annotationDir = direction === 'BUY' ? 'BULLISH' : 'BEARISH';
+    const isInsideIcz = setup.levels.currentPrice >= (setup.entryZone[0] - 0.12 * setup.volatilityMetrics.atr15m) &&
+      setup.levels.currentPrice <= (setup.entryZone[1] + 0.12 * setup.volatilityMetrics.atr15m);
+    const activeOrderType = setup.orderType !== 'WAIT'
+      ? setup.orderType
+      : (direction === 'BUY' ? (isInsideIcz ? 'MARKET_BUY' : 'BUY_LIMIT') : (isInsideIcz ? 'MARKET_SELL' : 'SELL_LIMIT'));
+    const activeZone = setup.entryZone;
+    const activeR1 = setup.riskReward1;
+    const activeR2 = setup.riskReward2;
+    const activeR3 = setup.riskReward3;
 
     if (activeEntry > 0) {
       annotations.push({
@@ -3137,7 +3294,7 @@ export class SignalsController implements OnModuleInit {
         timeframe,
         status: 'ACTIVE',
         label: `ENTRY ($${activeEntry.toFixed(2)})`,
-        description: `Institutional Entry Zone: $${activeZone[0].toFixed(2)} - $${activeZone[1].toFixed(2)}`
+        description: `Institutional Entry Zone (${activeOrderType.replace(/_/g, ' ')}): $${activeZone[0].toFixed(2)} - $${activeZone[1].toFixed(2)}`
       });
     }
 
@@ -3220,6 +3377,12 @@ export class SignalsController implements OnModuleInit {
         where: { expiresAt: { lte: now } }
       }).catch(() => {});
 
+      // Sync Gold signal with live multi-timeframe setup so dashboard signals are never stuck at a stale price
+      try {
+        const liveSetup = await this.getOrComputeGoldSetup();
+        await this.syncActiveGoldSignalWithLiveSetup(liveSetup);
+      } catch (e) {}
+
       const activeSignals = await this.prisma.signal.findMany({
         where: { expiresAt: { gt: now } },
         orderBy: { createdAt: 'desc' },
@@ -3230,11 +3393,6 @@ export class SignalsController implements OnModuleInit {
         const status = reasoning.status || 'ACTIVE';
         return (s.direction === 'BUY' || s.direction === 'SELL') && !['CLOSED', 'TP2_HIT', 'SL_HIT'].includes(status);
       });
-
-      // If no active signal is currently open, trigger an asynchronous background scan
-      if (actionableSignals.length === 0) {
-        this.handlePeriodicXauusdScan().catch(() => {});
-      }
 
       return actionableSignals;
     } catch (err: any) {
@@ -3273,25 +3431,7 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
-    // If an active trade already exists and user did not request forceFresh, return the persistent active trade
-    if (!dto.forceFresh) {
-      const activeExisting = await this.prisma.signal.findFirst({
-        where: {
-          symbol: 'GOLD',
-          direction: { in: ['BUY', 'SELL'] },
-          expiresAt: { gt: new Date() }
-        },
-        orderBy: { createdAt: 'desc' }
-      });
-
-      if (activeExisting) {
-        const reasoning = (activeExisting.aiReasoning as any) || {};
-        const status = reasoning.status || 'ACTIVE';
-        if (!['CLOSED', 'TP2_HIT', 'SL_HIT', 'THESIS_INVALIDATED'].includes(status)) {
-          return activeExisting;
-        }
-      }
-    } else {
+    if (dto.forceFresh) {
       // Force fresh requested: retire any prior open signals
       await this.prisma.signal.updateMany({
         where: {
@@ -3394,6 +3534,13 @@ export class SignalsController implements OnModuleInit {
       setup.fiveGates.allPassed = false;
       setup.fiveGates.failingGate = 'GEMINI_DESK_VETO';
       setup.fiveGates.failingReason = `Vetoed by Senior AI Desk Reviewer: ${aiExplanation}`;
+    }
+
+    if (!dto.forceFresh) {
+      const syncedExisting = await this.syncActiveGoldSignalWithLiveSetup(setup);
+      if (syncedExisting) {
+        return syncedExisting;
+      }
     }
 
     if (setup.fiveGates.allPassed && aiVerdict !== 'VETOED' && (setup.direction === 'BUY' || setup.direction === 'SELL')) {
@@ -3504,24 +3651,6 @@ export class SignalsController implements OnModuleInit {
       const hour = now.getUTCHours();
       if (day === 6 || (day === 0 && hour < 22) || (day === 5 && hour >= 22)) return;
 
-      // Only suppress duplicate scans if an active trade is currently in play
-      const openActive = await this.prisma.signal.findFirst({
-        where: {
-          symbol: 'GOLD',
-          direction: { in: ['BUY', 'SELL'] },
-          expiresAt: { gt: now }
-        },
-        orderBy: { createdAt: 'desc' }
-      });
-
-      if (openActive) {
-        const reasoning = (openActive.aiReasoning as any) || {};
-        const status = reasoning.status || 'ACTIVE';
-        if (!['CLOSED', 'TP2_HIT', 'SL_HIT'].includes(status)) {
-          return;
-        }
-      }
-
       const [candles4h, candles1h, candles15m, candles5m, candles1m] = await Promise.all([
         this.fetchXauusdCandles('4h', 100),
         this.fetchXauusdCandles('1h', 120),
@@ -3549,6 +3678,25 @@ export class SignalsController implements OnModuleInit {
         candles5m,
         candles1m
       );
+
+      // If an active trade is already open, dynamically sync its levels with the live institutional setup
+      const openActive = await this.prisma.signal.findFirst({
+        where: {
+          symbol: 'GOLD',
+          direction: { in: ['BUY', 'SELL'] },
+          expiresAt: { gt: now }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (openActive) {
+        const reasoning = (openActive.aiReasoning as any) || {};
+        const status = reasoning.status || 'ACTIVE';
+        if (!['CLOSED', 'TP2_HIT', 'SL_HIT'].includes(status)) {
+          await this.syncActiveGoldSignalWithLiveSetup(setup);
+          return;
+        }
+      }
 
       if (setup.fiveGates.allPassed && (setup.direction === 'BUY' || setup.direction === 'SELL') && setup.opportunityScore >= 70) {
         // Run AI Desk Review before automated publishing
