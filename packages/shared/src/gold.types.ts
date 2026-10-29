@@ -126,6 +126,7 @@ export interface GoldOverviewData {
   direction?: 'BUY' | 'SELL' | 'WAIT';
   signalGrade?: string;
   activeSignal: any | null;
+  activeSignals?: any[];
   fiveGatesAudit: GoldGateAudit[];
   macro: GoldMacroBarometer;
   multiTf: GoldMultiTimeframeConcordance;

@@ -63,10 +63,10 @@ export default function GoldRiskPage() {
 
   const p = data?.currentPrice || 0;
   const risk = data?.riskPlan;
-  const slDistPips = risk?.stopDistancePips || 45;
+  const slDistPips = risk?.stopDistancePips ?? 0;
   const riskDollarAmount = (accountEquity * riskPercent) / 100;
   // Gold 1 standard lot = 100 oz. $1 price move per lot = $100. 1 pip (0.10) = $10 per lot.
-  const calculatedLots = Math.max(0.01, parseFloat((riskDollarAmount / Math.max(1, slDistPips)).toFixed(2)));
+  const calculatedLots = slDistPips > 0 ? Math.max(0.01, parseFloat((riskDollarAmount / slDistPips).toFixed(2))) : 0;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-2 sm:px-4 py-4">

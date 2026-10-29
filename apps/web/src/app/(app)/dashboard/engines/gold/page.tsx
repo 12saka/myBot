@@ -35,6 +35,7 @@ export default function GoldOverviewPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
+  const [tradeModalSignal, setTradeModalSignal] = useState<any>(null);
 
   const fetchOverview = async (isManual = false) => {
     if (isManual) setRefreshing(true);
@@ -68,24 +69,66 @@ export default function GoldOverviewPage() {
 
   const p = data?.currentPrice || 0;
   const regime = data?.marketRegime || 'RANGE_BOUND_EQUILIBRIUM';
-  const spread = data?.spread || 0.35;
+  const spread = data?.spread ?? 0;
   const session = data?.sessionName || 'Active Session';
   const activeSignal = data?.activeSignal;
+  const activeSignals: any[] = data?.activeSignals && Array.isArray(data.activeSignals) && data.activeSignals.length > 0
+    ? data.activeSignals
+    : (activeSignal ? [activeSignal] : []);
 
-  const confidenceScore = data?.confidence ?? (activeSignal?.confidence || 85);
-  const activeDirection = data?.direction ?? (activeSignal?.direction || (data?.entryPlan?.orderType?.includes('BUY') ? 'BUY' : data?.entryPlan?.orderType?.includes('SELL') ? 'SELL' : 'WAIT'));
-  const signalGrade = data?.signalGrade ?? (activeSignal?.signalGrade || (confidenceScore >= 85 ? 'A+ PRIME' : 'A STRONG'));
-  const orderType = data?.entryPlan?.orderType || (activeDirection === 'BUY' ? 'BUY_LIMIT' : activeDirection === 'SELL' ? 'SELL_LIMIT' : 'WAIT');
+  const confidenceScore = data?.confidence ?? (activeSignal?.winProbability ?? 0);
+  const activeDirection = data?.direction ?? (activeSignal?.direction || 'WAIT');
+  const signalGrade = data?.signalGrade ?? ((activeSignal?.aiReasoning as any)?.signalGrade || 'WAIT');
+  const orderType = data?.entryPlan?.orderType || 'WAIT';
 
-  const preferredEntry = data?.entryPlan?.preferredEntry || p;
-  const stopLoss = data?.riskPlan?.exactStopLoss || (activeDirection === 'BUY' ? p - 5.5 : p + 5.5);
-  const tp1 = data?.riskPlan?.takeProfit1 || (activeDirection === 'BUY' ? p + 7.5 : p - 7.5);
-  const tp2 = data?.riskPlan?.takeProfit2 || (activeDirection === 'BUY' ? p + 15.0 : p - 15.0);
+  const preferredEntry = data?.entryPlan?.preferredEntry || 0;
+  const stopLoss = data?.riskPlan?.exactStopLoss || 0;
+  const tp1 = data?.riskPlan?.takeProfit1 || 0;
+  const tp2 = data?.riskPlan?.takeProfit2 || 0;
 
-  const handleCopySetup = () => {
-    const text = `TradeMind Institutional Gold Setup:\nAsset: XAU/USD (Gold)\nOrder: ${orderType}\nDirection: ${activeDirection}\nEntry: $${preferredEntry.toFixed(2)}\nStop Loss: $${stopLoss.toFixed(2)}\nTP1: $${tp1.toFixed(2)}\nTP2: $${tp2.toFixed(2)}\nConfidence: ${confidenceScore}%\nGrade: ${signalGrade}`;
+  // Real structural levels for Conditional Analytical Scenarios
+  const struct = data?.structure;
+  const atr = data?.volatilityAtr15m || 0;
+  const bullOb = struct?.unmitigatedOrderBlocks?.filter(o => o.type === 'BULLISH' && !o.isMitigated).slice(-1)[0];
+  const bearOb = struct?.unmitigatedOrderBlocks?.filter(o => o.type === 'BEARISH' && !o.isMitigated).slice(-1)[0];
+
+  const bullTriggerLow = bullOb?.low || struct?.asianLow || struct?.previousDayLow || (p > 0 && atr > 0 ? p - atr * 0.8 : 0);
+  const bullTriggerHigh = bullOb?.high || (bullTriggerLow > 0 && atr > 0 ? bullTriggerLow + atr * 0.35 : 0);
+  const bullInvalidation = bullTriggerLow > 0 ? bullTriggerLow - Math.max(1.25, atr * 0.45) : 0;
+  const bullTarget = struct?.previousDayHigh && struct.previousDayHigh > p
+    ? struct.previousDayHigh
+    : struct?.asianHigh && struct.asianHigh > p
+      ? struct.asianHigh
+      : (p > 0 && atr > 0 ? p + atr * 2.0 : 0);
+
+  const bearTriggerHigh = bearOb?.high || struct?.asianHigh || struct?.previousDayHigh || (p > 0 && atr > 0 ? p + atr * 0.8 : 0);
+  const bearTriggerLow = bearOb?.low || (bearTriggerHigh > 0 && atr > 0 ? bearTriggerHigh - atr * 0.35 : 0);
+  const bearInvalidation = bearTriggerHigh > 0 ? bearTriggerHigh + Math.max(1.25, atr * 0.45) : 0;
+  const bearTarget = struct?.previousDayLow && struct.previousDayLow < p && struct.previousDayLow > 0
+    ? struct.previousDayLow
+    : struct?.asianLow && struct.asianLow < p && struct.asianLow > 0
+      ? struct.asianLow
+      : (p > 0 && atr > 0 ? p - atr * 2.0 : 0);
+
+  const handleCopySpecificSignal = (sig: any) => {
+    const dir = sig.direction || activeDirection;
+    const r = sig.aiReasoning || {};
+    const ord = r.orderType || (dir === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT');
+    const strat = r.strategy || 'Smart Money ICT Setup';
+    const entry = sig.entryPrice || preferredEntry;
+    const sl = sig.stopLoss || stopLoss;
+    const tp_1 = sig.takeProfit1 || sig.takeProfit || tp1;
+    const tp_2 = sig.takeProfit2 || r.takeProfit2 || tp2;
+    const conf = sig.winProbability ?? confidenceScore;
+
+    const text = `TradeMind Institutional Gold Setup:\nAsset: XAU/USD (Gold)\nOrder: ${ord}\nDirection: ${dir}\nStrategy: ${strat}\nEntry: $${Number(entry).toFixed(2)}\nStop Loss: $${Number(sl).toFixed(2)}\nTP1: $${Number(tp_1).toFixed(2)}\nTP2: $${Number(tp_2).toFixed(2)}\nConfidence: ${conf}%`;
     navigator.clipboard.writeText(text);
     toast.success('Gold trade parameters copied to clipboard!');
+  };
+
+  const handleExecuteSpecificSignal = (sig: any) => {
+    setTradeModalSignal(sig);
+    setIsTradeModalOpen(true);
   };
 
   return (
@@ -105,10 +148,10 @@ export default function GoldOverviewPage() {
           <div>
             <div className="text-[10px] uppercase font-bold text-slate-400">Spot XAU/USD</div>
             <div className="text-2xl font-black font-mono text-amber-400 mt-0.5">
-              ${p.toFixed(2)}
+              {p > 0 ? `$${p.toFixed(2)}` : '—'}
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              Broker Spread: <span className="font-mono text-emerald-400 font-bold">${spread.toFixed(2)}</span>
+              Broker Spread: <span className="font-mono text-emerald-400 font-bold">{spread > 0 ? `$${spread.toFixed(2)}` : '—'}</span>
             </div>
           </div>
           <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
@@ -124,7 +167,7 @@ export default function GoldOverviewPage() {
               {regime.replace(/_/g, ' ')}
             </div>
             <div className="text-[10px] text-amber-400 font-mono mt-0.5">
-              Vol Percentile: {data?.volatilityPercentile || 50}%
+              Vol Percentile: {data?.volatilityPercentile !== undefined ? `${data.volatilityPercentile}%` : '—'}
             </div>
           </div>
           <div className="h-10 w-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
@@ -158,12 +201,14 @@ export default function GoldOverviewPage() {
               </span>
             </div>
             <div className="text-sm font-extrabold text-amber-300 mt-1 flex items-center gap-1.5">
-              <span>{orderType.replace(/_/g, ' ')}</span>
+              <span>{orderType === 'WAIT' ? 'SCANNING (WAIT)' : orderType.replace(/_/g, ' ')}</span>
             </div>
             <div className="text-[11px] font-mono text-emerald-400 font-bold mt-0.5 flex items-center gap-1">
               <span>{confidenceScore}% Confluence</span>
               <span className="text-slate-500">•</span>
-              <span className="text-slate-400 font-normal">EV: +{data?.riskPlan?.expectedValueR ? data.riskPlan.expectedValueR.toFixed(2) : '1.85'}R</span>
+              <span className="text-slate-400 font-normal">
+                EV: {data?.riskPlan?.expectedValueR !== undefined ? `${data.riskPlan.expectedValueR >= 0 ? '+' : ''}${data.riskPlan.expectedValueR.toFixed(2)}R` : '0.00R'}
+              </span>
             </div>
           </div>
           <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
@@ -179,103 +224,263 @@ export default function GoldOverviewPage() {
         height={560}
       />
 
-      {/* Actionable Institutional Gold Signal Execution Deck */}
-      {orderType !== 'WAIT' && (
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-[#0B0F17] via-[#0F172A] to-[#0B0F17] border border-amber-500/30 shadow-2xl space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
-                <Zap size={20} />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-base font-extrabold text-white">
-                    Gold Institutional {orderType.replace(/_/g, ' ')}
-                  </span>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-mono font-bold border",
-                    activeDirection === 'BUY'
-                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                      : "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                  )}>
-                    {activeDirection === 'BUY' ? 'BULLISH FLOW' : 'BEARISH FLOW'}
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                    {confidenceScore}% CONFIDENCE
-                  </span>
-                </div>
-                <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-2">
-                  <span>Strategy: <strong className="text-slate-200">{data?.entryPlan?.selectedStrategy?.replace(/_/g, ' ') || 'Smart Money Sweep & Reversal'}</strong></span>
-                  <span>•</span>
-                  <span>Grade: <strong className="text-amber-300">{signalGrade}</strong></span>
-                  <span>•</span>
-                  <span>Institutional EV: <strong className="text-emerald-400">+{data?.riskPlan?.expectedValueR ? data.riskPlan.expectedValueR.toFixed(2) : '1.85'}R</strong></span>
-                </div>
-              </div>
+      {/* Actionable Institutional Gold Multi-Signal Execution Deck (Up to 3 Concurrent Active Signals) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <Zap size={14} />
             </div>
+            <h3 className="text-sm font-extrabold text-white">
+              Active Executable Signals ({activeSignals.length}/3)
+            </h3>
+          </div>
+          <span className="text-[10px] font-mono text-slate-400">
+            Multi-Signal Execution Deck • Max 3 Concurrent Setups
+          </span>
+        </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleCopySetup}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300 border border-white/10 transition-all cursor-pointer"
-              >
-                <Copy size={13} />
-                <span>Copy Parameters</span>
-              </button>
-              <button
-                onClick={() => setIsTradeModalOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black shadow-lg shadow-amber-500/20 transition-all cursor-pointer"
-              >
-                <Zap size={14} />
-                <span>Execute Trade</span>
-              </button>
+        {activeSignals.length > 0 ? (
+          <div className={cn(
+            "grid gap-4",
+            activeSignals.length === 1 ? "grid-cols-1" : activeSignals.length === 2 ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1 xl:grid-cols-3"
+          )}>
+            {activeSignals.map((sig: any) => {
+              const dir = sig.direction || 'BUY';
+              const r = sig.aiReasoning || {};
+              const sOrderType = r.orderType || (dir === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT');
+              const sStatus = r.lifecycleState || r.status || 'ACTIVE';
+              const sStrat = r.strategy || sig.strategyKey || 'Smart Money ICT Setup';
+              const sGrade = r.signalGrade || 'A';
+              const sConf = sig.winProbability ?? confidenceScore;
+              const sEntry = Number(sig.entryPrice || 0);
+              const sSl = Number(sig.stopLoss || 0);
+              const sTp1 = Number(sig.takeProfit1 || sig.takeProfit || 0);
+              const sTp2 = Number(sig.takeProfit2 || r.takeProfit2 || sTp1);
+              const sEntryZone = Array.isArray(r.entryZone) && r.entryZone.length === 2 ? r.entryZone : [sEntry, sEntry];
+
+              return (
+                <div key={sig.id} className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#0B0F17] via-[#0F172A] to-[#0B0F17] border border-amber-500/30 shadow-2xl flex flex-col justify-between gap-4">
+                  <div className="flex items-start justify-between gap-2 border-b border-white/5 pb-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-sm font-black text-white">
+                          Gold {sOrderType.replace(/_/g, ' ')}
+                        </span>
+                        <span className={cn(
+                          "px-2 py-0.5 rounded text-[10px] font-mono font-bold border",
+                          dir === 'BUY'
+                            ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                            : "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                        )}>
+                          {dir === 'BUY' ? 'BULLISH' : 'BEARISH'}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                          {sStatus.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1 flex flex-wrap items-center gap-1.5">
+                        <span>Strategy: <strong className="text-slate-200">{sStrat}</strong></span>
+                        <span>•</span>
+                        <span>Grade: <strong className="text-amber-300">{sGrade}</strong></span>
+                        <span>•</span>
+                        <span className="text-emerald-400 font-bold">{sConf}% Confidence</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleCopySpecificSignal(sig)}
+                        title="Copy Parameters"
+                        className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 transition-all cursor-pointer"
+                      >
+                        <Copy size={13} />
+                      </button>
+                      <button
+                        onClick={() => handleExecuteSpecificSignal(sig)}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black shadow-md shadow-amber-500/20 transition-all cursor-pointer"
+                      >
+                        <Zap size={13} />
+                        <span>Execute</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Pricing Grid */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="p-2.5 rounded-xl bg-slate-900/80 border border-white/5">
+                      <span className="text-[9px] font-mono font-bold uppercase text-slate-400 block mb-0.5">Entry (Zone)</span>
+                      <span className="text-base font-black font-mono text-white">
+                        ${sEntry.toFixed(2)}
+                      </span>
+                      <div className="text-[9px] font-mono text-cyan-300/90 mt-0.5 truncate">
+                        [${Number(sEntryZone[0]).toFixed(2)} - ${Number(sEntryZone[1]).toFixed(2)}]
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-rose-950/20 border border-rose-500/25">
+                      <span className="text-[9px] font-mono font-bold uppercase text-rose-400 block mb-0.5">Stop Loss</span>
+                      <span className="text-base font-black font-mono text-rose-300">
+                        ${sSl.toFixed(2)}
+                      </span>
+                      <div className="text-[9px] font-mono text-rose-400/90 mt-0.5">
+                        Risk: {Math.round(Math.abs(sEntry - sSl) * 10)} pips
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-emerald-950/20 border border-emerald-500/25">
+                      <span className="text-[9px] font-mono font-bold uppercase text-emerald-400 block mb-0.5">Target 1</span>
+                      <span className="text-base font-black font-mono text-emerald-300">
+                        ${sTp1.toFixed(2)}
+                      </span>
+                      <div className="text-[9px] font-mono text-emerald-400/90 mt-0.5">
+                        +{Math.round(Math.abs(sTp1 - sEntry) * 10)} pips (1:{sig.riskRewardRatio?.toFixed(1) || '—'})
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/35">
+                      <span className="text-[9px] font-mono font-bold uppercase text-emerald-300 block mb-0.5">Target 2</span>
+                      <span className="text-base font-black font-mono text-emerald-200">
+                        ${sTp2.toFixed(2)}
+                      </span>
+                      <div className="text-[9px] font-mono text-emerald-300/90 mt-0.5">
+                        +{Math.round(Math.abs(sTp2 - sEntry) * 10)} pips (Runner)
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="p-5 rounded-2xl bg-[#0B0F17] border border-amber-500/20 text-center space-y-1">
+            <span className="text-xs font-bold text-amber-400 flex items-center justify-center gap-1.5">
+              <Target size={14} />
+              <span>Pipeline In Vigilant Scanning Mode (Completed Candles Only)</span>
+            </span>
+            <p className="text-[11px] text-slate-400 max-w-xl mx-auto">
+              No active executable signals at this moment. Signals are published strictly when all 5 institutional gates pass on closed candle boundaries.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Engine Status & Conditional Analytical Scenarios Panel (Part B & Part F: Non-Executable Candidates) */}
+      <div className="rounded-2xl bg-[#0B0F17] border border-white/10 p-5 space-y-4 shadow-xl">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="h-7 w-7 rounded-lg bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+              <Compass size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                <span>Engine Status & Conditional Analytical Scenarios</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  Dual-Scenario Engine
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                Top-down scenarios evaluated continuously on completed candles. Executable signals are published only when all 5 gates confirm.
+              </p>
             </div>
           </div>
 
-          {/* Pricing Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3 rounded-xl bg-slate-900/80 border border-white/5">
-              <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-0.5">Preferred Entry (Centroid)</span>
-              <span className="text-lg font-black font-mono text-white">
-                ${preferredEntry.toFixed(2)}
-              </span>
-              <div className="text-[10px] font-mono text-cyan-300/90 mt-0.5">
-                Zone: [${data?.entryPlan?.entryZone ? data.entryPlan.entryZone[0].toFixed(2) : (p - 0.75).toFixed(2)} - ${data?.entryPlan?.entryZone ? data.entryPlan.entryZone[1].toFixed(2) : (p + 0.75).toFixed(2)}]
+          <div className="flex items-center gap-2 text-[10px] font-mono text-slate-400">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Completed-Candle Engine (5M Close Scan)</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Bullish Conditional Scenario */}
+          <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-950/20 via-[#0B0F17] to-slate-900/40 border border-emerald-500/30 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <ArrowUpRight size={16} className="text-emerald-400" />
+                <span className="text-xs font-black text-emerald-300 uppercase tracking-wide">
+                  Bullish Scenario (Demand Expansion)
+                </span>
               </div>
+              <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                CONDITIONAL • CANDIDATE
+              </span>
             </div>
 
-            <div className="p-3 rounded-xl bg-rose-950/20 border border-rose-500/25">
-              <span className="text-[10px] font-mono font-bold uppercase text-rose-400 block mb-0.5">Stop Loss (Invalidation)</span>
-              <span className="text-lg font-black font-mono text-rose-300">
-                ${stopLoss.toFixed(2)}
-              </span>
-              <div className="text-[10px] font-mono text-rose-400/90 mt-0.5">
-                Risk: {data?.riskPlan?.stopDistancePips || Math.round(Math.abs(preferredEntry - stopLoss) * 10)} pips (${Math.abs(preferredEntry - stopLoss).toFixed(2)})
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Liquidity sweep below {bullOb ? '15M Bullish Order Block' : 'Asian / Previous Day Low'} followed by 5M/15M CHoCH displacement and discount retest.
+            </p>
+
+            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5 text-[11px] font-mono">
+              <div className="p-2 rounded-lg bg-black/40 border border-white/5">
+                <span className="text-[9px] text-slate-400 block uppercase">Trigger Zone</span>
+                <span className="font-bold text-emerald-300">
+                  {bullTriggerLow > 0 ? `$${bullTriggerLow.toFixed(2)} - $${bullTriggerHigh.toFixed(2)}` : '—'}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-black/40 border border-white/5">
+                <span className="text-[9px] text-slate-400 block uppercase">Invalidation</span>
+                <span className="font-bold text-rose-400">
+                  {bullInvalidation > 0 ? `< $${bullInvalidation.toFixed(2)}` : '—'}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-black/40 border border-white/5">
+                <span className="text-[9px] text-slate-400 block uppercase">Expansion Target</span>
+                <span className="font-bold text-white">
+                  {bullTarget > 0 ? `$${bullTarget.toFixed(2)}` : '—'}
+                </span>
               </div>
             </div>
+          </div>
 
-            <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/25">
-              <span className="text-[10px] font-mono font-bold uppercase text-emerald-400 block mb-0.5">Target 1 (Liquidity Pool)</span>
-              <span className="text-lg font-black font-mono text-emerald-300">
-                ${tp1.toFixed(2)}
-              </span>
-              <div className="text-[10px] font-mono text-emerald-400/90 mt-0.5">
-                Target: +{Math.round(Math.abs(tp1 - preferredEntry) * 10)} pips (R:R {data?.riskPlan?.riskReward1?.toFixed(1) || '1.4'})
+          {/* Bearish Conditional Scenario */}
+          <div className="p-4 rounded-xl bg-gradient-to-br from-rose-950/20 via-[#0B0F17] to-slate-900/40 border border-rose-500/30 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <ArrowDownRight size={16} className="text-rose-400" />
+                <span className="text-xs font-black text-rose-300 uppercase tracking-wide">
+                  Bearish Scenario (Supply Rejection)
+                </span>
               </div>
+              <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                CONDITIONAL • CANDIDATE
+              </span>
             </div>
 
-            <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/35">
-              <span className="text-[10px] font-mono font-bold uppercase text-emerald-300 block mb-0.5">Target 2 (Expansion)</span>
-              <span className="text-lg font-black font-mono text-emerald-200">
-                ${tp2.toFixed(2)}
-              </span>
-              <div className="text-[10px] font-mono text-emerald-300/90 mt-0.5">
-                Target: +{Math.round(Math.abs(tp2 - preferredEntry) * 10)} pips (R:R {data?.riskPlan?.riskReward2?.toFixed(1) || '2.8'})
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Buy-side liquidity sweep above {bearOb ? '15M Bearish Order Block' : 'Asian / Previous Day High'} followed by closed 15M candle failure swing.
+            </p>
+
+            <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5 text-[11px] font-mono">
+              <div className="p-2 rounded-lg bg-black/40 border border-white/5">
+                <span className="text-[9px] text-slate-400 block uppercase">Trigger Zone</span>
+                <span className="font-bold text-rose-300">
+                  {bearTriggerLow > 0 ? `$${bearTriggerLow.toFixed(2)} - $${bearTriggerHigh.toFixed(2)}` : '—'}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-black/40 border border-white/5">
+                <span className="text-[9px] text-slate-400 block uppercase">Invalidation</span>
+                <span className="font-bold text-rose-400">
+                  {bearInvalidation > 0 ? `> $${bearInvalidation.toFixed(2)}` : '—'}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-black/40 border border-white/5">
+                <span className="text-[9px] text-slate-400 block uppercase">Expansion Target</span>
+                <span className="font-bold text-white">
+                  {bearTarget > 0 ? `$${bearTarget.toFixed(2)}` : '—'}
+                </span>
               </div>
             </div>
           </div>
         </div>
-      )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5 text-[11px] text-slate-400">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={14} className="text-amber-400" />
+            <span><strong>Opposing Thesis Policy:</strong> Prior thesis must formally invalidate before an opposing executable trade is approved.</span>
+          </div>
+          <span className="font-mono text-slate-500">Duplicate Setup Suppression: Active (1.0 ATR)</span>
+        </div>
+      </div>
 
       {/* Macro Intermarket & Structural Quick Strip */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -313,10 +518,10 @@ export default function GoldOverviewPage() {
         <div className="p-4 rounded-xl bg-[#0B0F17] border border-amber-500/20">
           <div className="text-[10px] font-bold text-slate-400 uppercase">4H/1H/15M Concordance</div>
           <div className="text-lg font-bold text-amber-300 mt-1">
-            {data?.multiTf?.concordanceStatus?.replace(/_/g, ' ') || 'FULL ALIGNMENT'}
+            {data?.multiTf?.concordanceStatus?.replace(/_/g, ' ') || '—'}
           </div>
           <div className="text-xs text-slate-400 mt-0.5">
-            POC: <span className="font-mono text-white">${data?.multiTf?.volumeProfilePoc?.toFixed(2) || p.toFixed(2)}</span>
+            POC: <span className="font-mono text-white">{data?.multiTf?.volumeProfilePoc ? `$${data.multiTf.volumeProfilePoc.toFixed(2)}` : '—'}</span>
           </div>
         </div>
       </div>
@@ -324,17 +529,20 @@ export default function GoldOverviewPage() {
       {/* Quick Trade Execution Modal Pre-Filled With Gold Setup */}
       <QuickTradeWidget
         isOpen={isTradeModalOpen}
-        onClose={() => setIsTradeModalOpen(false)}
+        onClose={() => {
+          setIsTradeModalOpen(false);
+          setTradeModalSignal(null);
+        }}
         defaultSymbol="GOLD"
-        defaultDirection={activeDirection === 'SELL' ? 'SELL' : 'BUY'}
+        defaultDirection={((tradeModalSignal?.direction || activeDirection) === 'SELL' ? 'SELL' : 'BUY') as any}
         aiSignal={{
-          entry: preferredEntry,
-          stopLoss: stopLoss,
-          tp1: tp1,
-          tp2: tp2,
-          direction: activeDirection as any,
-          strategy: data?.entryPlan?.selectedStrategy || 'Institutional Gold Confluence',
-          confidence: confidenceScore
+          entry: tradeModalSignal?.entryPrice || preferredEntry,
+          stopLoss: tradeModalSignal?.stopLoss || stopLoss,
+          tp1: tradeModalSignal?.takeProfit1 || tradeModalSignal?.takeProfit || tp1,
+          tp2: tradeModalSignal?.takeProfit2 || (tradeModalSignal?.aiReasoning as any)?.takeProfit2 || tp2,
+          direction: ((tradeModalSignal?.direction || activeDirection) === 'SELL' ? 'SELL' : 'BUY') as any,
+          strategy: (tradeModalSignal?.aiReasoning as any)?.strategy || data?.entryPlan?.selectedStrategy || 'Institutional Gold Confluence',
+          confidence: tradeModalSignal?.winProbability || confidenceScore
         }}
       />
     </div>

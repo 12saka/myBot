@@ -149,19 +149,28 @@ export const useAIStore = create<AIState>((set) => ({
         return u;
       };
 
-      const map = new Map<string, AISignal>();
       const sorted = Array.isArray(rawSignals)
         ? [...rawSignals].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
         : [];
 
+      // Deduplicate strictly by signal ID, and allow up to 3 active signals per asset
+      const symbolCounts = new Map<string, number>();
+      const seenIds = new Set<string>();
+      const result: AISignal[] = [];
+
       for (const sig of sorted) {
-        if (!sig || !sig.symbol) continue;
-        const key = normSigSym(sig.symbol);
-        if (!map.has(key)) {
-          map.set(key, { ...sig, symbol: key });
+        if (!sig || !sig.id || seenIds.has(sig.id)) continue;
+        seenIds.add(sig.id);
+
+        const sym = normSigSym(sig.symbol);
+        const count = symbolCounts.get(sym) || 0;
+        if (count < 3) {
+          result.push({ ...sig, symbol: sym });
+          symbolCounts.set(sym, count + 1);
         }
       }
-      return { signals: Array.from(map.values()) };
+
+      return { signals: result };
     }),
   upsertSignal: (newSig) =>
     set((state) => {
@@ -172,10 +181,31 @@ export const useAIStore = create<AIState>((set) => ({
         if (['GOLD', 'XAU', 'XAUUSD', 'XAU/USD'].includes(u)) return 'XAU/USD';
         return u;
       };
+
       const cleanSym = normSym(newSig.symbol);
       const formatted = { ...newSig, symbol: cleanSym };
-      const filtered = state.signals.filter((s) => s.id !== newSig.id && normSym(s.symbol) !== cleanSym);
-      return { signals: [formatted, ...filtered] };
+
+      // If the incoming signal is in a closed/terminal state, remove it from the active display deck
+      const rawStatus = (formatted as any).status || (formatted as any).aiReasoning?.status || 'ACTIVE';
+      const terminalStates = ['CLOSED', 'CANCELLED', 'EXPIRED', 'INVALIDATED', 'TP2_HIT', 'SL_HIT'];
+      if (terminalStates.includes(rawStatus) || (rawStatus === 'TP1_HIT' && (formatted as any).runnerClosedAtBreakeven)) {
+        return { signals: state.signals.filter((s) => s.id !== newSig.id) };
+      }
+
+      // If signal already exists with same ID, update it in-place without shifting or deleting others
+      const existingIdx = state.signals.findIndex((s) => s.id === newSig.id);
+      if (existingIdx >= 0) {
+        const updated = [...state.signals];
+        updated[existingIdx] = { ...updated[existingIdx], ...formatted };
+        return { signals: updated };
+      }
+
+      // New signal: Append to same-symbol signals (keep up to 3 for this asset) and preserve other symbols
+      const sameSymbolSignals = state.signals.filter((s) => normSym(s.symbol) === cleanSym);
+      const otherSignals = state.signals.filter((s) => normSym(s.symbol) !== cleanSym);
+      const cappedSameSymbol = [formatted, ...sameSymbolSignals].slice(0, 3);
+
+      return { signals: [...cappedSameSymbol, ...otherSignals] };
     }),
   removeSignal: (id) =>
     set((state) => ({

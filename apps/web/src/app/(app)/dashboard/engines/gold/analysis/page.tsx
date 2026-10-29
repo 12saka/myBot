@@ -116,7 +116,7 @@ export default function GoldAnalysisPage() {
           <div className="text-xs text-slate-400 space-y-2 mt-4">
             <div className="flex justify-between py-1 border-b border-white/5">
               <span>Displacement Size:</span>
-              <span className="font-mono text-white">${tf?.displacement4hAtr?.toFixed(2) || '6.70'}</span>
+              <span className="font-mono text-white">{tf?.displacement4hAtr ? `$${tf.displacement4hAtr.toFixed(2)}` : '—'}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-white/5">
               <span>HTF Direction:</span>
@@ -141,11 +141,11 @@ export default function GoldAnalysisPage() {
           <div className="text-xs text-slate-400 space-y-2 mt-4">
             <div className="flex justify-between py-1 border-b border-white/5">
               <span>Volume POC:</span>
-              <span className="font-mono text-amber-400">${tf?.volumeProfilePoc?.toFixed(2) || p.toFixed(2)}</span>
+              <span className="font-mono text-amber-400">{tf?.volumeProfilePoc ? `$${tf.volumeProfilePoc.toFixed(2)}` : '—'}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-white/5">
               <span>Session VWAP:</span>
-              <span className="font-mono text-white">${tf?.sessionVwap?.toFixed(2) || p.toFixed(2)}</span>
+              <span className="font-mono text-white">{tf?.sessionVwap ? `$${tf.sessionVwap.toFixed(2)}` : '—'}</span>
             </div>
           </div>
         </div>
