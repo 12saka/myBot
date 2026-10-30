@@ -20,7 +20,11 @@ RUN npm ci --prefer-offline --no-audit
 
 # Copy packages and service source
 COPY packages/db ./packages/db
+COPY packages/shared ./packages/shared
 COPY services/api-gateway ./services/api-gateway
+
+# Build shared package
+RUN npm run build --workspace=@trademind/shared
 
 # Generate Prisma Client
 RUN npx prisma generate --schema=packages/db/prisma/schema.prisma
@@ -40,6 +44,7 @@ COPY package*.json ./
 # Copy compiled files, node_modules, and package definitions
 COPY --from=builder /usr/src/app/node_modules ./node_modules
 COPY --from=builder /usr/src/app/packages/db ./packages/db
+COPY --from=builder /usr/src/app/packages/shared ./packages/shared
 COPY --from=builder /usr/src/app/services/api-gateway/dist ./services/api-gateway/dist
 COPY --from=builder /usr/src/app/services/api-gateway/package.json ./services/api-gateway/package.json
 

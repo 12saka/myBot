@@ -16,7 +16,9 @@
     "noImplicitAny": true,
     "strictBindCallApply": true,
     "forceConsistentCasingInFileNames": true,
-    "noFallthroughCasesInSwitch": true,
-    "paths": { "@trademind/db": ["../../packages/db"] }
+    "paths": {
+      "@trademind/db": ["../../packages/db"],
+      "@trademind/shared": ["../../packages/shared/src/index.ts"]
+    }
   }
 }
