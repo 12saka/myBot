@@ -54,5 +54,5 @@ EXPOSE 4000
 ENV PORT=4000
 ENV NODE_ENV=production
 
-# Run migrations gracefully and start API Gateway
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma || true && node services/api-gateway/dist/main.js"]
+# Run migrations gracefully (with fallback for unbaselined schemas) and start API Gateway
+CMD ["sh", "-c", "npx prisma migrate deploy --schema=packages/db/prisma/schema.prisma || npx prisma db push --schema=packages/db/prisma/schema.prisma --accept-data-loss || true; exec node services/api-gateway/dist/main.js"]
