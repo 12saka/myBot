@@ -9,6 +9,8 @@
   ],
   "scripts": {
     "dev": "npx -y concurrently \"npm run dev --workspace=@trademind/web\" \"npm run dev --workspace=@trademind/api-gateway\"",
+    "dev:ai": "python services/ai-service/main.py",
+    "dev:all": "npx -y concurrently \"npm run dev --workspace=@trademind/web\" \"npm run dev --workspace=@trademind/api-gateway\" \"npm run dev:ai\"",
     "build": "npm run build --workspaces --if-present",
     "db:migrate": "npm run db:migrate --workspace=packages/db",
     "db:generate": "npm run db:generate --workspace=packages/db",

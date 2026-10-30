@@ -1107,15 +1107,15 @@ export class AdminService {
   }
 
   async getNotificationHistory() {
-    return this.prisma.notification.findMany({
+    const raw = await this.prisma.notification.findMany({
       where: {
         OR: [
-          { type: { in: ['ADMIN_BROADCAST', 'ADMIN_DIRECT', 'System Alert', 'Maintenance', 'Promotion', 'Update', 'Security'] } },
-          { type: { startsWith: 'ADMIN' } }
-        ]
+          { type: { in: ['ADMIN_BROADCAST', 'ADMIN_DIRECT', 'System Alert', 'Maintenance', 'Promotion', 'Update', 'Security', 'ACADEMY'] } },
+          { type: { startsWith: 'ADMIN' } },
+        ],
       },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: 250,
       include: {
         user: {
           select: {
@@ -1125,11 +1125,33 @@ export class AdminService {
               select: {
                 firstName: true,
                 lastName: true,
-              }
-            }
-          }
-        }
-      }
+              },
+            },
+          },
+        },
+      },
     });
+
+    const seenBroadcasts = new Map<string, any>();
+    const deduplicated: any[] = [];
+
+    for (const item of raw) {
+      if (item.type === 'ADMIN_DIRECT') {
+        deduplicated.push(item);
+        continue;
+      }
+      const key = `${item.type}::${(item.title || '').trim().toLowerCase()}::${(item.message || '').trim().toLowerCase()}`;
+      const existing = seenBroadcasts.get(key);
+      if (existing) {
+        existing.recipientCount = (existing.recipientCount || 1) + 1;
+        existing.user = null; // Broadcast to all users, not a single user
+      } else {
+        const clone = { ...item, recipientCount: 1, user: item.type === 'ADMIN_BROADCAST' ? null : item.user };
+        seenBroadcasts.set(key, clone);
+        deduplicated.push(clone);
+      }
+    }
+
+    return deduplicated.slice(0, 50);
   }
 }

@@ -71,57 +71,60 @@ export default function GoldOverviewPage() {
   const regime = data?.marketRegime || 'RANGE_BOUND_EQUILIBRIUM';
   const spread = data?.spread ?? 0;
   const session = data?.sessionName || 'Active Session';
+  const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
+
   const activeSignal = data?.activeSignal;
   const activeSignals: any[] = data?.activeSignals && Array.isArray(data.activeSignals) && data.activeSignals.length > 0
     ? data.activeSignals
     : (activeSignal ? [activeSignal] : []);
 
-  const confidenceScore = data?.confidence ?? (activeSignal?.winProbability ?? 0);
-  const activeDirection = data?.direction ?? (activeSignal?.direction || 'WAIT');
-  const signalGrade = data?.signalGrade ?? ((activeSignal?.aiReasoning as any)?.signalGrade || 'WAIT');
-  const orderType = data?.entryPlan?.orderType || 'WAIT';
+  // Selected signal takes precedence for chart level inspection, falling back to primary activeSignal
+  const displayedSignal = (selectedSignalId ? activeSignals.find(s => s.id === selectedSignalId) : null) || activeSignals[0] || activeSignal;
 
-  const preferredEntry = data?.entryPlan?.preferredEntry || 0;
-  const stopLoss = data?.riskPlan?.exactStopLoss || 0;
-  const tp1 = data?.riskPlan?.takeProfit1 || 0;
-  const tp2 = data?.riskPlan?.takeProfit2 || 0;
+  const confidenceScore = displayedSignal?.confluenceScore ?? displayedSignal?.winProbability ?? (data?.confluenceScore ?? data?.confidence ?? 0);
+  const activeDirection = displayedSignal?.direction ?? (data?.direction || 'WAIT');
+  const signalGrade = (displayedSignal?.aiReasoning as any)?.signalGrade ?? (data?.signalGrade || 'WAIT');
+  const orderType = (displayedSignal?.aiReasoning as any)?.orderType ?? (data?.entryPlan?.orderType || 'WAIT');
 
-  // Real structural levels for Conditional Analytical Scenarios
+  const preferredEntry = displayedSignal?.entryPrice ? Number(displayedSignal.entryPrice) : (data?.entryPlan?.preferredEntry || 0);
+  const stopLoss = displayedSignal?.stopLoss ? Number(displayedSignal.stopLoss) : (data?.riskPlan?.exactStopLoss || 0);
+  const tp1 = displayedSignal?.takeProfit1 ? Number(displayedSignal.takeProfit1) : (data?.riskPlan?.takeProfit1 || 0);
+  const tp2 = (displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2) ? Number(displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2) : (data?.riskPlan?.takeProfit2 || 0);
+
+  // Real structural levels for Conditional Analytical Scenarios (Properly bounded to intraday structure)
   const struct = data?.structure;
-  const atr = data?.volatilityAtr15m || 0;
-  const bullOb = struct?.unmitigatedOrderBlocks?.filter(o => o.type === 'BULLISH' && !o.isMitigated).slice(-1)[0];
-  const bearOb = struct?.unmitigatedOrderBlocks?.filter(o => o.type === 'BEARISH' && !o.isMitigated).slice(-1)[0];
+  const atr = Math.max(1, data?.volatilityAtr15m || 6);
 
-  const bullTriggerLow = bullOb?.low || struct?.asianLow || struct?.previousDayLow || (p > 0 && atr > 0 ? p - atr * 0.8 : 0);
-  const bullTriggerHigh = bullOb?.high || (bullTriggerLow > 0 && atr > 0 ? bullTriggerLow + atr * 0.35 : 0);
-  const bullInvalidation = bullTriggerLow > 0 ? bullTriggerLow - Math.max(1.25, atr * 0.45) : 0;
-  const bullTarget = struct?.previousDayHigh && struct.previousDayHigh > p
-    ? struct.previousDayHigh
-    : struct?.asianHigh && struct.asianHigh > p
-      ? struct.asianHigh
-      : (p > 0 && atr > 0 ? p + atr * 2.0 : 0);
+  // Bullish Scenario: Demand expansion from nearest bullish demand / discount level
+  const bullOb = struct?.unmitigatedOrderBlocks?.find(o => o.type === 'BULLISH' && !o.isMitigated && o.midpoint <= p + atr * 0.5);
+  const bullTriggerLow = bullOb?.low || (p > 0 ? p - atr * 0.9 : 0);
+  const bullTriggerHigh = bullOb?.high || (bullTriggerLow > 0 ? bullTriggerLow + atr * 0.4 : 0);
+  const bullInvalidation = bullTriggerLow > 0 ? bullTriggerLow - Math.max(1.5, atr * 0.5) : 0;
+  // Realistic intraday target: 1.5x–2.5x ATR above trigger, or nearest unmitigated resistance
+  const nearestBearResistance = struct?.unmitigatedOrderBlocks?.find(o => o.type === 'BEARISH' && !o.isMitigated && o.low > p);
+  const bullTarget = nearestBearResistance?.low || (bullTriggerHigh > 0 ? bullTriggerHigh + atr * 2.2 : (p > 0 ? p + atr * 2.0 : 0));
 
-  const bearTriggerHigh = bearOb?.high || struct?.asianHigh || struct?.previousDayHigh || (p > 0 && atr > 0 ? p + atr * 0.8 : 0);
-  const bearTriggerLow = bearOb?.low || (bearTriggerHigh > 0 && atr > 0 ? bearTriggerHigh - atr * 0.35 : 0);
-  const bearInvalidation = bearTriggerHigh > 0 ? bearTriggerHigh + Math.max(1.25, atr * 0.45) : 0;
-  const bearTarget = struct?.previousDayLow && struct.previousDayLow < p && struct.previousDayLow > 0
-    ? struct.previousDayLow
-    : struct?.asianLow && struct.asianLow < p && struct.asianLow > 0
-      ? struct.asianLow
-      : (p > 0 && atr > 0 ? p - atr * 2.0 : 0);
+  // Bearish Scenario: Supply rejection from nearest bearish supply / premium level
+  const bearOb = struct?.unmitigatedOrderBlocks?.find(o => o.type === 'BEARISH' && !o.isMitigated && o.midpoint >= p - atr * 0.5);
+  const bearTriggerHigh = bearOb?.high || (p > 0 ? p + atr * 0.9 : 0);
+  const bearTriggerLow = bearOb?.low || (bearTriggerHigh > 0 ? bearTriggerHigh - atr * 0.4 : 0);
+  const bearInvalidation = bearTriggerHigh > 0 ? bearTriggerHigh + Math.max(1.5, atr * 0.5) : 0;
+  // Realistic intraday target: 1.5x–2.5x ATR below trigger, or nearest unmitigated demand
+  const nearestBullSupport = struct?.unmitigatedOrderBlocks?.find(o => o.type === 'BULLISH' && !o.isMitigated && o.high < p);
+  const bearTarget = nearestBullSupport?.high || (bearTriggerLow > 0 ? bearTriggerLow - atr * 2.2 : (p > 0 ? p - atr * 2.0 : 0));
 
   const handleCopySpecificSignal = (sig: any) => {
     const dir = sig.direction || activeDirection;
     const r = sig.aiReasoning || {};
     const ord = r.orderType || (dir === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT');
-    const strat = r.strategy || 'Smart Money ICT Setup';
+    const strat = r.strategy || sig.strategy || 'Multi-Timeframe SMC';
     const entry = sig.entryPrice || preferredEntry;
     const sl = sig.stopLoss || stopLoss;
     const tp_1 = sig.takeProfit1 || sig.takeProfit || tp1;
     const tp_2 = sig.takeProfit2 || r.takeProfit2 || tp2;
     const conf = sig.winProbability ?? confidenceScore;
 
-    const text = `TradeMind Institutional Gold Setup:\nAsset: XAU/USD (Gold)\nOrder: ${ord}\nDirection: ${dir}\nStrategy: ${strat}\nEntry: $${Number(entry).toFixed(2)}\nStop Loss: $${Number(sl).toFixed(2)}\nTP1: $${Number(tp_1).toFixed(2)}\nTP2: $${Number(tp_2).toFixed(2)}\nConfidence: ${conf}%`;
+    const text = `TradeMind Institutional Gold Setup:\nAsset: XAU/USD (Gold)\nOrder: ${ord}\nDirection: ${dir}\nStrategy: ${strat}\nEntry: $${Number(entry).toFixed(2)}\nStop Loss: $${Number(sl).toFixed(2)}\nTP1: $${Number(tp_1).toFixed(2)}\nTP2: $${Number(tp_2).toFixed(2)}\nConfluence: ${conf}%`;
     navigator.clipboard.writeText(text);
     toast.success('Gold trade parameters copied to clipboard!');
   };
@@ -222,6 +225,15 @@ export default function GoldOverviewPage() {
         symbol="GOLD"
         defaultTimeframe="15m"
         height={560}
+        spotPrice={p}
+        externalTradeLevels={{
+          entry: preferredEntry || null,
+          stopLoss: stopLoss || null,
+          takeProfit1: tp1 || null,
+          takeProfit2: tp2 || null,
+          direction: activeDirection as any,
+          orderType: orderType
+        }}
       />
 
       {/* Actionable Institutional Gold Multi-Signal Execution Deck (Up to 3 Concurrent Active Signals) */}
@@ -252,21 +264,37 @@ export default function GoldOverviewPage() {
               const sStatus = r.lifecycleState || r.status || 'ACTIVE';
               const sStrat = r.strategy || sig.strategyKey || 'Smart Money ICT Setup';
               const sGrade = r.signalGrade || 'A';
-              const sConf = sig.winProbability ?? confidenceScore;
+              const sConf = sig.confluenceScore ?? sig.winProbability ?? confidenceScore;
               const sEntry = Number(sig.entryPrice || 0);
               const sSl = Number(sig.stopLoss || 0);
               const sTp1 = Number(sig.takeProfit1 || sig.takeProfit || 0);
               const sTp2 = Number(sig.takeProfit2 || r.takeProfit2 || sTp1);
               const sEntryZone = Array.isArray(r.entryZone) && r.entryZone.length === 2 ? r.entryZone : [sEntry, sEntry];
 
+              const isCardSelected = displayedSignal?.id === sig.id;
+
               return (
-                <div key={sig.id} className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#0B0F17] via-[#0F172A] to-[#0B0F17] border border-amber-500/30 shadow-2xl flex flex-col justify-between gap-4">
+                <div 
+                  key={sig.id} 
+                  onClick={() => setSelectedSignalId(sig.id)}
+                  className={cn(
+                    "p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#0B0F17] via-[#0F172A] to-[#0B0F17] shadow-2xl flex flex-col justify-between gap-4 transition-all cursor-pointer relative",
+                    isCardSelected
+                      ? "border-2 border-amber-400 ring-2 ring-amber-500/20 shadow-amber-500/10"
+                      : "border border-amber-500/30 hover:border-amber-500/60"
+                  )}
+                >
                   <div className="flex items-start justify-between gap-2 border-b border-white/5 pb-3">
                     <div>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-sm font-black text-white">
                           Gold {sOrderType.replace(/_/g, ' ')}
                         </span>
+                        {isCardSelected && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                            ON CHART
+                          </span>
+                        )}
                         <span className={cn(
                           "px-2 py-0.5 rounded text-[10px] font-mono font-bold border",
                           dir === 'BUY'
@@ -284,7 +312,7 @@ export default function GoldOverviewPage() {
                         <span>•</span>
                         <span>Grade: <strong className="text-amber-300">{sGrade}</strong></span>
                         <span>•</span>
-                        <span className="text-emerald-400 font-bold">{sConf}% Confidence</span>
+                        <span className="text-emerald-400 font-bold">{sConf}% Confluence</span>
                       </div>
                     </div>
 
@@ -412,7 +440,7 @@ export default function GoldOverviewPage() {
 
             <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5 text-[11px] font-mono">
               <div className="p-2 rounded-lg bg-black/40 border border-white/5">
-                <span className="text-[9px] text-slate-400 block uppercase">Trigger Zone</span>
+                <span className="text-[9px] text-slate-400 block uppercase">Trigger Zone {bullOb ? '(Order Block)' : '(0.9x ATR Projection)'}</span>
                 <span className="font-bold text-emerald-300">
                   {bullTriggerLow > 0 ? `$${bullTriggerLow.toFixed(2)} - $${bullTriggerHigh.toFixed(2)}` : '—'}
                 </span>
@@ -452,7 +480,7 @@ export default function GoldOverviewPage() {
 
             <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5 text-[11px] font-mono">
               <div className="p-2 rounded-lg bg-black/40 border border-white/5">
-                <span className="text-[9px] text-slate-400 block uppercase">Trigger Zone</span>
+                <span className="text-[9px] text-slate-400 block uppercase">Trigger Zone {bearOb ? '(Order Block)' : '(0.9x ATR Projection)'}</span>
                 <span className="font-bold text-rose-300">
                   {bearTriggerLow > 0 ? `$${bearTriggerLow.toFixed(2)} - $${bearTriggerHigh.toFixed(2)}` : '—'}
                 </span>
@@ -490,7 +518,7 @@ export default function GoldOverviewPage() {
             {data?.macro?.dxyPrice ? data.macro.dxyPrice.toFixed(2) : '—'}
           </div>
           <div className="text-xs text-slate-400 mt-0.5">
-            Trend: <span className="font-semibold text-amber-300">{data?.macro?.dxyTrend || 'NEUTRAL'}</span>
+            Trend: <span className="font-semibold text-amber-300">{data?.macro?.dxyTrend || '—'}</span>
           </div>
         </div>
 
@@ -506,12 +534,25 @@ export default function GoldOverviewPage() {
 
         <div className="p-4 rounded-xl bg-[#0B0F17] border border-amber-500/20">
           <div className="text-[10px] font-bold text-slate-400 uppercase">ForexFactory Event Shield</div>
-          <div className="text-lg font-bold text-emerald-400 mt-1 flex items-center gap-1.5">
+          <div className={cn(
+            "text-lg font-bold mt-1 flex items-center gap-1.5",
+            data?.macro?.forexFactoryGate === 'CLEAR'
+              ? "text-emerald-400"
+              : (data?.macro?.forexFactoryGate === 'BLACKOUT_ACTIVE' || data?.macro?.forexFactoryGate === 'FEED_OFFLINE')
+              ? "text-rose-400"
+              : "text-amber-400"
+          )}>
             <ShieldCheck size={18} />
-            {data?.macro?.forexFactoryGate || 'CLEAR'}
+            {data?.macro?.forexFactoryGate ? data.macro.forexFactoryGate.replace(/_/g, ' ') : 'VERIFYING'}
           </div>
           <div className="text-xs text-slate-400 mt-0.5">
-            {data?.macro?.nextHighImpactEvent ? `${data.macro.nextHighImpactEvent.minutesRemaining}m to ${data.macro.nextHighImpactEvent.title}` : 'No immediate high impact event'}
+            {data?.macro?.forexFactoryGate === 'FEED_OFFLINE'
+              ? 'Calendar feed offline — fail-closed halt active'
+              : data?.macro?.nextHighImpactEvent
+              ? `${data.macro.nextHighImpactEvent.minutesRemaining}m to ${data.macro.nextHighImpactEvent.title}`
+              : data?.macro?.forexFactoryGate === 'CLEAR'
+              ? 'No immediate high impact event'
+              : 'Calendar shield active'}
           </div>
         </div>
 

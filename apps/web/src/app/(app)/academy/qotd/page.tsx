@@ -1,19 +1,20 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import {
   Sparkles,
   CheckCircle2,
   XCircle,
-  Award,
-  HelpCircle,
-  ArrowRight,
   Flame,
+  ArrowLeft,
+  ExternalLink,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function StudentQotdPage() {
+  const router = useRouter();
   const [qotd, setQotd] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
@@ -24,7 +25,7 @@ export default function StudentQotdPage() {
   const fetchQotd = async () => {
     setLoading(true);
     try {
-      const data = await apiFetch<any>('/api/v2/instructor/qotd');
+      const data = await apiFetch<any>('/api/v2/academy/qotd/today');
       setQotd(data);
     } catch (err: any) {
       toast.error('Failed to load Question of the Day.');
@@ -44,14 +45,14 @@ export default function StudentQotdPage() {
     }
     setSubmitting(true);
     try {
-      const res = await apiFetch<any>(`/api/v2/instructor/qotd/${qotd.id}/answer`, {
+      const res = await apiFetch<any>(`/api/v2/academy/qotd/${qotd.id}/answer`, {
         method: 'POST',
         body: JSON.stringify({ selectedOptionIndex: selectedIdx }),
       });
       setResult(res);
       setSubmitted(true);
       if (res.isCorrect) {
-        toast.success(`Correct! +${res.xpEarned || 50} XP earned! 🎉`);
+        toast.success(`Correct! +${res.xpEarned || 25} XP earned! 🎉`);
       } else {
         toast.error('Incorrect. Review the instructor explanation below.');
       }
@@ -72,6 +73,13 @@ export default function StudentQotdPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-12">
+      <button
+        onClick={() => router.push('/academy')}
+        className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to Academy Hub
+      </button>
+
       {/* Header */}
       <div className="glass-card p-6 rounded-2xl border border-purple-500/20 bg-slate-900/80 space-y-2">
         <div className="flex items-center justify-between">
@@ -79,7 +87,7 @@ export default function StudentQotdPage() {
             <Flame className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
             <span>DAILY TRADING CHALLENGE</span>
           </span>
-          <span className="text-xs font-mono text-purple-300 font-bold">+50 XP REWARD</span>
+          <span className="text-xs font-mono text-purple-300 font-bold">+25 XP REWARD</span>
         </div>
 
         <h1 className="text-xl md:text-2xl font-black text-white font-outfit">{qotd?.title || "Today's Challenge 🧠"}</h1>

@@ -131,19 +131,30 @@ export function Topbar() {
     };
   }, []);
 
-  // Load and poll notifications
+  // Load and poll notifications (with automatic client deduplication)
   useEffect(() => {
-    let previousIds = new Set<string>();
+    let previousSigs = new Set<string>();
+    let hasInitialized = false;
 
     const fetchNotifications = async () => {
       try {
-        const list = await apiFetch<any[]>('/api/v2/notifications');
-        if (Array.isArray(list)) {
-          // If this is not the initial empty load, check for new unread notifications
-          if (previousIds.size > 0) {
-            const newUnread = list.filter(n => !n.isRead && !previousIds.has(n.id));
-            newUnread.forEach(notif => {
-              const toastKey = notif.id ? `notif-${notif.id}` : `notif-${notif.title}-${notif.message}`;
+        const rawList = await apiFetch<any[]>('/api/v2/notifications');
+        if (Array.isArray(rawList)) {
+          const seen = new Set<string>();
+          const list = rawList.filter((n) => {
+            const sig = `${(n.type || '').trim()}::${(n.title || '').trim().toLowerCase()}::${(n.message || '').trim().toLowerCase()}`;
+            if (seen.has(sig)) return false;
+            seen.add(sig);
+            return true;
+          });
+
+          if (hasInitialized) {
+            const newUnread = list.filter((n) => {
+              const sig = `${(n.type || '').trim()}::${(n.title || '').trim().toLowerCase()}`;
+              return !n.isRead && !previousSigs.has(sig);
+            });
+            newUnread.forEach((notif) => {
+              const toastKey = `notif-${(notif.title || '').trim().toLowerCase()}`;
               toast(notif.message || notif.title, {
                 id: toastKey,
                 icon: '⚡',
@@ -158,8 +169,11 @@ export function Topbar() {
               });
             });
           }
-          // Update the tracked IDs
-          previousIds = new Set(list.map(n => n.id));
+
+          previousSigs = new Set(
+            list.map((n) => `${(n.type || '').trim()}::${(n.title || '').trim().toLowerCase()}`)
+          );
+          hasInitialized = true;
           setNotifications(list);
         }
       } catch (err) {
@@ -232,12 +246,16 @@ export function Topbar() {
     }
   };
 
-  const handleMarkSingleRead = async (id: string) => {
+  const handleMarkSingleRead = async (id: string, linkUrl?: string) => {
     try {
       await apiFetch(`/api/v2/notifications/${id}/read`, { method: 'PATCH' });
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
     } catch (err: any) {
       console.error(err);
+    }
+    if (linkUrl) {
+      setDropdownOpen(false);
+      router.push(linkUrl);
     }
   };
 
@@ -388,7 +406,7 @@ export function Topbar() {
                       return (
                         <div
                           key={notif.id}
-                          onClick={() => handleMarkSingleRead(notif.id)}
+                          onClick={() => handleMarkSingleRead(notif.id, notif.linkUrl)}
                           className="p-2 rounded-xl border transition-all text-left cursor-pointer bg-slate-900/60 border-white/5 hover:border-purple-500/30 hover:bg-purple-500/10 text-slate-200 group flex items-start gap-2.5"
                         >
                           <div className={cn(

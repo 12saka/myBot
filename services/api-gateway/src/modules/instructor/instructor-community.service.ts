@@ -23,15 +23,90 @@ export class InstructorCommunityService {
     });
   }
 
+  private async broadcastToStudents(title: string, message: string, linkUrl: string = '/academy', excludeUserId?: string) {
+    try {
+      const students = await this.prisma.user.findMany({
+        where: excludeUserId ? { id: { not: excludeUserId } } : {},
+        select: { id: true },
+      });
+      if (students.length === 0) return;
+
+      const userIds = students.map((s) => s.id);
+      await this.prisma.notification.deleteMany({
+        where: {
+          userId: { in: userIds },
+          title,
+          isRead: false,
+        },
+      });
+
+      await this.prisma.notification.createMany({
+        data: students.map((s) => ({
+          userId: s.id,
+          title,
+          message,
+          type: 'ACADEMY',
+          linkUrl,
+          isRead: false,
+        })),
+      });
+    } catch (e) {}
+  }
+
+  private async notifyInstructors(title: string, message: string, linkUrl: string = '/instructor/discussions', excludeUserId?: string) {
+    try {
+      const instructors = await this.prisma.user.findMany({
+        where: {
+          role: { in: ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'] },
+          ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+        },
+        select: { id: true },
+      });
+      if (instructors.length === 0) return;
+
+      const userIds = instructors.map((inst) => inst.id);
+      await this.prisma.notification.deleteMany({
+        where: {
+          userId: { in: userIds },
+          title,
+          isRead: false,
+        },
+      });
+
+      await this.prisma.notification.createMany({
+        data: instructors.map((inst) => ({
+          userId: inst.id,
+          title,
+          message,
+          type: 'ACADEMY',
+          linkUrl,
+          isRead: false,
+        })),
+      });
+    } catch (e) {}
+  }
+
   async createDiscussion(userId: string, body: any) {
     if (!body.title || !body.content) {
       throw new BadRequestException('Discussion title and content are required.');
     }
 
-    return this.prisma.academyDiscussion.create({
+    const cleanTitle = body.title.trim();
+    const existing = await this.prisma.academyDiscussion.findFirst({
+      where: {
+        userId,
+        title: { equals: cleanTitle, mode: 'insensitive' },
+      },
+      include: {
+        user: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } },
+      },
+    });
+    if (existing) return existing;
+
+    const disc = await this.prisma.academyDiscussion.create({
       data: {
         userId,
-        title: body.title.trim(),
+        title: cleanTitle,
         content: body.content.trim(),
         courseId: body.courseId || null,
         lessonId: body.lessonId || null,
@@ -40,6 +115,19 @@ export class InstructorCommunityService {
         user: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } },
       },
     });
+
+    const studentName = disc.user?.profile
+      ? `${disc.user.profile.firstName || ''} ${disc.user.profile.lastName || ''}`.trim() || disc.user.email
+      : disc.user?.email || 'A student';
+
+    await this.notifyInstructors(
+      `💬 New Student Question: ${disc.title}`,
+      `${studentName} asked: "${disc.content.slice(0, 110)}${disc.content.length > 110 ? '...' : ''}"`,
+      '/instructor/discussions',
+      userId,
+    );
+
+    return disc;
   }
 
   async replyToDiscussion(userId: string, userRole: string, discussionId: string, body: any) {
@@ -71,6 +159,22 @@ export class InstructorCommunityService {
       });
     }
 
+    // Notify thread author when someone replies
+    if (disc.userId !== userId) {
+      await this.prisma.notification.create({
+        data: {
+          userId: disc.userId,
+          title: isInstructor
+            ? `✅ Official Instructor Answer: ${disc.title}`
+            : `💬 New Reply on Thread: ${disc.title}`,
+          message: `"${body.content.trim().slice(0, 120)}${body.content.trim().length > 120 ? '...' : ''}"`,
+          type: 'ACADEMY',
+          linkUrl: '/academy/community',
+          isRead: false,
+        },
+      }).catch(() => {});
+    }
+
     return response;
   }
 
@@ -83,13 +187,21 @@ export class InstructorCommunityService {
 
   // 2. Daily Trading Tip & Announcement Engine
   async getDailyActivities() {
-    return this.prisma.dailyActivity.findMany({
+    const raw = await this.prisma.dailyActivity.findMany({
       orderBy: { publishedAt: 'desc' },
-      take: 10,
+      take: 40,
       include: {
         instructor: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true, avatarUrl: true } } } },
       },
     });
+
+    const seen = new Set<string>();
+    return raw.filter((act) => {
+      const key = `${act.type || 'STUDY_NOTE'}::${(act.title || '').trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 30);
   }
 
   async createDailyActivity(userId: string, body: any) {
@@ -97,16 +209,53 @@ export class InstructorCommunityService {
       throw new BadRequestException('Activity title and content are required.');
     }
 
-    return this.prisma.dailyActivity.create({
-      data: {
-        instructorId: userId,
-        type: body.type || 'TIP',
-        title: body.title.trim(),
-        content: body.content.trim(),
-        chartUrl: body.chartUrl || null,
-        publishedAt: new Date(),
+    const cleanTitle = body.title.trim();
+    const existing = await this.prisma.dailyActivity.findFirst({
+      where: {
+        title: { equals: cleanTitle, mode: 'insensitive' },
+        type: body.type || 'STUDY_NOTE',
       },
     });
+
+    const activity = existing
+      ? await this.prisma.dailyActivity.update({
+          where: { id: existing.id },
+          data: {
+            content: body.content.trim(),
+            chartUrl: body.chartUrl || existing.chartUrl,
+            publishedAt: new Date(),
+          },
+        })
+      : await this.prisma.dailyActivity.create({
+          data: {
+            instructorId: userId,
+            type: body.type || 'STUDY_NOTE',
+            title: cleanTitle,
+            content: body.content.trim(),
+            chartUrl: body.chartUrl || null,
+            publishedAt: new Date(),
+          },
+        });
+
+    const typeLabel =
+      activity.type === 'CHART_BREAKDOWN'
+        ? 'Market Chart Breakdown'
+        : activity.type === 'STUDY_NOTE'
+        ? 'Study Note'
+        : activity.type === 'SESSION_RECAP'
+        ? 'Session Recap'
+        : 'Trading Tip';
+
+    if (!existing) {
+      await this.broadcastToStudents(
+        `📝 New Instructor ${typeLabel}: ${activity.title}`,
+        `${activity.content.slice(0, 120)}${activity.content.length > 120 ? '...' : ''}`,
+        '/academy',
+        userId,
+      );
+    }
+
+    return activity;
   }
 
   // 3. Question of the Day Engine
@@ -141,7 +290,7 @@ export class InstructorCommunityService {
       throw new BadRequestException('Question text and options array are required.');
     }
 
-    return this.prisma.questionOfTheDay.upsert({
+    const qotd = await this.prisma.questionOfTheDay.upsert({
       where: { date: todayStr },
       update: {
         title: body.title?.trim() || "Today's Trading Challenge 🧠",
@@ -162,6 +311,15 @@ export class InstructorCommunityService {
         explanation: body.explanation?.trim() || 'Institutional price action breakdown.',
       },
     });
+
+    await this.broadcastToStudents(
+      `🔥 Daily Challenge Published: ${qotd.title}`,
+      `${qotd.questionText.slice(0, 110)}${qotd.questionText.length > 110 ? '...' : ''} (+50 XP Reward)`,
+      '/academy/qotd',
+      userId,
+    );
+
+    return qotd;
   }
 
   async answerQotd(userId: string, qotdId: string, selectedOptionIndex: number) {

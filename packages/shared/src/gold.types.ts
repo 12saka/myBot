@@ -41,6 +41,8 @@ export interface GoldStructuralLevels {
   londonLow: number;
   previousDayHigh: number;
   previousDayLow: number;
+  approachingDecisionArea?: boolean;
+  decisionAreaDetails?: string;
   unmitigatedOrderBlocks: {
     type: 'BULLISH' | 'BEARISH';
     high: number;
@@ -59,6 +61,22 @@ export interface GoldStructuralLevels {
   }[];
 }
 
+export interface FinalValidationChecklist {
+  dataIsFresh: boolean;
+  setupStillValid: boolean;
+  entryNotMissed: boolean;
+  stopIsStructural: boolean;
+  targetsRealistic: boolean;
+  rrAcceptable: boolean;
+  newsRiskAcceptable: boolean;
+  spreadAcceptable: boolean;
+  notDuplicate: boolean;
+  withinExposureCap: boolean;
+  orderTypeSupported: boolean;
+  allPassed: boolean;
+  reasons: string[];
+}
+
 export interface GoldMacroBarometer {
   dxyPrice: number;
   dxyChange1h: number;
@@ -67,15 +85,19 @@ export interface GoldMacroBarometer {
   us10yYield: number;
   us10yChange1h: number;
   realYieldProxy: number;
+  breakevenInflationBenchmark?: number;
+  isRealYieldLive?: boolean;
   safeHavenDemandScore: number; // 0 - 100
   macroAlignment: 'BULLISH_DECOUPLING' | 'BEARISH_PRESSURE' | 'CONCORDANT_BULL' | 'NEUTRAL_FLOW';
-  forexFactoryGate: 'CLEAR' | 'BLACKOUT_ACTIVE' | 'POST_NEWS_STABILIZATION';
+  forexFactoryGate: 'CLEAR' | 'BLACKOUT_ACTIVE' | 'POST_NEWS_STABILIZATION' | 'FEED_OFFLINE';
   nextHighImpactEvent?: {
     title: string;
     currency: string;
     timeUtc: string;
     minutesRemaining: number;
   };
+  lastNewsSyncTime?: string;
+  calendarEventsLoaded?: number;
 }
 
 export interface GoldEntryIntelligence {
@@ -123,6 +145,7 @@ export interface GoldOverviewData {
   sessionName: string;
   dataQuality: 'PRIME' | 'DEGRADED' | 'OFFLINE';
   confidence?: number;
+  confluenceScore?: number;
   direction?: 'BUY' | 'SELL' | 'WAIT';
   signalGrade?: string;
   activeSignal: any | null;
@@ -133,6 +156,7 @@ export interface GoldOverviewData {
   structure: GoldStructuralLevels;
   entryPlan: GoldEntryIntelligence;
   riskPlan: GoldRiskParameters;
+  finalValidationChecklist?: FinalValidationChecklist;
 }
 
 export type AnnotationType =
@@ -182,4 +206,78 @@ export interface GoldAnnotationsResponse {
   };
   annotations: GoldChartAnnotation[];
   lastUpdated: string;
+}
+
+export type SignalLifecycleState =
+  | 'CANDIDATE'
+  | 'WAITING_FOR_ENTRY'
+  | 'ACTIVE_ORDER'
+  | 'PARTIALLY_FILLED'
+  | 'POSITION_OPEN'
+  | 'EXPIRED'
+  | 'INVALIDATED'
+  | 'CANCELLED'
+  | 'CLOSED';
+
+export type SignalLifecycleOutcome =
+  | 'TP1_HIT'
+  | 'TP2_HIT'
+  | 'SL_HIT'
+  | 'BREAKEVEN'
+  | 'MANUAL'
+  | 'CANCELLED'
+  | 'UNFILLED';
+
+export interface SignalLifecycleEvent {
+  timestamp: string;
+  state: SignalLifecycleState | string;
+  price?: number;
+  reason: string;
+  details?: string;
+}
+
+export interface AssetEngineConfig {
+  symbol: string;
+  profile: 'DAY_TRADING' | 'SWING_TRADING' | 'SCALPING';
+  signalManagement: {
+    maxActiveSignalsPerAsset: number;
+    duplicateSetupSuppression: boolean;
+    maxExposureEnforcement: boolean;
+    maxCombinedRiskR: number;
+    opposingSignalPolicy: 'INVALIDATE_OLD_THESIS_BEFORE_REVERSAL' | 'ALLOW_SIMULTANEOUS' | 'REJECT_NEW';
+    allowConditionalAlternativeScenarios: boolean;
+  };
+  history: {
+    dashboardDefaultLimit: number;
+    detailedRetentionDays: number;
+    retainPerformanceAggregates: boolean;
+  };
+  analysis: {
+    contextTimeframes: string[];
+    biasTimeframes: string[];
+    setupTimeframes: string[];
+    precisionTimeframe: string;
+    useCompletedCandles: boolean;
+    refreshOnTimeframeClose: boolean;
+    reanalyzeOnMaterialNewsEvent: boolean;
+  };
+  entry: {
+    requireValidatedSetup: boolean;
+    requireEntryExpiry: boolean;
+    preventStaleEntries: boolean;
+    preventDuplicateSignals: boolean;
+  };
+  risk: {
+    requireStructuralStop: boolean;
+    requireValidatedTargets: boolean;
+    requirePositionSizing: boolean;
+    enforceAccountRiskLimits: boolean;
+    rejectUnacceptableExecutionCosts: boolean;
+  };
+  safety: {
+    blockOnCriticalStaleData: boolean;
+    blockOnInvalidTradeStructure: boolean;
+    blockOnRiskLimitBreach: boolean;
+    requireFinalValidation: boolean;
+  };
 }

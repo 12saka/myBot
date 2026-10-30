@@ -76,11 +76,15 @@ export default function InstructorQuizzesPage() {
     setQuestionModal(true);
   };
 
+  const [saving, setSaving] = useState(false);
+
   const handleSaveQuestion = async () => {
+    if (saving) return;
     if (!qText.trim() || qOptions.some((o) => !o.trim())) {
       toast.error('Question text and all 4 options are required.');
       return;
     }
+    setSaving(true);
     try {
       const payload = {
         text: qText.trim(),
@@ -109,6 +113,8 @@ export default function InstructorQuizzesPage() {
       fetchData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save question');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -147,10 +153,12 @@ export default function InstructorQuizzesPage() {
   };
 
   const handleSaveQuiz = async () => {
+    if (saving) return;
     if (!quizTitle.trim()) {
       toast.error('Quiz title is required.');
       return;
     }
+    setSaving(true);
     try {
       const payload = {
         title: quizTitle.trim(),
@@ -179,6 +187,8 @@ export default function InstructorQuizzesPage() {
       fetchData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save quiz');
+    } finally {
+      setSaving(false);
     }
   };
 

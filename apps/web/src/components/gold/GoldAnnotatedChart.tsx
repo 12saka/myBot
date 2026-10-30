@@ -26,6 +26,16 @@ interface GoldAnnotatedChartProps {
   symbol?: string;
   defaultTimeframe?: '15m' | '1h' | '4h';
   height?: number | string;
+  spotPrice?: number;
+  externalTradeLevels?: {
+    entry?: number | null;
+    stopLoss?: number | null;
+    takeProfit1?: number | null;
+    takeProfit2?: number | null;
+    takeProfit3?: number | null;
+    direction?: 'BUY' | 'SELL' | 'WAIT';
+    orderType?: string;
+  };
   onSelectAnnotation?: (annotation: GoldChartAnnotation) => void;
 }
 
@@ -33,6 +43,8 @@ export function GoldAnnotatedChart({
   symbol = 'GOLD',
   defaultTimeframe = '15m',
   height = 540,
+  spotPrice,
+  externalTradeLevels,
   onSelectAnnotation
 }: GoldAnnotatedChartProps) {
   const [timeframe, setTimeframe] = useState<'15m' | '1h' | '4h'>(defaultTimeframe);
@@ -72,7 +84,7 @@ export function GoldAnnotatedChart({
     setLayers(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const tradeLevels = data?.tradeLevels;
+  const tradeLevels = externalTradeLevels || data?.tradeLevels;
   const annotations = (data?.annotations || []).filter(a => {
     if (!layers.orderBlocks && (a.type === 'DEMAND_ZONE' || a.type === 'SUPPLY_ZONE' || a.type === 'ORDER_BLOCK')) return false;
     if (!layers.fvgs && a.type === 'FVG') return false;
@@ -82,7 +94,7 @@ export function GoldAnnotatedChart({
     return true;
   });
 
-  const p = data?.currentPrice || 0;
+  const p = (spotPrice && spotPrice > 0) ? spotPrice : (data?.currentPrice || 0);
 
   return (
     <div className="w-full flex flex-col rounded-2xl bg-[#0B0F17] border border-amber-500/25 overflow-hidden shadow-2xl relative">
@@ -267,10 +279,6 @@ export function GoldAnnotatedChart({
           symbol="GOLD"
           interval={timeframe === '4h' ? '240' : timeframe === '1h' ? '60' : '15'}
           height="100%"
-          entryPrice={tradeLevels?.direction !== 'WAIT' ? tradeLevels?.entry || undefined : undefined}
-          stopLoss={tradeLevels?.direction !== 'WAIT' ? tradeLevels?.stopLoss || undefined : undefined}
-          tp1={tradeLevels?.direction !== 'WAIT' ? tradeLevels?.takeProfit1 || undefined : undefined}
-          tp2={tradeLevels?.direction !== 'WAIT' ? tradeLevels?.takeProfit2 || undefined : undefined}
         />
       </div>
 

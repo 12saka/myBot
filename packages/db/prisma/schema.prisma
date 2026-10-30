@@ -235,6 +235,7 @@ model Signal {
   takeProfit2      Float
   riskRewardRatio  Float
   winProbability   Float
+  confluenceScore  Float?
   durationEstimate String
   aiReasoning      Json
   createdAt        DateTime       @default(now())

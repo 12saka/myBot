@@ -91,6 +91,19 @@ export default function GoldAnalysisPage() {
         </button>
       </div>
 
+      {/* Stage 1: Key S/R Proximity Banner */}
+      {struct?.approachingDecisionArea && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 text-amber-200">
+          <Compass className="text-amber-400 flex-shrink-0 animate-pulse" size={20} />
+          <div className="text-xs">
+            <span className="font-bold uppercase tracking-wider text-amber-300 block mb-0.5">
+              Stage 1 Telemetry: Approaching Major Key S/R Decision Area
+            </span>
+            <span className="opacity-90">{struct.decisionAreaDetails || 'Price is within 0.5x ATR of a major structural liquidity level.'}</span>
+          </div>
+        </div>
+      )}
+
       {/* Interactive SMC Chart with Live Annotations */}
       <GoldAnnotatedChart
         symbol="GOLD"
@@ -110,7 +123,7 @@ export default function GoldAnalysisPage() {
               "text-xs font-bold px-2 py-0.5 rounded-full uppercase",
               tf?.trend4h === 'BULLISH' ? "bg-emerald-500/20 text-emerald-400" : tf?.trend4h === 'BEARISH' ? "bg-rose-500/20 text-rose-400" : "bg-amber-500/20 text-amber-300"
             )}>
-              {tf?.trend4h || 'NEUTRAL'}
+              {tf?.trend4h || '—'}
             </span>
           </div>
           <div className="text-xs text-slate-400 space-y-2 mt-4">
@@ -135,7 +148,7 @@ export default function GoldAnalysisPage() {
               "text-xs font-bold px-2 py-0.5 rounded-full uppercase",
               tf?.trend1h === 'BULLISH' ? "bg-emerald-500/20 text-emerald-400" : tf?.trend1h === 'BEARISH' ? "bg-rose-500/20 text-rose-400" : "bg-amber-500/20 text-amber-300"
             )}>
-              {tf?.trend1h || 'NEUTRAL'}
+              {tf?.trend1h || '—'}
             </span>
           </div>
           <div className="text-xs text-slate-400 space-y-2 mt-4">
@@ -160,13 +173,13 @@ export default function GoldAnalysisPage() {
               "text-xs font-bold px-2 py-0.5 rounded-full uppercase",
               tf?.trend15m === 'BULLISH' ? "bg-emerald-500/20 text-emerald-400" : tf?.trend15m === 'BEARISH' ? "bg-rose-500/20 text-rose-400" : "bg-amber-500/20 text-amber-300"
             )}>
-              {tf?.trend15m || 'NEUTRAL'}
+              {tf?.trend15m || '—'}
             </span>
           </div>
           <div className="text-xs text-slate-400 space-y-2 mt-4">
             <div className="flex justify-between py-1 border-b border-white/5">
               <span>Concordance Status:</span>
-              <span className="font-bold text-amber-300">{tf?.concordanceStatus?.replace(/_/g, ' ') || 'ALIGNED'}</span>
+              <span className="font-bold text-amber-300">{tf?.concordanceStatus ? tf.concordanceStatus.replace(/_/g, ' ') : '—'}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-white/5">
               <span>Tactical Bias:</span>

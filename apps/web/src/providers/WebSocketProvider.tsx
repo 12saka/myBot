@@ -180,7 +180,12 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       });
     });
 
-    socket.on('notification', (data: { id?: string; title: string; message: string }) => {
+    socket.on('notification', (data: { id?: string; title: string; message: string; type?: string; subType?: string }) => {
+      // Prevent duplicate toast: signal:created already handles live trade chime, store update and dedicated toast for initial creation.
+      // But allow lifecycle events (ORDER_FILLED, TARGET_HIT, STOP_HIT, ORDER_CANCELLED) to toast!
+      if (data.type === 'TRADE_SIGNAL' && (!data.subType || data.subType === 'SIGNAL_CREATED')) {
+        return;
+      }
       const toastKey = data.id ? `notif-${data.id}` : `notif-${data.title}-${data.message}`;
       toast(
         (t) => (

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import {
   MessageSquare,
@@ -12,10 +13,12 @@ import {
   Search,
   User,
   Sparkles,
+  ArrowLeft,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function StudentCommunityPage() {
+  const router = useRouter();
   const [discussions, setDiscussions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -33,7 +36,7 @@ export default function StudentCommunityPage() {
   const fetchDiscussions = async () => {
     setLoading(true);
     try {
-      const data = await apiFetch<any[]>('/api/v2/instructor/discussions');
+      const data = await apiFetch<any[]>('/api/v2/academy/community/discussions');
       setDiscussions(data || []);
     } catch (err: any) {
       toast.error('Failed to load Q&A community discussions.');
@@ -53,14 +56,14 @@ export default function StudentCommunityPage() {
     }
     setSubmitting(true);
     try {
-      await apiFetch('/api/v2/instructor/discussions', {
+      await apiFetch('/api/v2/academy/community/discussions', {
         method: 'POST',
         body: JSON.stringify({
           title: title.trim(),
           content: content.trim(),
         }),
       });
-      toast.success('Question posted to community forum!');
+      toast.success('Question posted! Instructors have been notified.');
       setAskModal(false);
       setTitle('');
       setContent('');
@@ -75,7 +78,7 @@ export default function StudentCommunityPage() {
   const handleReply = async () => {
     if (!selectedDisc || !replyContent.trim()) return;
     try {
-      await apiFetch(`/api/v2/instructor/discussions/${selectedDisc.id}/reply`, {
+      await apiFetch(`/api/v2/academy/community/discussions/${selectedDisc.id}/reply`, {
         method: 'POST',
         body: JSON.stringify({ content: replyContent.trim() }),
       });
@@ -104,6 +107,13 @@ export default function StudentCommunityPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
+      <button
+        onClick={() => router.push('/academy')}
+        className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to Academy Hub
+      </button>
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-2xl border border-purple-500/20 bg-slate-900/80">
         <div>

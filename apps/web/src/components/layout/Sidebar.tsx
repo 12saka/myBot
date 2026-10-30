@@ -210,65 +210,84 @@ export function Sidebar() {
                   return (
                     <div key={href} className="space-y-0.5">
                       <div className="flex items-center">
-                        <Link
-                          href={href}
-                          onClick={() => {
-                            if (!isCollapsed && hasSubItems) {
-                              setSignalsExpanded(prev => !prev);
-                            }
-                            setSidebarOpen(false);
-                          }}
-                          className={cn('sidebar-link group relative flex-1', isParentActive && 'active')}
-                          title={isCollapsed ? label : undefined}
-                        >
-                          <Icon
-                            size={18}
-                            className={cn(
-                              'flex-shrink-0 transition-colors',
-                              isParentActive ? 'text-purple-400' : 'text-slate-500 group-hover:text-slate-300'
-                            )}
-                          />
-                          <AnimatePresence>
-                            {!isCollapsed ? (
-                              <motion.span
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="whitespace-nowrap flex items-center justify-between flex-1 min-w-0"
-                              >
-                                <span>{label}</span>
-                                <div className="flex items-center gap-1.5 ml-2">
-                                  {isSignals && activeSignalsCount > 0 && (
-                                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
-                                      {activeSignalsCount} LIVE
-                                    </span>
-                                  )}
-                                </div>
-                              </motion.span>
-                            ) : (
-                              isSignals && activeSignalsCount > 0 && (
-                                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                              )
-                            )}
-                          </AnimatePresence>
-                        </Link>
-
-                        {!isCollapsed && hasSubItems && (
+                        {hasSubItems ? (
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setSignalsExpanded(!signalsExpanded);
+                            onClick={() => {
+                              if (isCollapsed) {
+                                toggleSidebarCollapsed();
+                                setSignalsExpanded(true);
+                              } else {
+                                setSignalsExpanded(prev => !prev);
+                              }
                             }}
-                            className="p-2 text-slate-500 hover:text-slate-300 hover:bg-white/5 rounded-lg transition-colors cursor-pointer mr-1"
-                            title={signalsExpanded ? 'Collapse sub-items' : 'Expand sub-items'}
+                            className={cn('sidebar-link group relative flex-1 text-left w-full cursor-pointer', isParentActive && 'active')}
+                            title={isCollapsed ? label : undefined}
                           >
-                            <ChevronDown
-                              size={14}
-                              className={cn('transition-transform duration-200', signalsExpanded ? 'rotate-180 text-purple-400' : 'rotate-0')}
+                            <Icon
+                              size={18}
+                              className={cn(
+                                'flex-shrink-0 transition-colors',
+                                isParentActive ? 'text-purple-400' : 'text-slate-500 group-hover:text-slate-300'
+                              )}
                             />
+                            <AnimatePresence>
+                              {!isCollapsed ? (
+                                <motion.span
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  className="whitespace-nowrap flex items-center justify-between flex-1 min-w-0"
+                                >
+                                  <span>{label}</span>
+                                  <div className="flex items-center gap-1.5 ml-2">
+                                    {isSignals && activeSignalsCount > 0 && (
+                                      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                                        {activeSignalsCount} LIVE
+                                      </span>
+                                    )}
+                                    <ChevronDown
+                                      size={14}
+                                      className={cn('transition-transform duration-200 text-slate-500 group-hover:text-slate-300', signalsExpanded ? 'rotate-180 text-purple-400' : 'rotate-0')}
+                                    />
+                                  </div>
+                                </motion.span>
+                              ) : (
+                                isSignals && activeSignalsCount > 0 && (
+                                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                                )
+                              )}
+                            </AnimatePresence>
                           </button>
+                        ) : (
+                          <Link
+                            href={href}
+                            onClick={() => {
+                              setSidebarOpen(false);
+                            }}
+                            className={cn('sidebar-link group relative flex-1', isParentActive && 'active')}
+                            title={isCollapsed ? label : undefined}
+                          >
+                            <Icon
+                              size={18}
+                              className={cn(
+                                'flex-shrink-0 transition-colors',
+                                isParentActive ? 'text-purple-400' : 'text-slate-500 group-hover:text-slate-300'
+                              )}
+                            />
+                            <AnimatePresence>
+                              {!isCollapsed && (
+                                <motion.span
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  className="whitespace-nowrap flex items-center justify-between flex-1 min-w-0"
+                                >
+                                  <span>{label}</span>
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                          </Link>
                         )}
                       </div>
 

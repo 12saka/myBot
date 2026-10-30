@@ -60,8 +60,12 @@ export class AcademyService implements OnModuleInit {
     }
   }
 
+  private isSeedingQuizzes = false;
+
   // Ensure every lesson and academy hub has populated quizzes and questions with images/charts
   private async ensureSeedQuizzes() {
+    if (this.isSeedingQuizzes) return;
+    this.isSeedingQuizzes = true;
     try {
       const questionCount = await this.prisma.questionBank.count();
       if (questionCount === 0) {
@@ -229,6 +233,8 @@ export class AcademyService implements OnModuleInit {
       }
     } catch (e) {
       console.warn('[AcademyService] ensureSeedQuizzes note:', e);
+    } finally {
+      this.isSeedingQuizzes = false;
     }
   }
 
@@ -326,24 +332,35 @@ export class AcademyService implements OnModuleInit {
   // Get All Courses with Lesson Counts & User Progress
   async getCourses(userId: string) {
     try {
-      const courses = await this.prisma.course.findMany({
+      const rawCourses = await this.prisma.course.findMany({
         where: { isPublished: true },
+        orderBy: { createdAt: 'desc' },
         include: {
-          lessons: { select: { id: true, title: true, orderIndex: true } },
-          certificates: { where: { userId } }
-        }
+          lessons: { select: { id: true, title: true, orderIndex: true }, orderBy: { orderIndex: 'asc' } },
+          assignments: { where: { isPublished: true }, select: { id: true } },
+          instructor: { select: { email: true, profile: { select: { firstName: true, lastName: true } } } },
+          certificates: { where: { userId } },
+        },
+      });
+
+      const seenTitles = new Set<string>();
+      const courses = rawCourses.filter((c) => {
+        const key = (c.title || '').trim().toLowerCase();
+        if (seenTitles.has(key)) return false;
+        seenTitles.add(key);
+        return true;
       });
 
       const userAttempts = await this.prisma.quizAttempt.findMany({
         where: { userId, passed: true },
-        select: { lessonId: true }
+        select: { lessonId: true },
       });
 
-      const passedLessonIds = new Set(userAttempts.map(a => a.lessonId));
+      const passedLessonIds = new Set(userAttempts.map((a) => a.lessonId));
 
-      return courses.map(course => {
+      return courses.map((course: any) => {
         const totalLessons = course.lessons.length;
-        const completedLessons = course.lessons.filter(l => passedLessonIds.has(l.id)).length;
+        const completedLessons = course.lessons.filter((l: any) => passedLessonIds.has(l.id)).length;
         const progressPercent = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
 
         return {
@@ -351,13 +368,18 @@ export class AcademyService implements OnModuleInit {
           title: course.title,
           description: course.description,
           difficulty: course.difficulty,
-          category: (course as any).category || 'CRYPTO',
-          imageUrl: (course as any).imageUrl || null,
+          category: course.category || 'FOREX',
+          imageUrl: course.imageUrl || null,
+          instructorName: course.instructor?.profile
+            ? `${course.instructor.profile.firstName || ''} ${course.instructor.profile.lastName || ''}`.trim() || 'Lead Instructor'
+            : course.instructor?.email || 'Lead Instructor',
           totalLessons,
+          totalAssignments: course.assignments?.length || 0,
           completedLessons,
           progressPercent,
           hasCertificate: course.certificates.length > 0,
-          lessons: course.lessons
+          createdAt: course.createdAt,
+          lessons: course.lessons,
         };
       });
     } catch (err: any) {
@@ -385,6 +407,22 @@ export class AcademyService implements OnModuleInit {
               }
             }
           },
+          assignments: {
+            where: { isPublished: true },
+            orderBy: { createdAt: 'desc' },
+            include: {
+              lesson: { select: { id: true, title: true, orderIndex: true } },
+              instructor: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true, avatarUrl: true } } } },
+              submissions: {
+                where: { userId },
+                take: 1,
+                orderBy: { submittedAt: 'desc' },
+                include: {
+                  gradedBy: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } }
+                }
+              }
+            }
+          },
           certificates: { where: { userId } }
         }
       });
@@ -403,6 +441,33 @@ export class AcademyService implements OnModuleInit {
           ...l,
           quizzes: this.getPublishedLessonQuestions((l as any).quizzes),
           completed: passedLessonIds.has(l.id)
+        })),
+        assignments: ((course as any).assignments || []).map((a: any) => ({
+          id: a.id,
+          courseId: a.courseId,
+          lessonId: a.lessonId,
+          lessonTitle: a.lesson?.title,
+          lessonOrder: a.lesson?.orderIndex,
+          title: a.title,
+          description: a.description,
+          instructions: a.instructions,
+          attachmentUrl: a.attachmentUrl,
+          dueDate: a.dueDate,
+          maxScore: a.maxScore,
+          xpReward: a.xpReward,
+          instructorName: a.instructor?.profile ? `${a.instructor.profile.firstName || ''} ${a.instructor.profile.lastName || ''}`.trim() || 'Instructor' : a.instructor?.email || 'Instructor',
+          userSubmission: a.submissions?.[0] ? {
+            id: a.submissions[0].id,
+            submissionText: a.submissions[0].submissionText,
+            linkUrl: a.submissions[0].linkUrl,
+            fileUrl: a.submissions[0].fileUrl,
+            status: a.submissions[0].status,
+            score: a.submissions[0].score,
+            feedback: a.submissions[0].feedback,
+            submittedAt: a.submissions[0].submittedAt,
+            gradedAt: a.submissions[0].gradedAt,
+            gradedByName: a.submissions[0].gradedBy?.profile ? `${a.submissions[0].gradedBy.profile.firstName || ''} ${a.submissions[0].gradedBy.profile.lastName || ''}`.trim() : 'Instructor'
+          } : null
         })),
         hasCertificate: course.certificates.length > 0
       };
@@ -449,7 +514,7 @@ export class AcademyService implements OnModuleInit {
   async getAvailableQuizzes(userId: string) {
     await this.ensureSeedQuizzes();
 
-    const quizzes = await this.prisma.quiz.findMany({
+    const rawQuizzes = await this.prisma.quiz.findMany({
       where: { status: 'PUBLISHED' },
       include: {
         course: { select: { id: true, title: true, imageUrl: true } },
@@ -465,6 +530,14 @@ export class AcademyService implements OnModuleInit {
         }
       },
       orderBy: { createdAt: 'desc' },
+    });
+
+    const seenQuizzes = new Set<string>();
+    const quizzes = rawQuizzes.filter((q) => {
+      const key = `${q.courseId || ''}::${q.lessonId || ''}::${(q.title || '').trim().toLowerCase()}`;
+      if (seenQuizzes.has(key)) return false;
+      seenQuizzes.add(key);
+      return true;
     });
 
     return quizzes.map(q => {
@@ -636,6 +709,10 @@ export class AcademyService implements OnModuleInit {
       aiInsight += `Strict requirement of ${passMarkPct}% not met. We recommend revising ${weakestSkill ? weakestSkill[0] : 'core concepts'} before retaking. Focus on liquidity and risk management parameters.`;
     }
 
+    const alreadyPassed = passed
+      ? await this.prisma.quizAttempt.findFirst({ where: { userId, quizId: quiz.id, passed: true } })
+      : null;
+
     // Save Attempt
     const attempt = await this.prisma.quizAttempt.create({
       data: {
@@ -653,6 +730,15 @@ export class AcademyService implements OnModuleInit {
         completedAt: new Date(),
       }
     });
+
+    if (passed && !alreadyPassed) {
+      const xpToAward = quiz.xpReward || 100;
+      await this.prisma.userGamification.upsert({
+        where: { userId },
+        create: { userId, xpPoints: xpToAward },
+        update: { xpPoints: { increment: xpToAward } },
+      }).catch(() => {});
+    }
 
     // Record Question Attempts
     for (const qr of questionReview) {
@@ -862,12 +948,18 @@ export class AcademyService implements OnModuleInit {
       return sessions.map((s: any) => ({
         id: s.id,
         title: s.title,
+        description: s.description,
         instructor: s.instructor,
         startTime: s.startTime.toISOString(),
         durationMinutes: s.durationMinutes,
         registeredCount: s._count.registrations,
         category: s.category,
-        meetingUrl: s.meetingUrl
+        meetingUrl: s.joinUrl || s.meetingUrl,
+        joinUrl: s.joinUrl || s.meetingUrl,
+        zoomMeetingId: s.zoomMeetingId,
+        passcode: s.passcode,
+        recordingUrl: s.recordingUrl,
+        status: s.status
       }));
     } catch (err) {
       return [];
@@ -877,6 +969,7 @@ export class AcademyService implements OnModuleInit {
   // Register for Live Session in Database & Notify User
   async registerLiveSession(userId: string, sessionId: string) {
     try {
+      await (this.prisma as any).liveSession.findUnique({ where: { id: sessionId } });
       await (this.prisma as any).liveSessionRegistration.upsert({
         where: { userId_sessionId: { userId, sessionId } },
         update: {},
@@ -912,34 +1005,66 @@ export class AcademyService implements OnModuleInit {
     const assignment = await this.prisma.assignment.findUnique({ where: { id: assignmentId } });
     if (!assignment) throw new NotFoundException('Assignment not found');
 
+    const student = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, profile: { select: { firstName: true, lastName: true } } },
+    });
+    const studentName = student?.profile?.firstName
+      ? `${student.profile.firstName} ${student.profile.lastName || ''}`.trim()
+      : student?.email?.split('@')[0] || 'A student';
+
     const existing = await this.prisma.assignmentSubmission.findFirst({
       where: { assignmentId, userId },
     });
 
-    if (existing) {
-      return this.prisma.assignmentSubmission.update({
-        where: { id: existing.id },
+    const submission = existing
+      ? await this.prisma.assignmentSubmission.update({
+          where: { id: existing.id },
+          data: {
+            submissionText: body.submissionText?.trim() || existing.submissionText,
+            linkUrl: body.linkUrl?.trim() || existing.linkUrl,
+            fileUrl: body.fileUrl?.trim() || existing.fileUrl,
+            status: 'SUBMITTED',
+            submittedAt: new Date(),
+          },
+        })
+      : await this.prisma.assignmentSubmission.create({
+          data: {
+            assignmentId,
+            userId,
+            submissionText: body.submissionText?.trim() || null,
+            linkUrl: body.linkUrl?.trim() || null,
+            fileUrl: body.fileUrl?.trim() || null,
+            status: 'SUBMITTED',
+            submittedAt: new Date(),
+          },
+        });
+
+    // Notify the instructor who created the assignment
+    if (assignment.instructorId) {
+      await this.prisma.notification.create({
         data: {
-          submissionText: body.submissionText?.trim() || existing.submissionText,
-          linkUrl: body.linkUrl?.trim() || existing.linkUrl,
-          fileUrl: body.fileUrl?.trim() || existing.fileUrl,
-          status: 'SUBMITTED',
-          submittedAt: new Date(),
+          userId: assignment.instructorId,
+          title: `📥 Homework Submitted: ${assignment.title}`,
+          message: `${studentName} submitted homework for "${assignment.title}" and is awaiting grading.`,
+          type: 'ACADEMY',
+          linkUrl: `/instructor/assignments`,
         },
-      });
+      }).catch(() => {});
     }
 
-    return this.prisma.assignmentSubmission.create({
+    // Confirm submission to the student
+    await this.prisma.notification.create({
       data: {
-        assignmentId,
         userId,
-        submissionText: body.submissionText?.trim() || null,
-        linkUrl: body.linkUrl?.trim() || null,
-        fileUrl: body.fileUrl?.trim() || null,
-        status: 'SUBMITTED',
-        submittedAt: new Date(),
+        title: `✅ Homework Received: ${assignment.title}`,
+        message: `Your submission for "${assignment.title}" has been sent to the instructor for review (+${assignment.xpReward} XP upon approval).`,
+        type: 'ACADEMY',
+        linkUrl: assignment.courseId ? `/academy/courses/${assignment.courseId}` : `/academy`,
       },
-    });
+    }).catch(() => {});
+
+    return submission;
   }
 
   async getAssignmentSubmission(userId: string, assignmentId: string) {
@@ -973,5 +1098,186 @@ export class AcademyService implements OnModuleInit {
 
   getStudentLeaderboard() {
     return this.communityService.getWeeklyLeaderboard();
+  }
+
+  // Get All Published Assignments with User Submission Status
+  async getAssignments(userId: string) {
+    try {
+      const rawAssignments = await this.prisma.assignment.findMany({
+        where: { isPublished: true },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          course: { select: { id: true, title: true, difficulty: true, category: true, imageUrl: true } },
+          lesson: { select: { id: true, title: true, orderIndex: true } },
+          instructor: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true, avatarUrl: true } } } },
+          submissions: {
+            where: { userId },
+            take: 1,
+            orderBy: { submittedAt: 'desc' },
+            include: {
+              gradedBy: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } }
+            }
+          },
+          _count: { select: { submissions: true } }
+        }
+      });
+
+      const seenAssign = new Set<string>();
+      const assignments = rawAssignments.filter((a) => {
+        const key = `${a.courseId || ''}::${(a.title || '').trim().toLowerCase()}`;
+        if (seenAssign.has(key)) return false;
+        seenAssign.add(key);
+        return true;
+      });
+
+      return assignments.map((a: any) => ({
+        id: a.id,
+        courseId: a.courseId,
+        courseTitle: a.course?.title,
+        courseCategory: a.course?.category,
+        courseDifficulty: a.course?.difficulty,
+        lessonId: a.lessonId,
+        lessonTitle: a.lesson?.title,
+        lessonOrder: a.lesson?.orderIndex,
+        title: a.title,
+        description: a.description,
+        instructions: a.instructions,
+        attachmentUrl: a.attachmentUrl,
+        dueDate: a.dueDate,
+        maxScore: a.maxScore,
+        xpReward: a.xpReward,
+        totalSubmissions: a._count?.submissions || 0,
+        instructorName: a.instructor?.profile ? `${a.instructor.profile.firstName || ''} ${a.instructor.profile.lastName || ''}`.trim() || 'Instructor' : a.instructor?.email || 'Instructor',
+        instructorAvatar: a.instructor?.profile?.avatarUrl,
+        userSubmission: a.submissions?.[0] ? {
+          id: a.submissions[0].id,
+          submissionText: a.submissions[0].submissionText,
+          linkUrl: a.submissions[0].linkUrl,
+          fileUrl: a.submissions[0].fileUrl,
+          status: a.submissions[0].status,
+          score: a.submissions[0].score,
+          feedback: a.submissions[0].feedback,
+          submittedAt: a.submissions[0].submittedAt,
+          gradedAt: a.submissions[0].gradedAt,
+          gradedByName: a.submissions[0].gradedBy?.profile ? `${a.submissions[0].gradedBy.profile.firstName || ''} ${a.submissions[0].gradedBy.profile.lastName || ''}`.trim() : 'Instructor'
+        } : null
+      }));
+    } catch (err: any) {
+      console.warn('[AcademyService] getAssignments notice:', err);
+      return [];
+    }
+  }
+
+  // Get All Published Instructor Study Notes, Course Lesson Notes, Market Breakdowns, and Daily Tips
+  async getStudyNotes() {
+    try {
+      const [activities, lessons] = await Promise.all([
+        this.prisma.dailyActivity.findMany({
+          orderBy: { publishedAt: 'desc' },
+          take: 40,
+          include: {
+            instructor: {
+              select: {
+                id: true,
+                email: true,
+                profile: { select: { firstName: true, lastName: true, avatarUrl: true } },
+              },
+            },
+          },
+        }),
+        this.prisma.lesson.findMany({
+          where: { course: { isPublished: true } },
+          orderBy: { createdAt: 'desc' },
+          take: 40,
+          include: {
+            course: {
+              select: {
+                id: true,
+                title: true,
+                category: true,
+                difficulty: true,
+                instructor: {
+                  select: {
+                    id: true,
+                    email: true,
+                    profile: { select: { firstName: true, lastName: true, avatarUrl: true } },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      ]);
+
+      const formattedActivities = activities.map((act: any) => ({
+        id: act.id,
+        source: 'DAILY_NOTE',
+        type: act.type || 'STUDY_NOTE',
+        title: act.title,
+        content: act.content,
+        chartUrl: act.chartUrl,
+        courseId: null,
+        courseTitle: null,
+        publishedAt: act.publishedAt,
+        instructorName: act.instructor?.profile
+          ? `${act.instructor.profile.firstName || ''} ${act.instructor.profile.lastName || ''}`.trim() || 'Lead Instructor'
+          : act.instructor?.email || 'Lead Instructor',
+        instructorAvatar: act.instructor?.profile?.avatarUrl,
+      }));
+
+      const formattedLessons = lessons.map((les: any) => {
+        const raw = les.content || '';
+        let videoUrl: string | null = null;
+        let chartUrl: string | null = null;
+
+        const tagMatch = raw.match(/\[VIDEO_URL:(https?:\/\/[^\]]+)\]/i);
+        if (tagMatch) videoUrl = tagMatch[1].trim();
+
+        const cleanLines: string[] = [];
+        for (const line of raw.replace(/\[VIDEO_URL:[^\]]+\]/gi, '').split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('VIDEO_URL:')) {
+            videoUrl = trimmed.replace('VIDEO_URL:', '').trim();
+          } else if (trimmed.startsWith('CHART_URL:')) {
+            chartUrl = trimmed.replace('CHART_URL:', '').trim();
+          } else {
+            cleanLines.push(line);
+          }
+        }
+
+        return {
+          id: `lesson-${les.id}`,
+          lessonId: les.id,
+          source: 'COURSE_LESSON',
+          type: 'COURSE_MODULE_NOTE',
+          title: `${les.course?.title ? `${les.course.title} — ` : ''}${les.title}`,
+          content: cleanLines.join('\n').trim(),
+          chartUrl,
+          videoUrl,
+          courseId: les.courseId,
+          courseTitle: les.course?.title,
+          publishedAt: les.createdAt,
+          instructorName: les.course?.instructor?.profile
+            ? `${les.course.instructor.profile.firstName || ''} ${les.course.instructor.profile.lastName || ''}`.trim() || 'Course Instructor'
+            : les.course?.instructor?.email || 'Course Instructor',
+          instructorAvatar: les.course?.instructor?.profile?.avatarUrl,
+        };
+      });
+
+      const combined = [...formattedActivities, ...formattedLessons].sort(
+        (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+      );
+
+      const seenNoteTitles = new Set<string>();
+      return combined.filter((item) => {
+        const key = `${item.source}::${(item.title || '').trim().toLowerCase()}`;
+        if (seenNoteTitles.has(key)) return false;
+        seenNoteTitles.add(key);
+        return true;
+      });
+    } catch (err: any) {
+      console.warn('[AcademyService] getStudyNotes notice:', err);
+      return [];
+    }
   }
 }

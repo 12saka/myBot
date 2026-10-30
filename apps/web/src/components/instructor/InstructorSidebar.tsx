@@ -28,11 +28,11 @@ export function InstructorSidebar({ mobileOpen = false, onCloseMobile }: Sidebar
 
   const navItems = [
     { label: 'Instructor Overview', href: '/instructor/dashboard', icon: LayoutDashboard },
-    { label: 'My Courses Studio', href: '/instructor/courses', icon: BookOpen },
-    { label: 'Homework & Grading Queue', href: '/instructor/assignments', icon: FileCheck2 },
+    { label: 'Courses & Lesson Notes', href: '/instructor/courses', icon: BookOpen },
+    { label: 'Assignments & Grading', href: '/instructor/assignments', icon: FileCheck2 },
     { label: 'Quizzes & Question Bank', href: '/instructor/quizzes', icon: HelpCircle },
     { label: 'Zoom Live Webinars', href: '/instructor/webinars', icon: Video },
-    { label: 'Daily Updates & QOTD', href: '/instructor/daily-updates', icon: Sparkles },
+    { label: 'Study Notes & Daily QOTD', href: '/instructor/daily-updates', icon: Sparkles },
     { label: 'Community Q&A Hub', href: '/instructor/discussions', icon: MessageSquare },
     { label: 'Student Roster & Health', href: '/instructor/students', icon: Users },
   ];

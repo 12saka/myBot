@@ -89,11 +89,15 @@ export default function InstructorWebinarsPage() {
     setModalOpen(true);
   };
 
+  const [saving, setSaving] = useState(false);
+
   const handleSaveWebinar = async () => {
+    if (saving) return;
     if (!title.trim() || !startTime) {
       toast.error('Webinar topic title and start time are required.');
       return;
     }
+    setSaving(true);
     try {
       const payload = {
         title: title.trim(),
@@ -127,6 +131,8 @@ export default function InstructorWebinarsPage() {
       fetchWebinars();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save webinar');
+    } finally {
+      setSaving(false);
     }
   };
 

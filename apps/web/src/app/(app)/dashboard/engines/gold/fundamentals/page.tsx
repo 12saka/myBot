@@ -128,10 +128,28 @@ export default function GoldFundamentalsPage() {
             {macro?.us10yYield ? `${macro.us10yYield.toFixed(2)}%` : '—'}
           </div>
           <div className="space-y-2 pt-2 border-t border-white/5 text-xs text-slate-400">
-            <div className="flex justify-between">
-              <span>Real Yield Proxy:</span>
-              <span className="font-mono text-white">
-                {macro?.realYieldProxy ? `${macro.realYieldProxy.toFixed(2)}%` : '—'}
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span>Real Yield Proxy:</span>
+                  {macro?.isRealYieldLive ? (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      LIVE FRED TIPS
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                      BENCHMARK
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  {macro?.isRealYieldLive
+                    ? "Live St. Louis Fed 10Y TIPS (DFII10)"
+                    : `US10Y − ${macro?.breakevenInflationBenchmark ? macro.breakevenInflationBenchmark.toFixed(2) : '2.30'}% Breakeven Inflation`}
+                </span>
+              </div>
+              <span className="font-mono text-white text-sm">
+                {macro?.realYieldProxy !== undefined ? `${macro.realYieldProxy.toFixed(2)}%` : '—'}
               </span>
             </div>
             <div className="flex justify-between">
@@ -149,21 +167,41 @@ export default function GoldFundamentalsPage() {
             <span className="text-xs font-bold uppercase text-slate-400">ForexFactory Event Shield</span>
             <span className={cn(
               "text-xs font-bold px-2 py-0.5 rounded-full uppercase",
-              macro?.forexFactoryGate === 'CLEAR' ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+              macro?.forexFactoryGate === 'CLEAR'
+                ? "bg-emerald-500/20 text-emerald-400"
+                : (macro?.forexFactoryGate === 'BLACKOUT_ACTIVE' || macro?.forexFactoryGate === 'FEED_OFFLINE')
+                ? "bg-rose-500/20 text-rose-400"
+                : "bg-amber-500/20 text-amber-300"
             )}>
-              {macro?.forexFactoryGate || 'CLEAR'}
+              {macro?.forexFactoryGate ? macro.forexFactoryGate.replace(/_/g, ' ') : 'VERIFYING'}
             </span>
           </div>
           <div className="text-2xl font-black text-white flex items-center gap-2">
             {macro?.forexFactoryGate === 'CLEAR' ? (
               <ShieldCheck className="text-emerald-400" size={28} />
-            ) : (
+            ) : (macro?.forexFactoryGate === 'BLACKOUT_ACTIVE' || macro?.forexFactoryGate === 'FEED_OFFLINE') ? (
               <ShieldAlert className="text-rose-400" size={28} />
+            ) : (
+              <ShieldAlert className="text-amber-400" size={28} />
             )}
-            <span>{macro?.forexFactoryGate === 'CLEAR' ? 'Clear to Execute' : 'Blackout Protected'}</span>
+            <span>
+              {macro?.forexFactoryGate === 'CLEAR'
+                ? 'Clear to Execute'
+                : macro?.forexFactoryGate === 'BLACKOUT_ACTIVE'
+                ? 'Blackout Protected'
+                : macro?.forexFactoryGate === 'FEED_OFFLINE'
+                ? 'Feed Offline — Halted'
+                : macro?.forexFactoryGate === 'POST_NEWS_STABILIZATION'
+                ? 'Post-News Stabilization'
+                : 'Verifying Shield'}
+            </span>
           </div>
           <div className="pt-2 border-t border-white/5 text-xs text-slate-400">
-            {macro?.nextHighImpactEvent ? (
+            {macro?.forexFactoryGate === 'FEED_OFFLINE' ? (
+              <span className="text-rose-400 font-medium">
+                Economic calendar feed unreachable or stale (&gt;24h). Fail-closed halt active until calendar sync restores.
+              </span>
+            ) : macro?.nextHighImpactEvent ? (
               <div>
                 <span className="font-bold text-slate-200">{macro.nextHighImpactEvent.title}</span>
                 <div className="text-[11px] text-amber-300 mt-0.5">
@@ -173,6 +211,12 @@ export default function GoldFundamentalsPage() {
             ) : (
               <span>No imminent high-impact tier events in next 60 minutes.</span>
             )}
+            <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-500">
+              <span>Events In Memory: {macro?.calendarEventsLoaded ?? 0}</span>
+              <span>
+                {macro?.lastNewsSyncTime ? `News synced ${new Date(macro.lastNewsSyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'News syncing...'}
+              </span>
+            </div>
           </div>
         </div>
       </div>

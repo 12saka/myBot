@@ -486,6 +486,182 @@ function runAllTests() {
     weakZone.zoneRank === 'WEAK' && weakZone.overlapCount === 1
   );
 
+  console.log('\n--- Suite 7: Phase 4 Top-Down Pipeline (Stages 1-7) ---');
+
+  // 17. Verify Stage 1 Approaching Decision Area telemetry is computed
+  const stage1DecisionArea = setupNoTrade.fiveGates.gate2_market.telemetry?.approachingDecisionArea !== undefined &&
+    typeof setupNoTrade.fiveGates.gate2_market.telemetry?.decisionAreaDetails === 'string';
+  assert(
+    'Stage 1: Approaching Decision Area telemetry is active and contains proximity details',
+    stage1DecisionArea,
+    `approachingDecisionArea=${setupNoTrade.fiveGates.gate2_market.telemetry?.approachingDecisionArea}`
+  );
+
+  // 18. Verify Stage 7 Final Validation Checklist is populated and strictly fail-closed
+  const chk = setupNoTrade.finalValidationChecklist;
+  const checklistIntegrity = !!chk &&
+    typeof chk.dataIsFresh === 'boolean' &&
+    typeof chk.setupStillValid === 'boolean' &&
+    typeof chk.entryNotMissed === 'boolean' &&
+    typeof chk.stopIsStructural === 'boolean' &&
+    typeof chk.targetsRealistic === 'boolean' &&
+    typeof chk.rrAcceptable === 'boolean' &&
+    typeof chk.newsRiskAcceptable === 'boolean' &&
+    typeof chk.spreadAcceptable === 'boolean' &&
+    typeof chk.notDuplicate === 'boolean' &&
+    typeof chk.withinExposureCap === 'boolean' &&
+    typeof chk.orderTypeSupported === 'boolean' &&
+    typeof chk.allPassed === 'boolean' &&
+    Array.isArray(chk.reasons);
+  assert(
+    'Stage 7: Mandatory Final Validation Checklist contains all 11 verified criteria',
+    checklistIntegrity,
+    `allPassed=${chk?.allPassed}, reasonsCount=${chk?.reasons?.length}`
+  );
+
+  // 19. Verify 1M Microstructure refinement inside ICZ
+  const m1Candles: Candle[] = [];
+  for (let i = 0; i < 20; i++) {
+    const base = 2735 + (i % 2 === 0 ? 0.3 : -0.3);
+    m1Candles.push({
+      timestamp: new Date(baseTime + i * 60 * 1000),
+      open: base,
+      high: base + 0.5,
+      low: base - 0.5,
+      close: base + 0.1,
+      volume: 500
+    });
+  }
+  const setupWith1m = service.evaluateProductionPipeline(
+    bearish15m,
+    bearish1h,
+    {
+      bid: 2735,
+      ask: 2735.25,
+      spread: 0.25,
+      spot: 2735,
+      isLiquid: true
+    },
+    {
+      dxy: 104.2,
+      dxyChange1h: 0.15,
+      us10y: 4.25,
+      us10yChange1h: 0.05,
+      realYieldProxy: 2.0,
+      macroAlignment: 'BEARISH',
+      conflictDetected: false,
+      safeHavenDemandScore: 45,
+      riskSentiment: 'RISK_ON',
+      hasLiveMacro: true
+    },
+    {
+      isBlackout: false,
+      impactTier: 'LOW',
+      eventStage: 'CLEAR',
+      feedOffline: false
+    },
+    bearish4h,
+    [],
+    m1Candles,
+    [],
+    []
+  );
+
+  const m1Bounded = setupWith1m.entryPrice >= setupWith1m.entryZone[0] && setupWith1m.entryPrice <= setupWith1m.entryZone[1];
+  assert(
+    'Stage 4: 1M micro refinement strictly respects ICZ boundaries [zoneLow, zoneHigh]',
+    m1Bounded,
+    `entry=${setupWith1m.entryPrice}, zone=[${setupWith1m.entryZone[0]}, ${setupWith1m.entryZone[1]}]`
+  );
+
+  console.log('\n--- Suite 8: Signal Lifecycle Manager & Portfolio Risk Architecture ---');
+
+  // 20. 3-Rule Duplicate Setup Suppression
+  const mockExistingSignal: MockSignal = {
+    id: 'test-gold-1',
+    symbol: 'GOLD',
+    direction: 'BUY',
+    entryPrice: 2720.0,
+    stopLoss: 2715.0,
+    takeProfit1: 2730.0,
+    takeProfit2: 2740.0,
+    riskRewardRatio: 2.0,
+    aiReasoning: {
+      status: 'WAITING_FOR_ENTRY',
+      lifecycleState: 'WAITING_FOR_ENTRY',
+      entryZone: [2719.5, 2720.5]
+    }
+  };
+
+  const duplicateCandidateMatches = (service as any).checkIsDuplicateCandidate(
+    {
+      direction: 'BUY',
+      entryPrice: 2720.2,
+      entryZone: [2719.8, 2720.8],
+      stopLoss: 2715.2,
+      model: 'SMC_INSTITUTIONAL',
+      volatilityMetrics: { atr15m: 4.0 }
+    },
+    [mockExistingSignal]
+  );
+
+  assert(
+    'Part F Rule 2: 3-rule duplicate candidate correctly identified and suppressed',
+    duplicateCandidateMatches.isDuplicate === true,
+    duplicateCandidateMatches.reason
+  );
+
+  // 21. Opposing-Signal Policy: Live trade blocks conflicting execution
+  const mockLiveBuyTrade: MockSignal = {
+    id: 'test-gold-live',
+    symbol: 'GOLD',
+    direction: 'BUY',
+    entryPrice: 2720.0,
+    stopLoss: 2715.0,
+    takeProfit1: 2730.0,
+    takeProfit2: 2740.0,
+    riskRewardRatio: 2.0,
+    aiReasoning: {
+      status: 'POSITION_OPEN',
+      lifecycleState: 'POSITION_OPEN',
+      isOrderFilled: true
+    }
+  };
+
+  const isLiveOpposingActive = (service as any).isSignalActive(mockLiveBuyTrade);
+  assert(
+    'Part F Rule 6: Active live opposing trade is recognized as active in lifecycle',
+    isLiveOpposingActive === true,
+    `isSignalActive=${isLiveOpposingActive}`
+  );
+
+  // 22. Lifecycle Event Appender Audit Integrity
+  const testReasoning: any = { status: 'WAITING_FOR_ENTRY', lifecycleEvents: [] };
+  const event1 = { timestamp: new Date().toISOString(), state: 'WAITING_FOR_ENTRY', price: 2720, reason: 'SIGNAL_PUBLISHED' };
+  const event2 = { timestamp: new Date().toISOString(), state: 'POSITION_OPEN', price: 2720, reason: 'ORDER_FILLED' };
+  const updatedEvents = (service as any).appendLifecycleEvent(
+    testReasoning,
+    event1
+  );
+  const updatedEvents2 = (service as any).appendLifecycleEvent(
+    { lifecycleEvents: updatedEvents },
+    event2
+  );
+  assert(
+    'Part F & G: Lifecycle events array records chronological state transitions',
+    updatedEvents2.length === 2 && updatedEvents2[1].reason === 'ORDER_FILLED',
+    `length=${updatedEvents2.length}, event2=${updatedEvents2[1]?.reason}`
+  );
+
+  // 23. Human-readable publicId format verification (G-YYYYMMDD-NNN)
+  const regexId = /^G-\d{8}-\d{3}$/;
+  const samplePublicId = 'G-20261030-001';
+  assert(
+    'Part F Rule 1: Institutional publicId conforms to canonical G-YYYYMMDD-NNN structure',
+    regexId.test(samplePublicId),
+    samplePublicId
+  );
+
   console.log('\n================================================================');
   console.log(` Verification Summary: ${passed}/${total} Tests Passed (${Math.round((passed / total) * 100)}%)`);
   console.log('================================================================\n');

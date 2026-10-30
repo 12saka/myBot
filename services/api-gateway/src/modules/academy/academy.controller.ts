@@ -39,8 +39,27 @@ export class AcademyController {
   }
 
   @Get('live-sessions')
+  @ApiOperation({ summary: 'Get scheduled live trading webinars' })
   async getLiveSessions() {
     return this.academyService.getLiveSessions();
+  }
+
+  @Get('webinars')
+  @ApiOperation({ summary: 'Get scheduled live trading webinars (alias)' })
+  async getWebinars() {
+    return this.academyService.getLiveSessions();
+  }
+
+  @Get('notes')
+  @ApiOperation({ summary: 'Get published instructor study notes, market chart breakdowns, and daily tips' })
+  async getStudyNotes() {
+    return this.academyService.getStudyNotes();
+  }
+
+  @Get('assignments')
+  @ApiOperation({ summary: 'Get all published course assignments with student submission status' })
+  async getAssignments(@Request() req: any) {
+    return this.academyService.getAssignments(req.user.userId || req.user.id);
   }
 
   @Get('courses/:id')
@@ -80,9 +99,22 @@ export class AcademyController {
     return this.academyService.getCommunityDiscussions(isSolvedBool);
   }
 
+  @Get('discussions')
+  @ApiOperation({ summary: 'Get community discussions for students (alias)' })
+  async getDiscussionsAlias(@Query('isSolved') isSolved?: string) {
+    const isSolvedBool = isSolved === 'true' ? true : isSolved === 'false' ? false : undefined;
+    return this.academyService.getCommunityDiscussions(isSolvedBool);
+  }
+
   @Post('community/discussions')
   @ApiOperation({ summary: 'Create discussion thread as student' })
   async createCommunityDiscussion(@Req() req: any, @Body() body: any) {
+    return this.academyService.createCommunityDiscussion(req.user.userId || req.user.id, body);
+  }
+
+  @Post('discussions')
+  @ApiOperation({ summary: 'Create discussion thread as student (alias)' })
+  async createDiscussionAlias(@Req() req: any, @Body() body: any) {
     return this.academyService.createCommunityDiscussion(req.user.userId || req.user.id, body);
   }
 
@@ -92,9 +124,21 @@ export class AcademyController {
     return this.academyService.replyToCommunityDiscussion(req.user.userId || req.user.id, req.user.role, id, body);
   }
 
+  @Post('discussions/:id/reply')
+  @ApiOperation({ summary: 'Reply to discussion thread (alias)' })
+  async replyToDiscussionAlias(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.academyService.replyToCommunityDiscussion(req.user.userId || req.user.id, req.user.role, id, body);
+  }
+
   @Get('qotd/today')
   @ApiOperation({ summary: 'Get today question of the day for students' })
   async getStudentQotd() {
+    return this.academyService.getStudentQotd();
+  }
+
+  @Get('qotd')
+  @ApiOperation({ summary: 'Get today question of the day for students (alias)' })
+  async getStudentQotdAlias() {
     return this.academyService.getStudentQotd();
   }
 

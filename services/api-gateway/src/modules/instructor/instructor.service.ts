@@ -8,67 +8,117 @@ export class InstructorService {
   // 1. Instructor Dashboard Metrics & Analytics
   async getInstructorStats(userId: string, userRole: string) {
     const isMasterAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
-    const courseWhere = isMasterAdmin ? {} : { instructorId: userId };
+    const courseWhere = isMasterAdmin ? {} : { OR: [{ instructorId: userId }, { instructorId: null }] };
     const assignmentWhere = isMasterAdmin ? {} : { instructorId: userId };
     const webinarWhere = isMasterAdmin ? {} : { instructorId: userId };
 
-    const totalCourses = await this.prisma.course.count({ where: courseWhere });
-    
-    const pendingGradingCount = await this.prisma.assignmentSubmission.count({
-      where: {
-        status: 'SUBMITTED',
-        ...(isMasterAdmin ? {} : { assignment: { instructorId: userId } }),
-      },
-    });
+    const [
+      totalCourses,
+      totalLessonsWithNotes,
+      totalDailyNotes,
+      totalAssignments,
+      totalQuizzes,
+      pendingGradingCount,
+      totalGradedCount,
+      upcomingWebinarsCount,
+      totalQuizAttempts,
+      passedAttempts,
+      totalEnrolledStudents,
+      unresolvedDiscussionsCount,
+      recentSubmissions,
+      rawDiscussions,
+    ] = await Promise.all([
+      this.prisma.course.count({ where: courseWhere }),
+      this.prisma.lesson.count({ where: { course: { isPublished: true } } }),
+      this.prisma.dailyActivity.count(),
+      this.prisma.assignment.count({ where: assignmentWhere }),
+      this.prisma.quiz.count(),
+      this.prisma.assignmentSubmission.count({
+        where: {
+          status: 'SUBMITTED',
+          ...(isMasterAdmin ? {} : { assignment: { instructorId: userId } }),
+        },
+      }),
+      this.prisma.assignmentSubmission.count({
+        where: {
+          status: 'GRADED',
+          ...(isMasterAdmin ? {} : { assignment: { instructorId: userId } }),
+        },
+      }),
+      this.prisma.liveSession.count({
+        where: {
+          ...webinarWhere,
+          isActive: true,
+          startTime: { gte: new Date() },
+        },
+      }),
+      this.prisma.quizAttempt.count(),
+      this.prisma.quizAttempt.count({ where: { passed: true } }),
+      this.prisma.user.count({
+        where: { role: { in: ['TRADER', 'USER', 'INVESTOR'] } },
+      }),
+      this.prisma.academyDiscussion.count({
+        where: { isSolved: false },
+      }),
+      this.prisma.assignmentSubmission.findMany({
+        where: isMasterAdmin ? {} : { assignment: { instructorId: userId } },
+        take: 6,
+        orderBy: { submittedAt: 'desc' },
+        include: {
+          user: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true, avatarUrl: true } } } },
+          assignment: { select: { id: true, title: true, maxScore: true, course: { select: { title: true } } } },
+        },
+      }),
+      this.prisma.academyDiscussion.findMany({
+        take: 5,
+        orderBy: [{ isSolved: 'asc' }, { createdAt: 'desc' }],
+        include: {
+          user: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } },
+          responses: {
+            select: {
+              id: true,
+              user: { select: { role: true } },
+            },
+          },
+        },
+      }),
+    ]);
 
-    const totalGradedCount = await this.prisma.assignmentSubmission.count({
-      where: {
-        status: 'GRADED',
-        ...(isMasterAdmin ? {} : { assignment: { instructorId: userId } }),
-      },
-    });
+    const recentDiscussions = rawDiscussions.map((d) => ({
+      ...d,
+      isResolved: d.isSolved,
+      replies: (d.responses || []).map((r: { id: string; user?: { role?: string } | null }) => ({
+        id: r.id,
+        isInstructorReply:
+          d.pinnedResponseId === r.id || ['INSTRUCTOR', 'ADMIN', 'SUPER_ADMIN'].includes(r.user?.role || ''),
+      })),
+    }));
 
-    const upcomingWebinarsCount = await this.prisma.liveSession.count({
-      where: {
-        ...webinarWhere,
-        isActive: true,
-        startTime: { gte: new Date() },
-      },
-    });
-
-    const totalQuizAttempts = await this.prisma.quizAttempt.count();
-    const passedAttempts = await this.prisma.quizAttempt.count({ where: { passed: true } });
     const avgPassRate = totalQuizAttempts > 0 ? Math.round((passedAttempts / totalQuizAttempts) * 100) : 85;
-
-    const totalEnrolledStudents = await this.prisma.user.count({
-      where: { role: { in: ['TRADER', 'USER', 'INVESTOR'] } },
-    });
-
-    const recentSubmissions = await this.prisma.assignmentSubmission.findMany({
-      where: isMasterAdmin ? {} : { assignment: { instructorId: userId } },
-      take: 5,
-      orderBy: { submittedAt: 'desc' },
-      include: {
-        user: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true, avatarUrl: true } } } },
-        assignment: { select: { id: true, title: true, maxScore: true, course: { select: { title: true } } } },
-      },
-    });
+    const totalStudyNotes = totalLessonsWithNotes + totalDailyNotes;
 
     return {
       totalCourses,
+      totalStudyNotes,
+      totalLessonsWithNotes,
+      totalDailyNotes,
+      totalAssignments,
+      totalQuizzes,
       totalEnrolledStudents,
       pendingGradingCount,
       totalGradedCount,
       upcomingWebinarsCount,
+      unresolvedDiscussionsCount,
       avgPassRate,
       recentSubmissions,
+      recentDiscussions,
     };
   }
 
   // 2. Course Management
   async getCourses(userId: string, userRole: string) {
     const isMasterAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
-    return this.prisma.course.findMany({
+    const rawCourses = await this.prisma.course.findMany({
       where: isMasterAdmin ? {} : { OR: [{ instructorId: userId }, { instructorId: null }] },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -78,20 +128,108 @@ export class InstructorService {
         instructor: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } },
       },
     });
+
+    const seenCourseTitles = new Set<string>();
+    return rawCourses
+      .filter((c) => {
+        const key = (c.title || '').trim().toLowerCase();
+        if (seenCourseTitles.has(key)) return false;
+        seenCourseTitles.add(key);
+        return true;
+      })
+      .map((c) => {
+        const seenLessons = new Set<string>();
+        const uniqueLessons = (c.lessons || []).filter((l) => {
+          const lKey = (l.title || '').trim().toLowerCase();
+          if (seenLessons.has(lKey)) return false;
+          seenLessons.add(lKey);
+          return true;
+        });
+        return { ...c, lessons: uniqueLessons };
+      });
+  }
+
+  private async broadcastAcademyNotificationToStudents(
+    title: string,
+    message: string,
+    linkUrl: string = '/academy',
+    excludeUserId?: string,
+  ) {
+    try {
+      const students = await this.prisma.user.findMany({
+        where: {
+          ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+        },
+        select: { id: true },
+      });
+      if (students.length === 0) return;
+
+      const userIds = students.map((s) => s.id);
+      // Remove any existing unread notification with the exact same title so students never receive duplicates
+      await this.prisma.notification.deleteMany({
+        where: {
+          userId: { in: userIds },
+          title,
+          isRead: false,
+        },
+      });
+
+      await this.prisma.notification.createMany({
+        data: students.map((s) => ({
+          userId: s.id,
+          title,
+          message,
+          type: 'ACADEMY',
+          linkUrl,
+          isRead: false,
+        })),
+      });
+    } catch (e) {
+      // Non-blocking notification dispatch
+    }
   }
 
   async createCourse(userId: string, body: any) {
-    return this.prisma.course.create({
-      data: {
-        title: body.title,
-        description: body.description || '',
-        difficulty: body.difficulty || 'BEGINNER',
-        category: body.category || 'CRYPTO',
-        imageUrl: body.imageUrl,
-        isPublished: body.isPublished ?? true,
-        instructorId: userId,
+    const cleanTitle = (body.title || '').trim();
+    const existing = await this.prisma.course.findFirst({
+      where: {
+        title: { equals: cleanTitle, mode: 'insensitive' },
       },
     });
+
+    const course = existing
+      ? await this.prisma.course.update({
+          where: { id: existing.id },
+          data: {
+            description: body.description ?? existing.description,
+            difficulty: body.difficulty || existing.difficulty,
+            category: body.category || existing.category,
+            imageUrl: body.imageUrl ?? existing.imageUrl,
+            isPublished: body.isPublished ?? true,
+          },
+        })
+      : await this.prisma.course.create({
+          data: {
+            title: cleanTitle,
+            description: body.description || '',
+            difficulty: body.difficulty || 'BEGINNER',
+            category: body.category || 'CRYPTO',
+            imageUrl: body.imageUrl,
+            isPublished: body.isPublished ?? true,
+            instructorId: userId,
+          },
+        });
+
+    if (course.isPublished && !existing) {
+      await this.broadcastAcademyNotificationToStudents(
+        `📚 New Course Published: ${course.title}`,
+        `A new ${course.difficulty} course in ${course.category || 'Trading'} is now live in the Academy: "${course.title}".`,
+        `/academy/courses/${course.id}`,
+        userId,
+      );
+    }
+
+    return course;
   }
 
   async updateCourse(userId: string, userRole: string, courseId: string, body: any) {
@@ -132,7 +270,7 @@ export class InstructorService {
   // 3. Assignment Management & Grading Queue
   async getAssignments(userId: string, userRole: string) {
     const isMasterAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
-    return this.prisma.assignment.findMany({
+    const raw = await this.prisma.assignment.findMany({
       where: isMasterAdmin ? {} : { instructorId: userId },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -142,6 +280,14 @@ export class InstructorService {
         _count: { select: { submissions: true } },
       },
     });
+
+    const seen = new Set<string>();
+    return raw.filter((a) => {
+      const key = `${a.courseId || ''}::${(a.title || '').trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   async createAssignment(userId: string, body: any) {
@@ -149,24 +295,63 @@ export class InstructorService {
       throw new BadRequestException('Title, courseId, and instructions are required.');
     }
 
-    return this.prisma.assignment.create({
-      data: {
-        title: body.title.trim(),
-        description: body.description?.trim() || null,
-        instructions: body.instructions.trim(),
+    const cleanTitle = body.title.trim();
+    const existing = await this.prisma.assignment.findFirst({
+      where: {
         courseId: body.courseId,
-        lessonId: body.lessonId || null,
-        instructorId: userId,
-        attachmentUrl: body.attachmentUrl || null,
-        dueDate: body.dueDate ? new Date(body.dueDate) : null,
-        maxScore: Number(body.maxScore || 100),
-        xpReward: Number(body.xpReward || 150),
-        isPublished: body.isPublished ?? true,
-      },
-      include: {
-        course: { select: { id: true, title: true } },
+        title: { equals: cleanTitle, mode: 'insensitive' },
       },
     });
+
+    const assignment = existing
+      ? await this.prisma.assignment.update({
+          where: { id: existing.id },
+          data: {
+            description: body.description?.trim() || existing.description,
+            instructions: body.instructions.trim(),
+            lessonId: body.lessonId || null,
+            attachmentUrl: body.attachmentUrl || existing.attachmentUrl,
+            dueDate: body.dueDate ? new Date(body.dueDate) : existing.dueDate,
+            maxScore: Number(body.maxScore || 100),
+            xpReward: Number(body.xpReward || 150),
+            isPublished: body.isPublished ?? true,
+          },
+          include: {
+            course: { select: { id: true, title: true } },
+            lesson: { select: { id: true, title: true } },
+          },
+        })
+      : await this.prisma.assignment.create({
+          data: {
+            title: cleanTitle,
+            description: body.description?.trim() || null,
+            instructions: body.instructions.trim(),
+            courseId: body.courseId,
+            lessonId: body.lessonId || null,
+            instructorId: userId,
+            attachmentUrl: body.attachmentUrl || null,
+            dueDate: body.dueDate ? new Date(body.dueDate) : null,
+            maxScore: Number(body.maxScore || 100),
+            xpReward: Number(body.xpReward || 150),
+            isPublished: body.isPublished ?? true,
+          },
+          include: {
+            course: { select: { id: true, title: true } },
+            lesson: { select: { id: true, title: true } },
+          },
+        });
+
+    if (assignment.isPublished && !existing) {
+      const dueStr = assignment.dueDate ? ` • Due: ${new Date(assignment.dueDate).toLocaleDateString()}` : '';
+      await this.broadcastAcademyNotificationToStudents(
+        `📋 New Homework Assignment: ${assignment.title}`,
+        `Course: ${assignment.course?.title || 'Academy'} • Reward: +${assignment.xpReward} XP${dueStr}. Submit your deliverable for instructor grading.`,
+        `/academy/courses/${assignment.courseId}`,
+        userId,
+      );
+    }
+
+    return assignment;
   }
 
   async updateAssignment(userId: string, userRole: string, assignmentId: string, body: any) {
@@ -182,6 +367,8 @@ export class InstructorService {
       where: { id: assignmentId },
       data: {
         ...(body.title && { title: body.title.trim() }),
+        ...(body.courseId && { courseId: body.courseId }),
+        ...(body.lessonId !== undefined && { lessonId: body.lessonId || null }),
         ...(body.description !== undefined && { description: body.description }),
         ...(body.instructions && { instructions: body.instructions }),
         ...(body.attachmentUrl !== undefined && { attachmentUrl: body.attachmentUrl }),
@@ -240,6 +427,7 @@ export class InstructorService {
 
     const feedback = body.feedback?.trim() || 'Well executed assignment.';
     const status = body.status || (score >= (sub.assignment.maxScore * 0.5) ? 'GRADED' : 'RESUBMIT_REQUIRED');
+    const wasAlreadyGraded = sub.status === 'GRADED';
 
     const updated = await this.prisma.assignmentSubmission.update({
       where: { id: submissionId },
@@ -251,18 +439,30 @@ export class InstructorService {
         gradedAt: new Date(),
       },
       include: {
-        assignment: { select: { title: true, xpReward: true, courseId: true } },
+        assignment: { select: { title: true, xpReward: true, courseId: true, maxScore: true } },
         user: { select: { id: true, email: true } },
       },
     });
+
+    // Credit XP Reward to Student Gamification Profile when graded & passed
+    const xpAwarded = status === 'GRADED' && !wasAlreadyGraded ? (sub.assignment.xpReward || 150) : 0;
+    if (xpAwarded > 0) {
+      await this.prisma.userGamification.upsert({
+        where: { userId: sub.userId },
+        update: { xpPoints: { increment: xpAwarded } },
+        create: { userId: sub.userId, xpPoints: xpAwarded },
+      }).catch(() => {});
+    }
 
     // Create Notification for Student
     try {
       await this.prisma.notification.create({
         data: {
           userId: sub.userId,
-          title: `Assignment Graded: ${sub.assignment.title}`,
-          message: `Your score: ${score}/${sub.assignment.maxScore}. Feedback: "${feedback}"`,
+          title: status === 'GRADED'
+            ? `✅ Assignment Graded: ${sub.assignment.title} (${score}/${sub.assignment.maxScore})`
+            : `🔄 Revision Requested: ${sub.assignment.title}`,
+          message: `Score: ${score}/${sub.assignment.maxScore}${xpAwarded > 0 ? ` • +${xpAwarded} XP Awarded!` : ''}. Instructor Feedback: "${feedback}"`,
           type: 'ACADEMY',
           linkUrl: `/academy/courses/${sub.assignment.courseId}`,
         },
@@ -275,13 +475,21 @@ export class InstructorService {
   // 4. Live Zoom Webinar & Live Class Studio
   async getWebinars(userId: string, userRole: string) {
     const isMasterAdmin = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
-    return this.prisma.liveSession.findMany({
+    const raw = await this.prisma.liveSession.findMany({
       where: isMasterAdmin ? {} : { OR: [{ instructorId: userId }, { instructorId: null }] },
       orderBy: { startTime: 'desc' },
       include: {
         instructorUser: { select: { id: true, email: true, profile: { select: { firstName: true, lastName: true } } } },
         _count: { select: { registrations: true } },
       },
+    });
+
+    const seen = new Set<string>();
+    return raw.filter((w) => {
+      const key = `${(w.title || '').trim().toLowerCase()}::${w.startTime ? new Date(w.startTime).toISOString().slice(0, 16) : ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
     });
   }
 
@@ -290,31 +498,67 @@ export class InstructorService {
       throw new BadRequestException('Webinar title and start time are required.');
     }
 
-    const meetingId = body.zoomMeetingId || `${Math.floor(100000000 + Math.random() * 900000000)}`;
-    const passcode = body.passcode || `${Math.floor(100000 + Math.random() * 900000)}`;
-    const joinUrl = body.joinUrl || `https://zoom.us/j/${meetingId}?pwd=${passcode}`;
-    const startUrl = body.startUrl || `https://zoom.us/s/${meetingId}?pwd=${passcode}`;
-
-    return this.prisma.liveSession.create({
-      data: {
-        title: body.title.trim(),
-        description: body.description?.trim() || null,
-        instructor: body.instructorName?.trim() || 'Institutional Trader',
-        instructorId: userId,
-        startTime: new Date(body.startTime),
-        durationMinutes: Number(body.durationMinutes || 60),
-        category: body.category || 'WEBINAR',
-        meetingUrl: joinUrl,
-        zoomMeetingId: meetingId,
-        passcode,
-        joinUrl,
-        startUrl,
-        recordingUrl: body.recordingUrl || null,
-        status: body.status || 'SCHEDULED',
-        maxCapacity: Number(body.maxCapacity || 500),
+    const cleanTitle = body.title.trim();
+    const existing = await this.prisma.liveSession.findFirst({
+      where: {
+        title: { equals: cleanTitle, mode: 'insensitive' },
         isActive: true,
       },
     });
+
+    const meetingId = body.zoomMeetingId || existing?.zoomMeetingId || `${Math.floor(100000000 + Math.random() * 900000000)}`;
+    const passcode = body.passcode || existing?.passcode || `${Math.floor(100000 + Math.random() * 900000)}`;
+    const joinUrl = body.joinUrl || existing?.joinUrl || `https://zoom.us/j/${meetingId}?pwd=${passcode}`;
+    const startUrl = body.startUrl || existing?.startUrl || `https://zoom.us/s/${meetingId}?pwd=${passcode}`;
+
+    const session = existing
+      ? await this.prisma.liveSession.update({
+          where: { id: existing.id },
+          data: {
+            description: body.description?.trim() || existing.description,
+            instructor: body.instructorName?.trim() || existing.instructor,
+            startTime: new Date(body.startTime),
+            durationMinutes: Number(body.durationMinutes || 60),
+            category: body.category || existing.category,
+            meetingUrl: joinUrl,
+            zoomMeetingId: meetingId,
+            passcode,
+            joinUrl,
+            startUrl,
+            recordingUrl: body.recordingUrl || existing.recordingUrl,
+          },
+        })
+      : await this.prisma.liveSession.create({
+          data: {
+            title: cleanTitle,
+            description: body.description?.trim() || null,
+            instructor: body.instructorName?.trim() || 'Institutional Trader',
+            instructorId: userId,
+            startTime: new Date(body.startTime),
+            durationMinutes: Number(body.durationMinutes || 60),
+            category: body.category || 'WEBINAR',
+            meetingUrl: joinUrl,
+            zoomMeetingId: meetingId,
+            passcode,
+            joinUrl,
+            startUrl,
+            recordingUrl: body.recordingUrl || null,
+            status: body.status || 'SCHEDULED',
+            maxCapacity: Number(body.maxCapacity || 500),
+            isActive: true,
+          },
+        });
+
+    if (!existing) {
+      await this.broadcastAcademyNotificationToStudents(
+        `📹 Live Zoom Class Scheduled: ${session.title}`,
+        `Join ${session.instructor} on ${new Date(session.startTime).toLocaleString()} (${session.durationMinutes} mins). Register in the Academy Hub!`,
+        '/academy',
+        userId,
+      );
+    }
+
+    return session;
   }
 
   async updateWebinar(userId: string, userRole: string, webinarId: string, body: any) {
@@ -391,28 +635,52 @@ export class InstructorService {
     const questions = await this.prisma.questionBank.findMany({
       orderBy: { createdAt: 'desc' },
     });
-    return questions.map((q) => {
-      const opts = (q.options as any) || {};
-      const choices = Array.isArray(opts) ? opts : Array.isArray(opts.choices) ? opts.choices : [];
-      const correctOptionIndex = opts.correctOptionIndex ?? 0;
-      return { ...q, options: choices, correctOptionIndex };
-    });
+    const seen = new Set<string>();
+    return questions
+      .filter((q) => {
+        const key = (q.question || '').trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((q) => {
+        const opts = (q.options as any) || {};
+        const choices = Array.isArray(opts) ? opts : Array.isArray(opts.choices) ? opts.choices : [];
+        const correctOptionIndex = opts.correctOptionIndex ?? 0;
+        return { ...q, options: choices, correctOptionIndex };
+      });
   }
 
   async createQuestion(userId: string, payload: any) {
     const choices = Array.isArray(payload.options) ? payload.options : [];
     const correctOptionIndex = payload.correctOptionIndex ?? 0;
-    const question = await this.prisma.questionBank.create({
-      data: {
-        question: payload.question || payload.text || '',
-        type: payload.type || 'MULTIPLE_CHOICE',
-        options: { choices, correctOptionIndex },
-        explanation: payload.explanation || null,
-        assetTag: payload.assetTag || null,
-        skillTag: payload.skillTag || 'Technical Analysis',
-        difficulty: payload.difficulty || 'INTERMEDIATE',
-      },
+    const cleanQ = (payload.question || payload.text || '').trim();
+    const existing = await this.prisma.questionBank.findFirst({
+      where: { question: { equals: cleanQ, mode: 'insensitive' } },
     });
+
+    const question = existing
+      ? await this.prisma.questionBank.update({
+          where: { id: existing.id },
+          data: {
+            options: { choices, correctOptionIndex },
+            explanation: payload.explanation || existing.explanation,
+            assetTag: payload.assetTag || existing.assetTag,
+            skillTag: payload.skillTag || existing.skillTag,
+            difficulty: payload.difficulty || existing.difficulty,
+          },
+        })
+      : await this.prisma.questionBank.create({
+          data: {
+            question: cleanQ,
+            type: payload.type || 'MULTIPLE_CHOICE',
+            options: { choices, correctOptionIndex },
+            explanation: payload.explanation || null,
+            assetTag: payload.assetTag || null,
+            skillTag: payload.skillTag || 'Technical Analysis',
+            difficulty: payload.difficulty || 'INTERMEDIATE',
+          },
+        });
     return { ...question, options: choices, correctOptionIndex };
   }
 
@@ -438,7 +706,7 @@ export class InstructorService {
   }
 
   async getQuizzes() {
-    return this.prisma.quiz.findMany({
+    const raw = await this.prisma.quiz.findMany({
       include: {
         course: { select: { title: true } },
         lesson: { select: { title: true } },
@@ -447,24 +715,63 @@ export class InstructorService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    const seen = new Set<string>();
+    return raw.filter((q) => {
+      const key = `${q.courseId || ''}::${q.lessonId || ''}::${(q.title || '').trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   async createQuiz(userId: string, payload: any) {
-    const quiz = await this.prisma.quiz.create({
-      data: {
-        title: payload.title,
-        description: payload.description || null,
-        courseId: payload.courseId || null,
-        lessonId: payload.lessonId || null,
-        difficulty: payload.difficulty || 'INTERMEDIATE',
-        timeLimitMinutes: Number(payload.timeLimitMinutes ?? payload.timeLimit ?? 15),
-        passMarkPct: Number(payload.passMarkPct ?? payload.passMark ?? 70),
-        xpReward: Number(payload.xpReward ?? 100),
-        status: payload.isPublished === false ? 'DRAFT' : 'PUBLISHED',
+    const cleanTitle = (payload.title || '').trim();
+    const existing = await this.prisma.quiz.findFirst({
+      where: {
+        title: { equals: cleanTitle, mode: 'insensitive' },
+        ...(payload.courseId ? { courseId: payload.courseId } : {}),
       },
     });
 
+    const quiz = existing
+      ? await this.prisma.quiz.update({
+          where: { id: existing.id },
+          data: {
+            description: payload.description || existing.description,
+            courseId: payload.courseId || existing.courseId,
+            lessonId: payload.lessonId || existing.lessonId,
+            difficulty: payload.difficulty || existing.difficulty,
+            timeLimitMinutes: Number(payload.timeLimitMinutes ?? payload.timeLimit ?? 15),
+            passMarkPct: Number(payload.passMarkPct ?? payload.passMark ?? 70),
+            xpReward: Number(payload.xpReward ?? 100),
+            status: payload.isPublished === false ? 'DRAFT' : 'PUBLISHED',
+          },
+          include: {
+            course: { select: { id: true, title: true } },
+          },
+        })
+      : await this.prisma.quiz.create({
+          data: {
+            title: cleanTitle,
+            description: payload.description || null,
+            courseId: payload.courseId || null,
+            lessonId: payload.lessonId || null,
+            difficulty: payload.difficulty || 'INTERMEDIATE',
+            timeLimitMinutes: Number(payload.timeLimitMinutes ?? payload.timeLimit ?? 15),
+            passMarkPct: Number(payload.passMarkPct ?? payload.passMark ?? 70),
+            xpReward: Number(payload.xpReward ?? 100),
+            status: payload.isPublished === false ? 'DRAFT' : 'PUBLISHED',
+          },
+          include: {
+            course: { select: { id: true, title: true } },
+          },
+        });
+
     if (Array.isArray(payload.questionIds) && payload.questionIds.length > 0) {
+      if (existing) {
+        await this.prisma.quizQuestion.deleteMany({ where: { quizId: quiz.id } });
+      }
       for (let i = 0; i < payload.questionIds.length; i++) {
         await this.prisma.quizQuestion.create({
           data: {
@@ -474,6 +781,15 @@ export class InstructorService {
           },
         }).catch(() => null);
       }
+    }
+
+    if (quiz.status === 'PUBLISHED' && !existing) {
+      await this.broadcastAcademyNotificationToStudents(
+        `🎯 New Assessment Published: ${quiz.title}`,
+        `Pass mark: ${quiz.passMarkPct}% • Time limit: ${quiz.timeLimitMinutes} mins • Reward: +${quiz.xpReward} XP.`,
+        quiz.courseId ? `/academy/courses/${quiz.courseId}` : '/academy',
+        userId,
+      );
     }
 
     return quiz;
@@ -525,20 +841,47 @@ export class InstructorService {
       throw new ForbiddenException('Not authorized to add lessons to this course');
     }
 
+    const cleanTitle = (body.title || '').trim();
+    const existingLesson = await this.prisma.lesson.findFirst({
+      where: {
+        courseId,
+        title: { equals: cleanTitle, mode: 'insensitive' },
+      },
+    });
+
     const lessonCount = await this.prisma.lesson.count({ where: { courseId } });
     let content = body.content || '';
     if (body.videoUrl) {
       content = `[VIDEO_URL:${body.videoUrl}]\n\n${content}`;
     }
 
-    return this.prisma.lesson.create({
-      data: {
-        courseId,
-        title: body.title,
-        content,
-        orderIndex: body.orderIndex ?? lessonCount + 1,
-      },
-    });
+    const lesson = existingLesson
+      ? await this.prisma.lesson.update({
+          where: { id: existingLesson.id },
+          data: {
+            content,
+            orderIndex: body.orderIndex ?? existingLesson.orderIndex,
+          },
+        })
+      : await this.prisma.lesson.create({
+          data: {
+            courseId,
+            title: cleanTitle,
+            content,
+            orderIndex: body.orderIndex ?? lessonCount + 1,
+          },
+        });
+
+    if (course.isPublished && !existingLesson) {
+      await this.broadcastAcademyNotificationToStudents(
+        `📖 New Lesson & Study Notes Published: ${lesson.title}`,
+        `Added to "${course.title}" (Lesson #${lesson.orderIndex}). Study the notes & complete the lesson assessment.`,
+        `/academy/courses/${courseId}`,
+        userId,
+      );
+    }
+
+    return lesson;
   }
 
   async updateLesson(userId: string, userRole: string, lessonId: string, body: any) {

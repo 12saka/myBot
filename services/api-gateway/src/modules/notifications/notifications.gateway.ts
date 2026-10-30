@@ -137,17 +137,43 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
 
   // --- Push Notifications Broadcaster ---
 
-  async sendNotification(userId: string, title: string, message: string, type: string = 'SYSTEM') {
-    // Save notification record in PostgreSQL
-    const notification = await this.prisma.notification.create({
-      data: {
+  async sendNotification(
+    userId: string,
+    title: string,
+    message: string,
+    type: string = 'SYSTEM',
+    linkUrl?: string,
+  ) {
+    // Prevent duplicate unread notification with identical title & message for the same user
+    const existing = await this.prisma.notification.findFirst({
+      where: {
         userId,
         title,
         message,
-        type,
         isRead: false,
       },
+      orderBy: { createdAt: 'desc' },
     });
+
+    const notification = existing
+      ? await this.prisma.notification.update({
+          where: { id: existing.id },
+          data: {
+            type,
+            ...(linkUrl ? { linkUrl } : {}),
+            createdAt: new Date(),
+          },
+        })
+      : await this.prisma.notification.create({
+          data: {
+            userId,
+            title,
+            message,
+            type,
+            linkUrl: linkUrl || null,
+            isRead: false,
+          },
+        });
 
     // Broadcast to the user's socket room
     if (this.server) {
@@ -155,5 +181,58 @@ export class NotificationsGateway implements OnGatewayConnection, OnGatewayDisco
       console.log(`[WS] Dispatched push notification to user:${userId}: "${title}" [${type}]`);
     }
     return notification;
+  }
+
+  // Broadcast a high-priority trade notification to all users and persist to DB (de-duplicated)
+  async broadcastTradeSignalNotification(
+    title: string,
+    message: string,
+    linkUrl: string = '/dashboard/engines/gold',
+    subType: 'SIGNAL_CREATED' | 'ORDER_FILLED' | 'TARGET_HIT' | 'STOP_HIT' | 'ORDER_CANCELLED' = 'SIGNAL_CREATED'
+  ) {
+    try {
+      // 1. Fetch users to persist into database for the notification center
+      const users = await this.prisma.user.findMany({ select: { id: true }, take: 200 });
+      if (users.length > 0) {
+        const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+        for (const u of users) {
+          const existing = await this.prisma.notification.findFirst({
+            where: {
+              userId: u.id,
+              title,
+              message,
+              createdAt: { gt: fifteenMinutesAgo },
+            },
+          });
+          if (!existing) {
+            await this.prisma.notification.create({
+              data: {
+                userId: u.id,
+                title,
+                message,
+                type: 'TRADE_SIGNAL',
+                linkUrl,
+                isRead: false,
+              },
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[WS] broadcastTradeSignalNotification DB save notice: ${e.message}`);
+    }
+
+    // 2. Broadcast to all connected clients
+    if (this.server) {
+      this.server.emit('notification', {
+        title,
+        message,
+        type: 'TRADE_SIGNAL',
+        subType,
+        linkUrl,
+        createdAt: new Date().toISOString(),
+      });
+      console.log(`[WS] Dispatched broadcastTradeSignalNotification: "${title}" [${subType}]`);
+    }
   }
 }

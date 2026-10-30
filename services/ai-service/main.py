@@ -58,12 +58,12 @@ if GEMINI_API_KEY:
 else:
     print("[AI-Service] WARNING: GEMINI_API_KEY is not set.")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_FALLBACK_MODELS = [
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-2.5-pro",
 ]
 
 API_KEY_NAME = "X-AI-API-Key"
@@ -305,7 +305,7 @@ Setup Overview:
 - TP2: ${setup.take_profit_2:.2f} (R:R: {setup.risk_reward_ratio_tp2:.1f})
 - Entry Model: {setup.model}
 - Grade: {setup.grade} (Composite Opportunity Score: {setup.score:.0f}/100)
-- Calibrated Expectancy: EV = +{exp.get('expectedValueR', 0):.2f}R (P(TP1) = {exp.get('calibratedWinRateTp1', 0.65)*100:.0f}%)
+- Calibrated Expectancy: EV = +{exp.get('expectedValueR', 0):.2f}R (P(TP1) = {(exp.get('calibratedWinRateTp1') or exp.get('probTp1BeforeSl') or 0.65)*100:.0f}%)
 - Confluences: {', '.join(setup.confluence_reasons)}
 
 Market Regime & Auction Value:

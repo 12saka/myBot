@@ -17,7 +17,7 @@ import {
 import { GoldHeaderNav } from '@/components/gold/GoldHeaderNav';
 import { apiFetch } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import type { GoldEntryIntelligence, GoldGateAudit } from '@trademind/shared';
+import type { GoldEntryIntelligence, GoldGateAudit, FinalValidationChecklist } from '@trademind/shared';
 
 interface EntriesResponse {
   symbol: string;
@@ -25,6 +25,7 @@ interface EntriesResponse {
   entryPlan: GoldEntryIntelligence;
   gateAudit: GoldGateAudit[];
   marketRegime: string;
+  finalValidationChecklist?: FinalValidationChecklist;
 }
 
 export default function GoldEntriesPage() {
@@ -204,6 +205,75 @@ export default function GoldEntriesPage() {
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Stage 7: Mandatory Final Validation Checklist (11 Institutional Quality Gates) */}
+      <div className="rounded-2xl bg-[#0B0F17] border border-amber-500/25 p-6 shadow-2xl space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-4">
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck size={20} className={data?.finalValidationChecklist?.allPassed ? "text-emerald-400" : "text-amber-400"} />
+            <div>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                <span>Stage 7: Mandatory Final Validation Checklist</span>
+                <span className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-mono font-bold border",
+                  data?.finalValidationChecklist?.allPassed
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                    : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                )}>
+                  {data?.finalValidationChecklist?.allPassed ? 'ALL 11 CRITERIA PASSED' : 'STRICT FAIL-CLOSED FILTER ACTIVE'}
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                11 mandatory pre-execution criteria evaluated for every candidate signal before publishing or order placement.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {data?.finalValidationChecklist && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {[
+              { label: 'Data Freshness (< 30m)', passed: data.finalValidationChecklist.dataIsFresh },
+              { label: 'Setup Integrity & Trigger', passed: data.finalValidationChecklist.setupStillValid },
+              { label: 'Entry Not Missed (< 0.5R)', passed: data.finalValidationChecklist.entryNotMissed },
+              { label: 'Structural Stop Loss', passed: data.finalValidationChecklist.stopIsStructural },
+              { label: 'Realistic S/R Targets', passed: data.finalValidationChecklist.targetsRealistic },
+              { label: 'Acceptable R:R & EV', passed: data.finalValidationChecklist.rrAcceptable },
+              { label: 'News Risk & Blackout Free', passed: data.finalValidationChecklist.newsRiskAcceptable },
+              { label: 'Institutional Spread (< $0.60)', passed: data.finalValidationChecklist.spreadAcceptable },
+              { label: 'Duplicate Suppressed', passed: data.finalValidationChecklist.notDuplicate },
+              { label: 'Within Exposure Cap (< 3)', passed: data.finalValidationChecklist.withinExposureCap },
+              { label: 'Executable Order Type', passed: data.finalValidationChecklist.orderTypeSupported }
+            ].map((check, idx) => (
+              <div
+                key={idx}
+                className={cn(
+                  "p-3 rounded-xl border flex items-center justify-between text-xs",
+                  check.passed
+                    ? "bg-emerald-950/15 border-emerald-500/20 text-slate-200"
+                    : "bg-rose-950/20 border-rose-500/30 text-rose-300"
+                )}
+              >
+                <span className="font-semibold">{check.label}</span>
+                {check.passed ? (
+                  <CheckCircle2 size={16} className="text-emerald-400 flex-shrink-0" />
+                ) : (
+                  <AlertCircle size={16} className="text-rose-400 flex-shrink-0" />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {data?.finalValidationChecklist?.reasons && data.finalValidationChecklist.reasons.length > 0 && (
+          <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400 block">Checklist Reason Details:</span>
+            {data.finalValidationChecklist.reasons.map((r, i) => (
+              <p key={i} className="text-xs text-amber-300 font-mono">• {r}</p>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
