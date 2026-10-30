@@ -19,6 +19,7 @@ COPY services/wallet-service/package*.json ./services/wallet-service/
 RUN npm ci --prefer-offline --no-audit
 
 # Copy packages and service source
+COPY packages/configs ./packages/configs
 COPY packages/db ./packages/db
 COPY packages/shared ./packages/shared
 COPY services/api-gateway ./services/api-gateway
