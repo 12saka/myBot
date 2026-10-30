@@ -105,7 +105,7 @@ export function GoldHeaderNav({ currentPrice, spread, regime, session }: GoldHea
               <div className="px-3.5 py-1.5 rounded-xl bg-black/40 border border-amber-500/20 backdrop-blur-md">
                 <div className="text-[10px] uppercase font-bold text-slate-400">Spot XAU/USD</div>
                 <div className="text-base font-black font-mono text-amber-400">
-                  ${currentPrice.toFixed(2)}
+                  ${Number(currentPrice).toFixed(2)}
                 </div>
               </div>
             )}
@@ -114,9 +114,9 @@ export function GoldHeaderNav({ currentPrice, spread, regime, session }: GoldHea
                 <div className="text-[10px] uppercase font-bold text-slate-400">Broker Spread</div>
                 <div className={cn(
                   "text-base font-black font-mono",
-                  spread <= 0.60 ? "text-emerald-400" : spread <= 1.50 ? "text-amber-400" : "text-rose-400"
+                  Number(spread) <= 0.60 ? "text-emerald-400" : Number(spread) <= 1.50 ? "text-amber-400" : "text-rose-400"
                 )}>
-                  ${spread.toFixed(2)}
+                  ${Number(spread).toFixed(2)}
                 </div>
               </div>
             )}

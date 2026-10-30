@@ -86,6 +86,7 @@ export function GoldAnnotatedChart({
 
   const tradeLevels = externalTradeLevels || data?.tradeLevels;
   const annotations = (data?.annotations || []).filter(a => {
+    if (!a || typeof a.type !== 'string') return false;
     if (!layers.orderBlocks && (a.type === 'DEMAND_ZONE' || a.type === 'SUPPLY_ZONE' || a.type === 'ORDER_BLOCK')) return false;
     if (!layers.fvgs && a.type === 'FVG') return false;
     if (!layers.bosChoch && (a.type === 'BOS' || a.type === 'CHOCH' || a.type === 'MSS')) return false;
@@ -247,26 +248,26 @@ export function GoldAnnotatedChart({
 
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px]">
             <span className="px-2.5 py-1 rounded-lg bg-cyan-950/60 border border-cyan-500/30 text-cyan-200 font-bold">
-              ENTRY: <strong className="text-white">${tradeLevels.entry.toFixed(2)}</strong>
+              ENTRY: <strong className="text-white">${Number(tradeLevels.entry).toFixed(2)}</strong>
             </span>
             {tradeLevels.stopLoss && (
               <span className="px-2.5 py-1 rounded-lg bg-rose-950/50 border border-rose-500/30 text-rose-300 font-bold">
-                SL: <strong>${tradeLevels.stopLoss.toFixed(2)}</strong>
+                SL: <strong>${Number(tradeLevels.stopLoss).toFixed(2)}</strong>
               </span>
             )}
             {tradeLevels.takeProfit1 && (
               <span className="px-2.5 py-1 rounded-lg bg-emerald-950/50 border border-emerald-500/30 text-emerald-300 font-bold">
-                TP1: <strong>${tradeLevels.takeProfit1.toFixed(2)}</strong>
+                TP1: <strong>${Number(tradeLevels.takeProfit1).toFixed(2)}</strong>
               </span>
             )}
             {tradeLevels.takeProfit2 && (
               <span className="px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 font-bold">
-                TP2: <strong>${tradeLevels.takeProfit2.toFixed(2)}</strong>
+                TP2: <strong>${Number(tradeLevels.takeProfit2).toFixed(2)}</strong>
               </span>
             )}
             <span className="px-2 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold">
               R:R {tradeLevels.stopLoss && tradeLevels.takeProfit1
-                ? `1:${(Math.abs(tradeLevels.takeProfit1 - tradeLevels.entry) / Math.max(0.1, Math.abs(tradeLevels.entry - tradeLevels.stopLoss))).toFixed(1)}`
+                ? `1:${(Math.abs(Number(tradeLevels.takeProfit1) - Number(tradeLevels.entry)) / Math.max(0.1, Math.abs(Number(tradeLevels.entry) - Number(tradeLevels.stopLoss)))).toFixed(1)}`
                 : '1:2.0'}
             </span>
           </div>

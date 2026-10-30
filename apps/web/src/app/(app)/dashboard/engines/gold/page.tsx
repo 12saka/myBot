@@ -36,6 +36,7 @@ export default function GoldOverviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [tradeModalSignal, setTradeModalSignal] = useState<any>(null);
+  const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
 
   const fetchOverview = async (isManual = false) => {
     if (isManual) setRefreshing(true);
@@ -67,11 +68,29 @@ export default function GoldOverviewPage() {
     );
   }
 
-  const p = data?.currentPrice || 0;
+  if (error && !data) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4 max-w-lg mx-auto text-center px-4">
+        <div className="h-12 w-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+          <Activity size={24} />
+        </div>
+        <h2 className="text-lg font-bold text-white">Gold Engine Feed Disconnected</h2>
+        <p className="text-xs text-slate-400">{error}</p>
+        <button
+          onClick={() => { setLoading(true); fetchOverview(true); }}
+          className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 cursor-pointer transition-colors"
+        >
+          <RefreshCw size={14} />
+          <span>Retry Connection</span>
+        </button>
+      </div>
+    );
+  }
+
+  const p = Number(data?.currentPrice) || 0;
   const regime = data?.marketRegime || 'RANGE_BOUND_EQUILIBRIUM';
-  const spread = data?.spread ?? 0;
+  const spread = Number(data?.spread) || 0;
   const session = data?.sessionName || 'Active Session';
-  const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
 
   const activeSignal = data?.activeSignal;
   const activeSignals: any[] = data?.activeSignals && Array.isArray(data.activeSignals) && data.activeSignals.length > 0
@@ -362,7 +381,7 @@ export default function GoldOverviewPage() {
                         ${sTp1.toFixed(2)}
                       </span>
                       <div className="text-[9px] font-mono text-emerald-400/90 mt-0.5">
-                        +{Math.round(Math.abs(sTp1 - sEntry) * 10)} pips (1:{sig.riskRewardRatio?.toFixed(1) || '—'})
+                        +{Math.round(Math.abs(sTp1 - sEntry) * 10)} pips (1:{typeof sig.riskRewardRatio === 'number' ? sig.riskRewardRatio.toFixed(1) : (sig.riskRewardRatio || '—')})
                       </div>
                     </div>
 
