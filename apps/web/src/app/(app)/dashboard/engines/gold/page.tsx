@@ -98,17 +98,22 @@ export default function GoldOverviewPage() {
     : (activeSignal ? [activeSignal] : []);
 
   // Selected signal takes precedence for chart level inspection, falling back to primary activeSignal
-  const displayedSignal = (selectedSignalId ? activeSignals.find(s => s.id === selectedSignalId) : null) || activeSignals[0] || activeSignal;
+  const displayedSignal = (selectedSignalId ? activeSignals.find(s => s.id === selectedSignalId) : null) || activeSignals[0] || activeSignal || null;
 
   const confidenceScore = displayedSignal?.confluenceScore ?? displayedSignal?.winProbability ?? (data?.confluenceScore ?? data?.confidence ?? 0);
-  const activeDirection = displayedSignal?.direction ?? (data?.direction || 'WAIT');
-  const signalGrade = (displayedSignal?.aiReasoning as any)?.signalGrade ?? (data?.signalGrade || 'WAIT');
-  const orderType = (displayedSignal?.aiReasoning as any)?.orderType ?? (data?.entryPlan?.orderType || 'WAIT');
+  // Strictly unify the upper chart bar and HUD with the locked active signal in the execution deck (never display unpersisted phantom levels)
+  const activeDirection = displayedSignal ? displayedSignal.direction : 'WAIT';
+  const signalGrade = displayedSignal ? ((displayedSignal.aiReasoning as any)?.signalGrade || data?.signalGrade || 'A INSTITUTIONAL') : 'WAIT';
+  const orderType = displayedSignal
+    ? ((displayedSignal.aiReasoning as any)?.orderType || (displayedSignal.direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
+    : 'WAIT';
 
-  const preferredEntry = displayedSignal?.entryPrice ? Number(displayedSignal.entryPrice) : (data?.entryPlan?.preferredEntry || 0);
-  const stopLoss = displayedSignal?.stopLoss ? Number(displayedSignal.stopLoss) : (data?.riskPlan?.exactStopLoss || 0);
-  const tp1 = displayedSignal?.takeProfit1 ? Number(displayedSignal.takeProfit1) : (data?.riskPlan?.takeProfit1 || 0);
-  const tp2 = (displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2) ? Number(displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2) : (data?.riskPlan?.takeProfit2 || 0);
+  const preferredEntry = displayedSignal?.entryPrice ? Number(displayedSignal.entryPrice) : 0;
+  const stopLoss = displayedSignal?.stopLoss ? Number(displayedSignal.stopLoss) : 0;
+  const tp1 = displayedSignal?.takeProfit1 ? Number(displayedSignal.takeProfit1) : 0;
+  const tp2 = (displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2)
+    ? Number(displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2)
+    : 0;
 
   // Real structural levels for Conditional Analytical Scenarios (Properly bounded to intraday structure)
   const struct = data?.structure;

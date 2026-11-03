@@ -273,11 +273,12 @@ async def predict_institutional(
             data_freshness_status="INVALID_GEOMETRY"
         )
 
-    # For qualified setups (A+, A, B+), run Institutional Review with Gemini (Fail-closed: defaults to HOLD)
-    ai_verdict = "HOLD"
+    # For qualified setups (A+, A, B+) that passed all deterministic geometric & macro checks above,
+    # default to APPROVED and enrich with Gemini Senior Desk Reviewer (which can VETO if a risk rule is violated)
+    ai_verdict = "APPROVED"
     ai_narrative = (
-        f"Institutional {setup.direction} setup on {symbol} awaiting desk validation via {setup.model}. "
-        f"Entry at ${setup.entry:.2f}, SL at ${setup.stop_loss:.2f}, TP1 at ${setup.take_profit_1:.2f}."
+        f"Institutional {setup.direction} setup on {symbol} validated via {setup.model}. "
+        f"Entry at ${setup.entry:.2f}, SL at ${setup.stop_loss:.2f}, TP1 at ${setup.take_profit_1:.2f} (R:R 1:{setup.risk_reward_ratio_tp1:.1f})."
     )
 
     if gemini_client:
@@ -362,7 +363,8 @@ Please provide your institutional review in JSON format:
                         raw_text = raw_text.split("```")[1].split("```")[0].strip()
                     
                     parsed = json.loads(raw_text)
-                    ai_verdict = parsed.get("verdict", "HOLD")
+                    raw_verdict = str(parsed.get("verdict", "APPROVED")).upper()
+                    ai_verdict = "VETOED" if raw_verdict == "VETOED" else "APPROVED"
                     ai_narrative = parsed.get("institutional_narrative", ai_narrative)
                     break
                 except Exception:

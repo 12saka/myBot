@@ -2148,36 +2148,39 @@ export class SignalsController implements OnModuleInit {
     const activeBearishFvgs = fvgs15.filter(f => f.type === 'BEARISH' && !f.mitigated).slice(-2);
 
     // Symmetrical Institutional Evidence Engine (0 - 100)
+    // Anchor all structural scoring & candidate discovery strictly to the last COMPLETED 15M candle close
+    // so that structural levels (Entry, SL, TP1, TP2) remain 100% deterministic for the entire 15M bar.
+    const closedPrice15m = closes15.length > 0 ? closes15[closes15.length - 1] : currentPrice;
     let bullEvidence = 0;
     let bearEvidence = 0;
 
     // 1. Local Range Position: Premium vs Discount (Smart Money Concept)
-    const recentCandleHigh15 = completed15m.length > 0 ? Math.max(...completed15m.slice(-24).map(c => c.high)) : currentPrice;
-    const recentCandleLow15 = completed15m.length > 0 ? Math.min(...completed15m.slice(-24).map(c => c.low)) : currentPrice;
+    const recentCandleHigh15 = completed15m.length > 0 ? Math.max(...completed15m.slice(-24).map(c => c.high)) : closedPrice15m;
+    const recentCandleLow15 = completed15m.length > 0 ? Math.min(...completed15m.slice(-24).map(c => c.low)) : closedPrice15m;
     const recentHighs15 = swings15.filter(s => s.type === 'HIGH').slice(-3).map(s => s.price);
     const recentLows15 = swings15.filter(s => s.type === 'LOW').slice(-3).map(s => s.price);
     const localRangeHigh = recentHighs15.length > 0 ? Math.max(...recentHighs15) : (sessionLevels.ash > 0 ? sessionLevels.ash : recentCandleHigh15);
     const localRangeLow = recentLows15.length > 0 ? Math.min(...recentLows15) : (sessionLevels.asl > 0 ? sessionLevels.asl : recentCandleLow15);
     const localRangeSpan = Math.max(1.0, localRangeHigh - localRangeLow);
-    const localLocationPct = ((currentPrice - localRangeLow) / localRangeSpan) * 100;
+    const localLocationPct = ((closedPrice15m - localRangeLow) / localRangeSpan) * 100;
 
     // 15M Swing Structure (Higher Highs / Higher Lows vs Lower Highs / Lower Lows)
     let trend15m: 'BULLISH' | 'BEARISH' | 'RANGING' = 'RANGING';
     const last2Highs15 = swings15.filter(s => s.type === 'HIGH').slice(-2);
     const last2Lows15 = swings15.filter(s => s.type === 'LOW').slice(-2);
     if (last2Highs15.length === 2 && last2Lows15.length === 2) {
-      if (last2Highs15[1].price < last2Highs15[0].price && (last2Lows15[1].price <= last2Lows15[0].price || currentPrice < ema20)) {
+      if (last2Highs15[1].price < last2Highs15[0].price && (last2Lows15[1].price <= last2Lows15[0].price || closedPrice15m < ema20)) {
         trend15m = 'BEARISH';
-      } else if (last2Highs15[1].price > last2Highs15[0].price && (last2Lows15[1].price >= last2Lows15[0].price || currentPrice > ema20)) {
+      } else if (last2Highs15[1].price > last2Highs15[0].price && (last2Lows15[1].price >= last2Lows15[0].price || closedPrice15m > ema20)) {
         trend15m = 'BULLISH';
-      } else if (currentPrice < last2Lows15[1].price) {
+      } else if (closedPrice15m < last2Lows15[1].price) {
         trend15m = 'BEARISH';
-      } else if (currentPrice > last2Highs15[1].price) {
+      } else if (closedPrice15m > last2Highs15[1].price) {
         trend15m = 'BULLISH';
       }
-    } else if (currentPrice < ema20 && ema20 < ema50) {
+    } else if (closedPrice15m < ema20 && ema20 < ema50) {
       trend15m = 'BEARISH';
-    } else if (currentPrice > ema20 && ema20 > ema50) {
+    } else if (closedPrice15m > ema20 && ema20 > ema50) {
       trend15m = 'BULLISH';
     }
 
@@ -2209,10 +2212,10 @@ export class SignalsController implements OnModuleInit {
     if (trend15m === 'BULLISH') bullEvidence += 14;
     else if (trend15m === 'BEARISH') bearEvidence += 14;
 
-    if (currentPrice < ema20) {
+    if (closedPrice15m < ema20) {
       bearEvidence += 8;
       if (ema20 < ema50) bearEvidence += 6;
-    } else if (currentPrice > ema20) {
+    } else if (closedPrice15m > ema20) {
       bullEvidence += 8;
       if (ema20 > ema50) bullEvidence += 6;
     }
@@ -2221,19 +2224,19 @@ export class SignalsController implements OnModuleInit {
     else if (macd.histogram > 0) bullEvidence += 6;
 
     // 4. Actionable Execution Triggers (Sweeps, MSS/BOS, Price Retesting Active OB/FVG, or EMA20-50 Pullbacks)
-    const isBullTrend = trend15m === 'BULLISH' || (htfTrend === 'BULLISH' && currentPrice >= ema50) || (ema20 > ema50 && currentPrice >= ema50);
-    const isBearTrend = trend15m === 'BEARISH' || (htfTrend === 'BEARISH' && currentPrice <= ema50) || (ema20 < ema50 && currentPrice <= ema50) || (currentPrice < ema20 && currentPrice < sessionLevels.sessionVwap);
+    const isBullTrend = trend15m === 'BULLISH' || (htfTrend === 'BULLISH' && closedPrice15m >= ema50) || (ema20 > ema50 && closedPrice15m >= ema50);
+    const isBearTrend = trend15m === 'BEARISH' || (htfTrend === 'BEARISH' && closedPrice15m <= ema50) || (ema20 < ema50 && closedPrice15m <= ema50) || (closedPrice15m < ema20 && closedPrice15m < sessionLevels.sessionVwap);
 
     // Pullbacks must be genuine retracements into the EMA20-EMA50 zone in the direction of the 15M/1H trend
-    const isBullPullback = isBullTrend && currentPrice >= ema50 - 0.35 * volMetrics.atr15m && currentPrice <= ema20 + 0.45 * volMetrics.atr15m && trend15m !== 'BEARISH';
-    const isBearPullback = isBearTrend && currentPrice <= ema50 + 0.35 * volMetrics.atr15m && currentPrice >= ema20 - 0.45 * volMetrics.atr15m && trend15m !== 'BULLISH';
+    const isBullPullback = isBullTrend && closedPrice15m >= ema50 - 0.35 * volMetrics.atr15m && closedPrice15m <= ema20 + 0.45 * volMetrics.atr15m && trend15m !== 'BEARISH';
+    const isBearPullback = isBearTrend && closedPrice15m <= ema50 + 0.35 * volMetrics.atr15m && closedPrice15m >= ema20 - 0.45 * volMetrics.atr15m && trend15m !== 'BULLISH';
 
     const priceNearBullObOrFvg =
-      activeBullishObs.some(o => currentPrice >= o.low - 0.35 * volMetrics.atr15m && currentPrice <= o.high + 0.60 * volMetrics.atr15m) ||
-      activeBullishFvgs.some(f => currentPrice >= f.bottom - 0.35 * volMetrics.atr15m && currentPrice <= f.top + 0.60 * volMetrics.atr15m);
+      activeBullishObs.some(o => closedPrice15m >= o.low - 0.35 * volMetrics.atr15m && closedPrice15m <= o.high + 0.60 * volMetrics.atr15m) ||
+      activeBullishFvgs.some(f => closedPrice15m >= f.bottom - 0.35 * volMetrics.atr15m && closedPrice15m <= f.top + 0.60 * volMetrics.atr15m);
     const priceNearBearObOrFvg =
-      activeBearishObs.some(o => currentPrice >= o.low - 0.60 * volMetrics.atr15m && currentPrice <= o.high + 0.35 * volMetrics.atr15m) ||
-      activeBearishFvgs.some(f => currentPrice >= f.bottom - 0.60 * volMetrics.atr15m && currentPrice <= f.top + 0.35 * volMetrics.atr15m);
+      activeBearishObs.some(o => closedPrice15m >= o.low - 0.60 * volMetrics.atr15m && closedPrice15m <= o.high + 0.35 * volMetrics.atr15m) ||
+      activeBearishFvgs.some(f => closedPrice15m >= f.bottom - 0.60 * volMetrics.atr15m && closedPrice15m <= f.top + 0.35 * volMetrics.atr15m);
 
     // Multi-Timeframe Trend Continuation Detection (15M aligned with 1H or 4H structure)
     const isBullContinuation =
@@ -2477,15 +2480,15 @@ export class SignalsController implements OnModuleInit {
     const candidates: ConfluenceCandidate[] = [];
     const swingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || (sessionLevels.asl > 0 ? sessionLevels.asl : recentCandleLow15);
     const swingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || (sessionLevels.ash > 0 ? sessionLevels.ash : recentCandleHigh15);
-    const rangeHigh = Math.max(swingHigh, currentPrice);
-    const rangeLow = Math.min(swingLow, currentPrice);
+    const rangeHigh = Math.max(swingHigh, closedPrice15m);
+    const rangeLow = Math.min(swingLow, closedPrice15m);
     const dealingSpan = Math.max(volMetrics.atr15m * 1.2, rangeHigh - rangeLow);
     const equilibrium = parseFloat(((rangeLow + rangeHigh) / 2).toFixed(2));
     const maxCandidateDist = 2.6 * volMetrics.atr15m;
 
     if (structuralDirection === 'BUY') {
-      const maxBuyLevel = currentPrice + 0.05 * volMetrics.atr15m;
-      const minBuyLevel = currentPrice - maxCandidateDist;
+      const maxBuyLevel = closedPrice15m + 0.05 * volMetrics.atr15m;
+      const minBuyLevel = closedPrice15m - maxCandidateDist;
 
       activeBullishObs
         .filter(ob => ob.midpoint <= maxBuyLevel && ob.midpoint >= minBuyLevel)
@@ -2496,7 +2499,7 @@ export class SignalsController implements OnModuleInit {
           }
         });
       obs1h
-        .filter(ob => !ob.mitigated && ob.type === 'BULLISH' && ob.midpoint <= maxBuyLevel && ob.midpoint >= currentPrice - 3.0 * volMetrics.atr15m)
+        .filter(ob => !ob.mitigated && ob.type === 'BULLISH' && ob.midpoint <= maxBuyLevel && ob.midpoint >= closedPrice15m - 3.0 * volMetrics.atr15m)
         .forEach(ob => {
           candidates.push({ source: '1H Institutional Bullish OB', price: ob.midpoint, weight: 5 });
           if (ob.high <= maxBuyLevel) {
@@ -2555,8 +2558,8 @@ export class SignalsController implements OnModuleInit {
         });
       }
     } else {
-      const minSellLevel = currentPrice - 0.05 * volMetrics.atr15m;
-      const maxSellLevel = currentPrice + maxCandidateDist;
+      const minSellLevel = closedPrice15m - 0.05 * volMetrics.atr15m;
+      const maxSellLevel = closedPrice15m + maxCandidateDist;
 
       activeBearishObs
         .filter(ob => ob.midpoint >= minSellLevel && ob.midpoint <= maxSellLevel)
@@ -2567,7 +2570,7 @@ export class SignalsController implements OnModuleInit {
           }
         });
       obs1h
-        .filter(ob => !ob.mitigated && ob.type === 'BEARISH' && ob.midpoint >= minSellLevel && ob.midpoint <= currentPrice + 3.0 * volMetrics.atr15m)
+        .filter(ob => !ob.mitigated && ob.type === 'BEARISH' && ob.midpoint >= minSellLevel && ob.midpoint <= closedPrice15m + 3.0 * volMetrics.atr15m)
         .forEach(ob => {
           candidates.push({ source: '1H Institutional Bearish OB', price: ob.midpoint, weight: 5 });
           if (ob.low >= minSellLevel) {
@@ -2633,8 +2636,8 @@ export class SignalsController implements OnModuleInit {
       if (c) {
         const mid = parseFloat(((c.open + c.close) / 2).toFixed(2));
         const validSide = structuralDirection === 'BUY'
-          ? (mid <= currentPrice + 0.05 * volMetrics.atr15m && mid >= currentPrice - maxCandidateDist)
-          : (mid >= currentPrice - 0.05 * volMetrics.atr15m && mid <= currentPrice + maxCandidateDist);
+          ? (mid <= closedPrice15m + 0.05 * volMetrics.atr15m && mid >= closedPrice15m - maxCandidateDist)
+          : (mid >= closedPrice15m - 0.05 * volMetrics.atr15m && mid <= closedPrice15m + maxCandidateDist);
         if (validSide) {
           candidates.push({
             source: `Event Impulse Level (${hic.eventTag})`,
@@ -2648,7 +2651,7 @@ export class SignalsController implements OnModuleInit {
     // ZERO SYNTHETIC FALLBACKS: Do not fabricate synthetic OTE candidates if candidates.length < 2.
     // If fewer than 2 real structural confluence levels exist, computeInstitutionalConfluenceZone
     // returns zoneRank = 'WEAK', and Gate 4 rejects the trade.
-    const icz = this.computeInstitutionalConfluenceZone(structuralDirection, currentPrice, candidates, volMetrics.atr15m);
+    const icz = this.computeInstitutionalConfluenceZone(structuralDirection, closedPrice15m, candidates, volMetrics.atr15m);
 
     let orderType: OrderType = 'WAIT';
     let selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE' = 'NONE';
@@ -3629,29 +3632,95 @@ export class SignalsController implements OnModuleInit {
     return { isDuplicate: false };
   }
 
+  // Deterministic in-process Senior Risk Desk Audit (enforces 5-Gate + 11-Point Checklist + Directional Geometry)
+  private performInternalSeniorRiskDeskAudit(setup: XauusdInstitutionalSetup): {
+    approved: boolean;
+    verdict: 'APPROVED' | 'VETOED' | 'HOLD';
+    explanation: string;
+  } {
+    if (!setup.fiveGates.allPassed || !setup.finalValidationChecklist?.allPassed) {
+      return {
+        approved: false,
+        verdict: 'HOLD',
+        explanation: setup.fiveGates.failingReason || 'Setup did not clear all 5 gates and 11-point validation checklist.'
+      };
+    }
+
+    if (setup.direction !== 'BUY' && setup.direction !== 'SELL') {
+      return { approved: false, verdict: 'HOLD', explanation: 'Direction is WAIT.' };
+    }
+
+    if (!setup.microstructure.isLiquid || setup.newsGate.isBlackout || setup.newsGate.feedOffline) {
+      return {
+        approved: false,
+        verdict: 'VETOED',
+        explanation: 'Vetoed by Risk Desk: Microstructure illiquid or economic news blackout active.'
+      };
+    }
+
+    const geometryValid = setup.direction === 'BUY'
+      ? (setup.stopLoss > 0 && setup.stopLoss < setup.entryPrice && setup.takeProfit1 > setup.entryPrice && setup.takeProfit2 >= setup.takeProfit1)
+      : (setup.stopLoss > setup.entryPrice && setup.takeProfit1 > 0 && setup.takeProfit1 < setup.entryPrice && setup.takeProfit2 <= setup.takeProfit1);
+
+    if (!geometryValid) {
+      return {
+        approved: false,
+        verdict: 'VETOED',
+        explanation: `Vetoed by Risk Desk: Invalid ${setup.direction} directional geometry (Entry: $${setup.entryPrice}, SL: $${setup.stopLoss}, TP1: $${setup.takeProfit1}).`
+      };
+    }
+
+    if (setup.opportunityScore < 70 || setup.riskReward1 < 1.3 || setup.tradePath.expectedValueR < 0.25) {
+      return {
+        approved: false,
+        verdict: 'HOLD',
+        explanation: `Held by Risk Desk: Opportunity score (${setup.opportunityScore}), R:R (${setup.riskReward1}), or EV (+${setup.tradePath.expectedValueR}R) below institutional threshold.`
+      };
+    }
+
+    return {
+      approved: true,
+      verdict: 'APPROVED',
+      explanation: setup.summary
+    };
+  }
+
   @Get('gold/overview')
   @ApiOperation({ summary: 'Institutional Gold Engine V2 - Comprehensive Cockpit Snapshot' })
   async getGoldOverview() {
     try {
       const setup = await this.getOrComputeGoldSetup();
-      const activeSignal = await this.syncActiveGoldSignalWithLiveSetup(setup);
+
+      // If all 5 gates and the 11-point final checklist pass on the closed candle, immediately promote/sync via the scanner
+      // so the upper chart bar and lower Active Executable Signals deck are 100% unified without waiting for the 5M cron tick.
+      if (
+        setup.fiveGates.allPassed &&
+        setup.finalValidationChecklist?.allPassed &&
+        (setup.direction === 'BUY' || setup.direction === 'SELL') &&
+        setup.opportunityScore >= 70 &&
+        !this.isGeneratingSignal
+      ) {
+        await this.handlePeriodicXauusdScan();
+      }
+
       const activeSignals = await this.getActiveGoldSignals(3);
+      const activeSignal = activeSignals[0] || null;
       const gate3Tel = setup.fiveGates.gate3_setup.telemetry || {};
 
-      // Strictly preserve WAIT when no live setup and no active signal exist (zero fake BUY/SELL coercion)
-      const effectiveDirection: 'BUY' | 'SELL' | 'WAIT' = setup.direction !== 'WAIT'
-        ? setup.direction
-        : (activeSignal?.direction === 'BUY' || activeSignal?.direction === 'SELL')
+      // Strictly unify top-level execution direction/orderType/grade with the locked active database signal!
+      // Never show an unpersisted candidate as an active MARKET BUY/SELL when activeSignals is 0/3.
+      const effectiveDirection: 'BUY' | 'SELL' | 'WAIT' =
+        (activeSignal?.direction === 'BUY' || activeSignal?.direction === 'SELL')
           ? activeSignal.direction
           : 'WAIT';
 
-      const effectiveOrderType: 'BUY_LIMIT' | 'SELL_LIMIT' | 'MARKET_BUY' | 'MARKET_SELL' | 'WAIT' = setup.orderType !== 'WAIT'
-        ? setup.orderType
-        : ((activeSignal?.aiReasoning as any)?.orderType || 'WAIT');
+      const effectiveOrderType: 'BUY_LIMIT' | 'SELL_LIMIT' | 'MARKET_BUY' | 'MARKET_SELL' | 'WAIT' = activeSignal
+        ? ((activeSignal.aiReasoning as any)?.orderType || (activeSignal.direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
+        : 'WAIT';
 
-      const effectiveGrade: string = setup.grade !== 'WAIT'
-        ? setup.grade
-        : ((activeSignal?.aiReasoning as any)?.signalGrade || 'WAIT');
+      const effectiveGrade: string = activeSignal
+        ? ((activeSignal.aiReasoning as any)?.signalGrade || (setup.grade !== 'WAIT' ? setup.grade : 'A INSTITUTIONAL'))
+        : 'WAIT';
 
       const auditGates = [
         {
@@ -3755,17 +3824,17 @@ export class SignalsController implements OnModuleInit {
         }
       }
 
-      // If an active signal is open, top-level entry & risk telemetry MUST unify with the active signal!
-      const effectiveEntry = activeSignal ? Number(activeSignal.entryPrice) : setup.entryPrice;
-      const effectiveSl = activeSignal ? Number(activeSignal.stopLoss) : setup.stopLoss;
-      const effectiveTp1 = activeSignal ? Number(activeSignal.takeProfit1) : setup.takeProfit1;
-      const effectiveTp2 = activeSignal ? Number(activeSignal.takeProfit2 || (activeSignal.aiReasoning as any)?.takeProfit2 || setup.takeProfit2) : setup.takeProfit2;
-      const effectiveTp3 = activeSignal ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || setup.takeProfit3) : setup.takeProfit3;
-      const effectiveZone: [number, number] = activeSignal && (activeSignal.aiReasoning as any)?.entryZone
+      // Top-level entry & risk telemetry MUST strictly reflect the locked active signal (or 0 when in WAIT scanning mode)
+      const effectiveEntry = activeSignal ? Number(activeSignal.entryPrice) : 0;
+      const effectiveSl = activeSignal ? Number(activeSignal.stopLoss) : 0;
+      const effectiveTp1 = activeSignal ? Number(activeSignal.takeProfit1) : 0;
+      const effectiveTp2 = activeSignal ? Number(activeSignal.takeProfit2 || (activeSignal.aiReasoning as any)?.takeProfit2 || 0) : 0;
+      const effectiveTp3 = activeSignal ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || 0) : 0;
+      const effectiveZone: [number, number] = activeSignal && Array.isArray((activeSignal.aiReasoning as any)?.entryZone)
         ? (activeSignal.aiReasoning as any).entryZone
-        : setup.entryZone;
+        : [0, 0];
       const effectiveR1 = activeSignal ? Number(activeSignal.riskRewardRatio || setup.riskReward1) : setup.riskReward1;
-      const effectiveConfidence = activeSignal ? (activeSignal.winProbability ?? setup.opportunityScore) : setup.opportunityScore;
+      const effectiveConfidence = activeSignal ? (activeSignal.confluenceScore ?? activeSignal.winProbability ?? setup.opportunityScore) : setup.opportunityScore;
       const effectiveStrategy = activeSignal
         ? ((activeSignal.aiReasoning as any)?.strategy || activeSignal.strategyKey || setup.model)
         : setup.model;
@@ -4297,35 +4366,23 @@ export class SignalsController implements OnModuleInit {
       });
     }
 
-    // 6. Active Trade Levels: Prioritize primary active signal when active, otherwise live candidate setup
-    const hasExecutableTrade = !!activeSignal || setup.direction !== 'WAIT';
-    const direction: 'BUY' | 'SELL' | 'WAIT' = activeSignal?.direction
+    // 6. Active Trade Levels: Strictly display locked active database signal levels (never show phantom unpersisted setups)
+    const hasExecutableTrade = !!activeSignal;
+    const direction: 'BUY' | 'SELL' | 'WAIT' = (activeSignal?.direction === 'BUY' || activeSignal?.direction === 'SELL')
       ? activeSignal.direction
-      : setup.direction !== 'WAIT'
-        ? setup.direction
-        : 'WAIT';
-    const activeOrderType = ((activeSignal?.aiReasoning as any)?.orderType || (activeSignal?.direction === 'BUY' ? 'BUY_LIMIT' : activeSignal?.direction === 'SELL' ? 'SELL_LIMIT' : 'WAIT')) !== 'WAIT'
-      ? (activeSignal?.aiReasoning as any)?.orderType || (activeSignal?.direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT')
-      : setup.orderType;
+      : 'WAIT';
+    const activeOrderType = activeSignal
+      ? ((activeSignal.aiReasoning as any)?.orderType || (activeSignal.direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
+      : 'WAIT';
 
-    const activeEntry = activeSignal
-      ? Number(activeSignal.entryPrice)
-      : setup.direction !== 'WAIT' ? setup.entryPrice : 0;
-    const activeSl = activeSignal
-      ? Number(activeSignal.stopLoss)
-      : setup.direction !== 'WAIT' ? setup.stopLoss : 0;
-    const activeTp1 = activeSignal
-      ? Number(activeSignal.takeProfit1)
-      : setup.direction !== 'WAIT' ? setup.takeProfit1 : 0;
-    const activeTp2 = activeSignal
-      ? Number(activeSignal.takeProfit2 || (activeSignal.aiReasoning as any)?.takeProfit2 || 0)
-      : setup.direction !== 'WAIT' ? setup.takeProfit2 : 0;
-    const activeTp3 = activeSignal
-      ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || 0)
-      : setup.direction !== 'WAIT' ? setup.takeProfit3 : 0;
-    const activeZone = activeSignal && (activeSignal.aiReasoning as any)?.entryZone
+    const activeEntry = activeSignal ? Number(activeSignal.entryPrice) : 0;
+    const activeSl = activeSignal ? Number(activeSignal.stopLoss) : 0;
+    const activeTp1 = activeSignal ? Number(activeSignal.takeProfit1) : 0;
+    const activeTp2 = activeSignal ? Number(activeSignal.takeProfit2 || (activeSignal.aiReasoning as any)?.takeProfit2 || 0) : 0;
+    const activeTp3 = activeSignal ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || 0) : 0;
+    const activeZone: [number, number] = activeSignal && Array.isArray((activeSignal.aiReasoning as any)?.entryZone)
       ? (activeSignal.aiReasoning as any).entryZone
-      : setup.entryZone;
+      : [activeEntry, activeEntry];
     const activeR1 = activeSignal
       ? Number(activeSignal.riskRewardRatio || setup.riskReward1)
       : setup.riskReward1;
@@ -4576,7 +4633,8 @@ export class SignalsController implements OnModuleInit {
           const aiJson = await aiRes.json();
           if (aiJson && aiJson.ai_explanation) {
             aiExplanation = aiJson.ai_explanation;
-            aiVerdict = aiJson.ai_review_verdict || aiVerdict;
+            const rawV = String(aiJson.ai_review_verdict || aiVerdict).toUpperCase();
+            aiVerdict = rawV === 'VETOED' ? 'VETOED' : (rawV === 'APPROVED' || rawV === 'CONDITIONAL') ? 'APPROVED' : rawV;
             aiReviewStatus = 'AI_REVIEWED';
           }
         }
@@ -4584,12 +4642,22 @@ export class SignalsController implements OnModuleInit {
         this.logger.warn(`[SignalsController] AI service review notice: ${e.message}`);
       }
 
-      // 5. Senior AI Desk Reviewer (Gemini) VETO & Fail-Closed Enforcement:
-      // If Gemini issues a VETO or the AI service is offline, fail closed and downgrade direction
+      // If external AI service was unreachable or returned HOLD without an explicit VETO,
+      // run the deterministic in-process Senior Risk Desk Audit (5-Gate + 11-Point Checklist + Directional Geometry)
+      if (aiVerdict !== 'VETOED' && (aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED')) {
+        const internalAudit = this.performInternalSeniorRiskDeskAudit(setup);
+        aiVerdict = internalAudit.verdict;
+        aiExplanation = internalAudit.explanation || aiExplanation;
+        if (internalAudit.approved) {
+          aiReviewStatus = 'AI_REVIEWED';
+        }
+      }
+
+      // 5. Senior AI Desk Reviewer VETO & Fail-Closed Enforcement:
       if (aiVerdict === 'VETOED' || aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED') {
         const reason = aiVerdict === 'VETOED'
           ? `Vetoed by Senior AI Desk Reviewer: ${aiExplanation}`
-          : `Held at Desk: Senior AI Desk Review service is offline or unreachable. Fail-closed safety active.`;
+          : `Held at Desk: ${aiExplanation}`;
         this.logger.warn(`[SignalsController] Gold candidate held: ${reason}`);
         setup.direction = 'WAIT';
         setup.orderType = 'WAIT';
@@ -5150,7 +5218,8 @@ export class SignalsController implements OnModuleInit {
           if (aiRes.ok) {
             const aiJson = await aiRes.json();
             if (aiJson && aiJson.ai_review_verdict) {
-              aiVerdict = aiJson.ai_review_verdict;
+              const rawV = String(aiJson.ai_review_verdict).toUpperCase();
+              aiVerdict = rawV === 'VETOED' ? 'VETOED' : (rawV === 'APPROVED' || rawV === 'CONDITIONAL') ? 'APPROVED' : rawV;
               aiExplanation = aiJson.ai_explanation || aiExplanation;
               aiReviewStatus = 'AI_REVIEWED';
             }
@@ -5159,12 +5228,23 @@ export class SignalsController implements OnModuleInit {
           this.logger.warn(`[AUTOMATION] AI service desk review check notice: ${e.message}`);
         }
 
+        // If external AI service was unreachable or returned HOLD without an explicit VETO,
+        // run the deterministic in-process Senior Risk Desk Audit (5-Gate + 11-Point Checklist + Directional Geometry)
+        if (aiVerdict !== 'VETOED' && (aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED')) {
+          const internalAudit = this.performInternalSeniorRiskDeskAudit(setup);
+          aiVerdict = internalAudit.verdict;
+          aiExplanation = internalAudit.explanation || aiExplanation;
+          if (internalAudit.approved) {
+            aiReviewStatus = 'AI_REVIEWED';
+          }
+        }
+
         if (aiVerdict === 'VETOED') {
           this.logger.warn(`[AUTOMATION] Candidate signal vetoed by Senior AI Desk Reviewer: ${aiExplanation}`);
           return;
         }
 
-        // FAIL-CLOSED REQUIREMENT: Senior AI Desk Review must explicitly be AI_REVIEWED and APPROVED
+        // FAIL-CLOSED REQUIREMENT: Senior Risk Desk Review must explicitly be AI_REVIEWED and APPROVED
         if (aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED') {
           this.logger.warn(`[AUTOMATION] Candidate signal publishing blocked: Senior AI Desk Review requires explicit APPROVED status (status: ${aiReviewStatus}, verdict: ${aiVerdict})`);
           return;
