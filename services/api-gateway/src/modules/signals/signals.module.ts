@@ -1222,11 +1222,12 @@ export class SignalsController implements OnModuleInit {
   public async fetchEconomicNewsGate(): Promise<NewsGateState> {
     const extremeKeywords = [
       'FOMC', 'POWELL', 'CPI', 'CONSUMER PRICE', 'NFP', 'NON-FARM', 'NONFARM', 'EMPLOYMENT CHANGE',
-      'PCE', 'FED RATE', 'FEDERAL FUNDS', 'INTEREST RATE DECISION', 'CORE CPI', 'CORE PCE'
+      'PCE', 'FED RATE', 'FEDERAL FUNDS', 'INTEREST RATE DECISION', 'CORE CPI', 'CORE PCE',
+      'TRUMP', 'PRESIDENT SPEAKS', 'PRESIDENTIAL', 'PRESS CONFERENCE'
     ];
     const highKeywords = [
       'GDP', 'PPI', 'RETAIL SALES', 'RATE', 'UNEMPLOYMENT RATE', 'INITIAL JOBLESS', 'JOBLESS CLAIMS',
-      'ISM MANUFACTURING', 'ISM SERVICES', 'JOLTS'
+      'ISM MANUFACTURING', 'ISM SERVICES', 'JOLTS', 'TREASURY SEC', 'ELECTION'
     ];
 
     const events = await this.getOrFetchCalendarEvents();
