@@ -139,12 +139,13 @@ export class AutomationService {
     }
 
     const reasoning = signal.aiReasoning || {};
-    const grade = reasoning.signal_grade || '';
+    const grade = (reasoning.signal_grade || reasoning.signalGrade || '').toUpperCase();
+    const isInstitutionalGrade = grade.includes('A+') || grade.includes('A') || grade.includes('INSTITUTIONAL');
     const winProb = signal.winProbability || 0;
 
-    // Quality Filter: Only Grade A+, A or win probability >= 75% are executed autonomously
-    if (winProb < 75 && !['A+', 'A'].includes(grade)) {
-      this.logger.log(`[AutoTrade Engine] Signal ${signal.symbol} (${winProb}%, Grade ${grade}) below auto-trade threshold (75%). Standing down.`);
+    // Quality Filter: Only Grade A+, A, Institutional or win probability >= 65% are executed autonomously
+    if (winProb < 65 && !isInstitutionalGrade) {
+      this.logger.log(`[AutoTrade Engine] Signal ${signal.symbol} (${winProb}%, Grade ${grade}) below auto-trade threshold. Standing down.`);
       return { status: 'STAND_DOWN', reason: 'Signal below minimum confidence threshold.' };
     }
 

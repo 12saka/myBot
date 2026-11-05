@@ -108,12 +108,18 @@ export default function GoldOverviewPage() {
     ? ((displayedSignal.aiReasoning as any)?.orderType || (displayedSignal.direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'))
     : 'WAIT';
 
-  const preferredEntry = displayedSignal?.entryPrice ? Number(displayedSignal.entryPrice) : 0;
-  const stopLoss = displayedSignal?.stopLoss ? Number(displayedSignal.stopLoss) : 0;
-  const tp1 = displayedSignal?.takeProfit1 ? Number(displayedSignal.takeProfit1) : 0;
+  const preferredEntry = displayedSignal?.entryPrice 
+    ? Number(displayedSignal.entryPrice) 
+    : (data?.entryPlan?.preferredEntry || p);
+  const stopLoss = displayedSignal?.stopLoss 
+    ? Number(displayedSignal.stopLoss) 
+    : (data?.riskPlan?.exactStopLoss || 0);
+  const tp1 = displayedSignal?.takeProfit1 
+    ? Number(displayedSignal.takeProfit1) 
+    : (data?.riskPlan?.takeProfit1 || 0);
   const tp2 = (displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2)
     ? Number(displayedSignal?.takeProfit2 || (displayedSignal?.aiReasoning as any)?.takeProfit2)
-    : 0;
+    : (data?.riskPlan?.takeProfit2 || 0);
 
   // Real structural levels for Conditional Analytical Scenarios (Properly bounded to intraday structure)
   const struct = data?.structure;

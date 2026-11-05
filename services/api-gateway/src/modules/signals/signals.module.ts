@@ -502,7 +502,13 @@ export class SignalsController implements OnModuleInit {
   private lastScanned1hBar: number = 0;
   private triggeredNewsBlackoutKeys: Set<string> = new Set();
   private lastActiveBlackoutEvent: string | null = null;
-  private isGeneratingSignal: boolean = false;
+  private scanLockPromise: Promise<any> | null = null;
+  get isGeneratingSignal(): boolean {
+    return this.scanLockPromise !== null;
+  }
+  set isGeneratingSignal(_val: boolean) {
+    // backward compatibility
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -1116,11 +1122,15 @@ export class SignalsController implements OnModuleInit {
 
     if (dxyChange1h < -0.15 && us10yChange1h < -0.20) {
       macroAlignment = 'BULLISH';
-      rationale = `Macro Tailwind: Softer USD (${dxyChange1h}%) and lower real yields (${realYieldProxy}%) support non-yielding bullion.`;
+      conflictDetected = true;
+      conflictReason = `Macro Tailwind: Softer USD (${dxyChange1h}%) and lower real yields (${realYieldProxy}%) oppose gold shorts.`;
+      rationale = conflictReason;
     } else if (dxyChange1h > 0.15 && us10yChange1h > 0.20) {
       if (safeHavenDemandScore >= 70) {
         macroAlignment = 'SAFE_HAVEN_DECOUPLING';
-        rationale = 'Safe-Haven Decoupling: USD/Yields firming, but equity risk-off flow supports flight-to-safety gold demand.';
+        conflictDetected = true;
+        conflictReason = 'Safe-Haven Decoupling: Flight-to-safety gold demand opposes aggressive shorting.';
+        rationale = conflictReason;
       } else {
         macroAlignment = 'BEARISH';
         conflictDetected = true;
@@ -1797,7 +1807,7 @@ export class SignalsController implements OnModuleInit {
       totalW += c.weight;
     });
     const preferredEntry = parseFloat((weightedSum / Math.max(1, totalW)).toFixed(2));
-    const minHalfBand = Math.max(0.65, parseFloat((atr15m * 0.18).toFixed(2)));
+    const minHalfBand = Math.max(1.25, parseFloat((atr15m * 0.30).toFixed(2)));
     const zoneLow = parseFloat(Math.min(Math.min(...prices), preferredEntry - minHalfBand).toFixed(2));
     const zoneHigh = parseFloat(Math.max(Math.max(...prices), preferredEntry + minHalfBand).toFixed(2));
     const confluenceFactors = Array.from(new Set(bestCluster.map(c => c.source)));
@@ -2225,7 +2235,7 @@ export class SignalsController implements OnModuleInit {
     else if (macd.histogram > 0) bullEvidence += 6;
 
     // 4. Actionable Execution Triggers (Sweeps, MSS/BOS, Price Retesting Active OB/FVG, or EMA20-50 Pullbacks)
-    const isBullTrend = trend15m === 'BULLISH' || (htfTrend === 'BULLISH' && closedPrice15m >= ema50) || (ema20 > ema50 && closedPrice15m >= ema50);
+    const isBullTrend = trend15m === 'BULLISH' || (htfTrend === 'BULLISH' && closedPrice15m >= ema50) || (ema20 > ema50 && closedPrice15m >= ema50) || (closedPrice15m > ema20 && closedPrice15m > sessionLevels.sessionVwap);
     const isBearTrend = trend15m === 'BEARISH' || (htfTrend === 'BEARISH' && closedPrice15m <= ema50) || (ema20 < ema50 && closedPrice15m <= ema50) || (closedPrice15m < ema20 && closedPrice15m < sessionLevels.sessionVwap);
 
     // Pullbacks must be genuine retracements into the EMA20-EMA50 zone in the direction of the 15M/1H trend
@@ -2303,8 +2313,8 @@ export class SignalsController implements OnModuleInit {
     else if (currentPrice < sessionLevels.sessionVwap) bearEvidence += 5;
 
     // 5. Value Area / Location Edge (Discount favors accumulation ONLY when not in a strong bearish breakdown; Premium favors distribution ONLY when not in a strong bullish breakout)
-    const isStrongBearBreakdown = isBearTrend && adx14 >= 25 && !isBullishReversalContext;
-    const isStrongBullBreakout = isBullTrend && adx14 >= 25 && !isBearishReversalContext;
+    const isStrongBearBreakdown = (isBearTrend || isBearContinuation) && (adx14 >= 25 || htfTrend === 'BEARISH' || trend15m === 'BEARISH') && !isBullishReversalContext;
+    const isStrongBullBreakout = (isBullTrend || isBullContinuation) && (adx14 >= 25 || htfTrend === 'BULLISH' || trend15m === 'BULLISH') && !isBearishReversalContext;
 
     if (localLocationPct <= 35 && !isStrongBearBreakdown) {
       bullEvidence += 12;
@@ -2385,7 +2395,9 @@ export class SignalsController implements OnModuleInit {
     // Stage 2: Directional Bias (4H -> 1H Multi-Timeframe Alignment)
     // Part D Rule: If 4H and 1H trends are in conflict or ranging without an active range-deviation model,
     // the directional bias must be strictly NEUTRAL / NO_TRADE.
-    const isRangeDeviationEligible = (localLocationPct <= 28 && (mss5mBuy || !!latestBullishSweep)) || (localLocationPct >= 72 && (mss5mSell || !!latestBearishSweep));
+    const isRangeDeviationEligible =
+      (localLocationPct <= 38 && (mss5mBuy || bos15mBuy || !!latestBullishSweep)) ||
+      (localLocationPct >= 62 && (mss5mSell || bos15mSell || !!latestBearishSweep));
     const bothRanging = htfTrend === 'RANGING' && trend4h === 'RANGING';
     const htfConflicted = (htfTrend === 'BULLISH' && trend4h === 'BEARISH') || (htfTrend === 'BEARISH' && trend4h === 'BULLISH');
 
@@ -2397,7 +2409,7 @@ export class SignalsController implements OnModuleInit {
       } else if (bothRanging && !isRangeDeviationEligible) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
-      } else if (htfConflicted && trend4h === 'BULLISH' && !isBearishReversalContext && !(localLocationPct >= 70 && mss5mSell)) {
+      } else if (htfConflicted && trend4h === 'BULLISH' && !isBearishReversalContext && !(localLocationPct >= 65 && (mss5mSell || bos15mSell))) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Conflicting Multi-Timeframe Bias: 1H Bearish vs 4H Bullish trend conflict without verified institutional reversal sweep + MSS.';
       } else {
@@ -2411,7 +2423,7 @@ export class SignalsController implements OnModuleInit {
       } else if (bothRanging && !isRangeDeviationEligible) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
-      } else if (htfConflicted && trend4h === 'BEARISH' && !isBullishReversalContext && !(localLocationPct <= 30 && mss5mBuy)) {
+      } else if (htfConflicted && trend4h === 'BEARISH' && !isBullishReversalContext && !(localLocationPct <= 35 && (mss5mBuy || bos15mBuy))) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Conflicting Multi-Timeframe Bias: 1H Bullish vs 4H Bearish trend conflict without verified institutional reversal sweep + MSS.';
       } else {
@@ -2430,19 +2442,19 @@ export class SignalsController implements OnModuleInit {
 
     if (bias === 'BUY') {
       gate3Score = Math.min(96, Math.max(70, bullEvidence));
-      if (intermarket.conflictDetected && bullEvidence < 78) {
+      if (intermarket.macroAlignment === 'BEARISH' && bullEvidence < 78) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'MACRO_TECHNICAL_CONFLICT';
-        gate3Reason = `Technical long vetoed by Macro Conflict: ${intermarket.conflictReason || 'Surging USD and Yields oppose gold'}`;
+        gate3Reason = `Technical long vetoed by Macro Conflict: ${intermarket.conflictReason || 'Surging USD and Yields oppose gold longs'}`;
       }
     } else if (bias === 'SELL') {
       gate3Score = Math.min(96, Math.max(70, bearEvidence));
-      if (intermarket.safeHavenDemandScore >= 88 && intermarket.macroAlignment === 'BULLISH' && bearEvidence < 78) {
+      if ((intermarket.macroAlignment === 'BULLISH' || intermarket.macroAlignment === 'SAFE_HAVEN_DECOUPLING' || intermarket.safeHavenDemandScore >= 75) && bearEvidence < 78) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'MACRO_TECHNICAL_CONFLICT';
-        gate3Reason = `Technical short vetoed: Extreme Safe-Haven Demand (Score: ${intermarket.safeHavenDemandScore}) creates upward breakout risk.`;
+        gate3Reason = `Technical short vetoed by Macro Conflict: ${intermarket.conflictReason || 'Bullish macro tailwinds and safe-haven demand oppose gold shorts'}`;
       }
     } else {
       gate3Passed = false;
@@ -2706,9 +2718,11 @@ export class SignalsController implements OnModuleInit {
           .map(s => s.price);
         if (microLows.length > 0) {
           const bestMicroLow = microLows[microLows.length - 1];
-          entryPrice = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, bestMicroLow + 0.10)).toFixed(2));
+          // Optimal fill calibration: equilibrium between ICZ centroid and micro low
+          const optimalBuyEntry = (icz.preferredEntry + bestMicroLow) / 2;
+          entryPrice = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, optimalBuyEntry)).toFixed(2));
           refinedBy1m = true;
-          refinementReason = `1M Micro Swing Low ($${bestMicroLow.toFixed(2)}) refinement inside ICZ`;
+          refinementReason = `1M Micro Swing Low ($${bestMicroLow.toFixed(2)}) equilibrium refinement inside ICZ`;
         }
       } else {
         const microHighs = swings1m
@@ -2716,18 +2730,24 @@ export class SignalsController implements OnModuleInit {
           .map(s => s.price);
         if (microHighs.length > 0) {
           const bestMicroHigh = microHighs[microHighs.length - 1];
-          entryPrice = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, bestMicroHigh - 0.10)).toFixed(2));
+          // Optimal fill calibration: equilibrium between ICZ centroid and micro high
+          const optimalSellEntry = (icz.preferredEntry + bestMicroHigh) / 2;
+          entryPrice = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, optimalSellEntry)).toFixed(2));
           refinedBy1m = true;
-          refinementReason = `1M Micro Swing High ($${bestMicroHigh.toFixed(2)}) refinement inside ICZ`;
+          refinementReason = `1M Micro Swing High ($${bestMicroHigh.toFixed(2)}) equilibrium refinement inside ICZ`;
         }
       }
     }
 
     // Strict Structural Invalidation (SL) Calculation with Anti-Wick-Hunt Protection:
     // NEVER clamp Stop Loss tighter than the structural invalidation level + adaptiveBuffer!
-    // If the true structural stop is too wide (> 2.2x ATR), Gate 4 rejects the trade via EXCESSIVE_STRUCTURAL_RISK.
-    const adaptiveBuffer = parseFloat(Math.max(1.25, volMetrics.atr15m * 0.45).toFixed(2));
-    const minStopDist = Math.max(3.20, parseFloat((1.05 * volMetrics.atr15m).toFixed(2)));
+    // Incorporates spread cushion for SELL orders to prevent Ask-side stop runs
+    const spreadCushion = parseFloat(Math.max(0.35, microstructure.spread).toFixed(2));
+    const baseBuffer = parseFloat(Math.max(1.85, volMetrics.atr15m * 0.55).toFixed(2));
+    const adaptiveBuffer = structuralDirection === 'SELL'
+      ? parseFloat((baseBuffer + spreadCushion).toFixed(2))
+      : baseBuffer;
+    const minStopDist = Math.max(3.50, parseFloat((1.15 * volMetrics.atr15m).toFixed(2)));
     let exactStopLoss = 0;
     let structuralInvalidationLevel = 0;
 
@@ -3651,7 +3671,7 @@ export class SignalsController implements OnModuleInit {
       return { approved: false, verdict: 'HOLD', explanation: 'Direction is WAIT.' };
     }
 
-    if (!setup.microstructure.isLiquid || setup.newsGate.isBlackout || setup.newsGate.feedOffline) {
+    if ((setup.microstructure && !setup.microstructure.isLiquid) || setup.newsGate?.isBlackout || setup.newsGate?.feedOffline) {
       return {
         approved: false,
         verdict: 'VETOED',
@@ -3686,6 +3706,433 @@ export class SignalsController implements OnModuleInit {
     };
   }
 
+  // Part F & G: Unified Institutional Signal Publisher (Single Source of Truth)
+  // Guarantees atomic insertion, exposure capping, 3-rule duplicate suppression, 15-minute DB safety barrier, and canonical audit trails.
+  private async publishGoldSetup(
+    setup: XauusdInstitutionalSetup,
+    aiExplanation: string,
+    aiVerdict: string,
+    aiReviewStatus: 'AI_REVIEWED' | 'AI_SERVICE_OFFLINE' = 'AI_REVIEWED',
+    now = new Date()
+  ): Promise<any> {
+    // 1. Cap at configured max concurrent active signals (default 3)
+    const maxSignals = XAUUSD_ENGINE_CONFIG.signalManagement.maxActiveSignalsPerAsset || 3;
+    const activeSignals = await this.getActiveGoldSignals(maxSignals);
+    if (activeSignals.length >= maxSignals) {
+      this.logger.log(`[PUBLISHER] Scan complete: Active signal ceiling reached (${activeSignals.length}/${maxSignals}).`);
+      return activeSignals[0];
+    }
+
+    // 2. Portfolio Exposure Cap (Part F Rule 4 & Part B)
+    const maxCombinedRiskR = XAUUSD_ENGINE_CONFIG.signalManagement.maxCombinedRiskR || 2.0;
+    const currentCombinedRiskR = activeSignals.reduce((acc, s) => {
+      const posRisk = (s.aiReasoning as any)?.positionSizing?.riskPercent || 1.0;
+      return acc + posRisk;
+    }, 0);
+    const candidateRiskR = setup.positionSizing?.riskPercent || 1.0;
+    if (currentCombinedRiskR + candidateRiskR > maxCombinedRiskR) {
+      this.logger.log(`[PUBLISHER] Exposure cap reached (${currentCombinedRiskR.toFixed(1)}R + ${candidateRiskR.toFixed(1)}R > ${maxCombinedRiskR}R max).`);
+      return activeSignals[0] || null;
+    }
+
+    // 3. Part F Rule 2: 3-rule duplicate setup suppression
+    const dupCheck = this.checkIsDuplicateCandidate(setup, activeSignals);
+    if (dupCheck.isDuplicate && dupCheck.matchingSignal) {
+      const matchingSig = dupCheck.matchingSignal;
+      const matchingReasoning = (matchingSig.aiReasoning as any) || {};
+      const revalEvent: SignalLifecycleEvent = {
+        timestamp: now.toISOString(),
+        state: matchingReasoning.lifecycleState || matchingReasoning.status || 'WAITING_FOR_ENTRY',
+        price: setup.levels.currentPrice,
+        reason: 'REVALIDATED',
+        details: `Candidate setup matched active signal (${dupCheck.reason}). Refreshed lastValidatedAt.`
+      };
+      const updated = await this.prisma.signal.update({
+        where: { id: matchingSig.id },
+        data: {
+          aiReasoning: {
+            ...matchingReasoning,
+            lastValidatedAt: now.toISOString(),
+            lifecycleEvents: this.appendLifecycleEvent(matchingReasoning, revalEvent)
+          }
+        }
+      });
+      this.notificationsGateway.server.emit('signal:updated', updated);
+      this.logger.log(`[LIFECYCLE] Duplicate setup suppressed. Refreshed lastValidatedAt on ${matchingSig.id} (${matchingReasoning.publicId || matchingSig.id}) due to ${dupCheck.reason}.`);
+      return updated;
+    }
+
+    // 4. Database Safety Barrier: 15-minute idempotency check for twin signals
+    const recentSignals = await this.prisma.signal.findMany({
+      where: {
+        symbol: 'GOLD',
+        direction: setup.direction,
+        createdAt: { gte: new Date(now.getTime() - 15 * 60 * 1000) }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5
+    });
+    const atr15m = Math.max(1, setup.volatilityMetrics?.atr15m || 5);
+    for (const recent of recentSignals) {
+      const entryDiff = Math.abs(Number(recent.entryPrice) - setup.entryPrice);
+      const slDiff = Math.abs(Number(recent.stopLoss) - setup.stopLoss);
+      if (entryDiff <= 0.5 * atr15m || slDiff <= 0.5 * atr15m) {
+        this.logger.log(`[PUBLISHER] Suppression: Twin record already created within 15m (${recent.id}, diff: $${entryDiff.toFixed(2)}). Skipping duplicate insert.`);
+        return recent;
+      }
+    }
+
+    // 5. Part F Rule 6: Opposing-Signal Policy (INVALIDATE_OLD_THESIS_BEFORE_REVERSAL)
+    const opposing = activeSignals.find(s => s.direction !== setup.direction);
+    if (opposing) {
+      const opReasoning = (opposing.aiReasoning as any) || {};
+      const opStatus = opReasoning.status || 'ACTIVE';
+      const isOpFilled = opReasoning.isOrderFilled || opStatus === 'POSITION_OPEN' || opStatus === 'PARTIALLY_FILLED';
+
+      if (isOpFilled) {
+        this.logger.warn(`[LIFECYCLE] Active opposing ${opposing.direction} position (${opposing.id}) is live. Blocking executable ${setup.direction} signal per portfolio risk policy.`);
+        return opposing;
+      }
+
+      // Opposing is WAITING_FOR_ENTRY (unfilled)
+      const opSl = Number(opposing.stopLoss);
+      const opInvalidated = (opposing.direction === 'BUY' && setup.levels.currentPrice <= opSl) ||
+                            (opposing.direction === 'SELL' && setup.levels.currentPrice >= opSl);
+
+      if (opInvalidated || (setup.fiveGates.allPassed && setup.finalValidationChecklist?.allPassed)) {
+        const opInvEvent: SignalLifecycleEvent = {
+          timestamp: now.toISOString(),
+          state: 'INVALIDATED',
+          price: setup.levels.currentPrice,
+          reason: 'OPPOSING_THESIS_INVALIDATION',
+          details: `Pending ${opposing.direction} order invalidated by structural shift into ${setup.direction}.`
+        };
+        const updatedOp = await this.prisma.signal.update({
+          where: { id: opposing.id },
+          data: {
+            aiReasoning: {
+              ...opReasoning,
+              status: 'CLOSED',
+              lifecycleState: 'INVALIDATED',
+              outcome: 'CANCELLED',
+              closeReason: 'OPPOSING_THESIS_INVALIDATION',
+              closedAt: now.toISOString(),
+              lastValidatedAt: now.toISOString(),
+              lastStatusChange: now.toISOString(),
+              lifecycleEvents: this.appendLifecycleEvent(opReasoning, opInvEvent)
+            }
+          }
+        });
+        this.notificationsGateway.server.emit('signal:updated', updatedOp);
+        await this.notificationsGateway.broadcastTradeSignalNotification(
+          `🔄 Pending Order Invalidated: ${opposing.direction} Gold`,
+          `Pending ${opposing.direction} order cancelled due to structural trend reversal into ${setup.direction}.`,
+          '/dashboard/engines/gold',
+          'ORDER_CANCELLED'
+        );
+        this.logger.log(`[LIFECYCLE] Opposing pending signal ${opposing.id} marked INVALIDATED before publishing new ${setup.direction} signal.`);
+      } else {
+        this.logger.log(`[LIFECYCLE] Opposing pending signal ${opposing.id} is still valid. Blocking publication of conflicting ${setup.direction} signal.`);
+        return opposing;
+      }
+    }
+
+    // 6. Canonical Signal Creation
+    const isImmediateMarket = setup.orderType.includes('MARKET');
+    const initialLifecycleState = isImmediateMarket ? 'POSITION_OPEN' : 'WAITING_FOR_ENTRY';
+    const orderValidityExpiresAt = new Date(Date.now() + setup.invalidationAndExpiry.orderExpiryHours * 60 * 60 * 1000).toISOString();
+
+    const publicId = await this.generateInstitutionalSignalId(now);
+    const initialEvent: SignalLifecycleEvent = {
+      timestamp: now.toISOString(),
+      state: initialLifecycleState,
+      price: setup.entryPrice,
+      reason: 'SIGNAL_PUBLISHED',
+      details: `Published ${setup.grade} ${setup.orderType} (Score: ${setup.opportunityScore}, EV: +${setup.tradePath.expectedValueR}R)`
+    };
+
+    const createdSignal = await this.prisma.signal.create({
+      data: {
+        symbol: 'GOLD',
+        direction: setup.direction,
+        entryPrice: setup.entryPrice,
+        stopLoss: setup.stopLoss,
+        takeProfit1: setup.takeProfit1,
+        takeProfit2: setup.takeProfit2,
+        riskRewardRatio: setup.riskReward1,
+        winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
+        confluenceScore: setup.opportunityScore,
+        durationEstimate: '4-8 hours',
+        aiReasoning: {
+          publicId,
+          status: initialLifecycleState,
+          lifecycleState: initialLifecycleState,
+          isOrderFilled: isImmediateMarket,
+          filledAt: isImmediateMarket ? new Date().toISOString() : null,
+          filledPrice: isImmediateMarket ? setup.entryPrice : null,
+          orderValidityExpiresAt,
+          orderType: setup.orderType,
+          entryZone: setup.entryZone,
+          strategy: setup.model,
+          signalGrade: setup.grade,
+          opportunityScore: setup.opportunityScore,
+          confluenceScore: setup.opportunityScore,
+          marketBiasScore: setup.marketBiasScore,
+          entryQualityScore: setup.entryQualityScore,
+          fiveGates: setup.fiveGates,
+          finalValidationChecklist: setup.finalValidationChecklist,
+          tradePath: setup.tradePath,
+          invalidationAndExpiry: setup.invalidationAndExpiry,
+          positionSizing: setup.positionSizing,
+          auditTrail: setup.auditTrail,
+          indicators: setup.confluenceReasons,
+          explanation: aiExplanation,
+          aiReviewVerdict: aiVerdict,
+          aiReviewStatus,
+          levels: setup.levels,
+          marketRegime: setup.marketRegime,
+          volatilityMetrics: setup.volatilityMetrics,
+          volumeProfile: setup.volumeProfile,
+          microstructure: setup.microstructure,
+          intermarket: setup.intermarket,
+          lastValidatedAt: now.toISOString(),
+          lifecycleEvents: [initialEvent],
+          timeframe: '15m'
+        } as any,
+        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+      }
+    });
+
+    this.notificationsGateway.server.emit('signal:created', createdSignal);
+    await this.notificationsGateway.broadcastTradeSignalNotification(
+      `⚡ Live Institutional Gold Signal (${setup.grade}) [${publicId}]`,
+      `${setup.direction} XAU/USD ${setup.orderType.replace(/_/g, ' ')} @ $${setup.entryPrice.toFixed(2)} | TP1: $${setup.takeProfit1.toFixed(2)} | SL: $${setup.stopLoss.toFixed(2)}`,
+      '/dashboard/engines/gold'
+    );
+
+    // Autonomous Broker Execution Dispatch (MT5 & connected broker accounts)
+    try {
+      await this.automationService.processSignalAutoTrade({
+        id: createdSignal.id,
+        symbol: 'GOLD',
+        direction: setup.direction,
+        entryPrice: setup.entryPrice,
+        stopLoss: setup.stopLoss,
+        takeProfit1: setup.takeProfit1,
+        takeProfit2: setup.takeProfit2,
+        riskRewardRatio: setup.riskReward1,
+        winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
+        aiReasoning: {
+          ...(createdSignal.aiReasoning as any),
+          signal_grade: setup.grade,
+          signalGrade: setup.grade,
+          orderType: setup.orderType
+        }
+      });
+    } catch (autoErr: any) {
+      this.logger.warn(`[AutoTrade Engine] Broker dispatch notice: ${autoErr.message}`);
+    }
+
+    this.logger.log(`[PUBLISHER] Published canonical signal ${createdSignal.id} (${publicId}) ${setup.direction} @ $${setup.entryPrice.toFixed(2)}`);
+    return createdSignal;
+  }
+
+  // Atomic Single-Flight Execution Mutex for Gold Scanning & Publishing
+  async runAtomicGoldScan(options?: { forceFresh?: boolean }): Promise<any> {
+    if (this.scanLockPromise) {
+      if (options?.forceFresh) {
+        this.logger.log('[runAtomicGoldScan] forceFresh requested while scan in-flight. Waiting for current scan to complete before fresh execution.');
+        try {
+          await this.scanLockPromise;
+        } catch (_) {}
+      } else {
+        this.logger.log('[runAtomicGoldScan] Concurrent scan coalesced into in-flight execution.');
+        return this.scanLockPromise;
+      }
+    }
+
+    this.scanLockPromise = (async () => {
+      try {
+        return await this.executeGoldScan(options);
+      } finally {
+        this.scanLockPromise = null;
+      }
+    })();
+
+    return this.scanLockPromise;
+  }
+
+  // Internal execution of gold scan & evaluation
+  private async executeGoldScan(options?: { forceFresh?: boolean }): Promise<any> {
+    const now = new Date();
+    const day = now.getUTCDay();
+    const hour = now.getUTCHours();
+    if (!options?.forceFresh && (day === 6 || (day === 0 && hour < 22) || (day === 5 && hour >= 22))) {
+      return null;
+    }
+
+    if (options?.forceFresh) {
+      // Force fresh requested: safely retire only pending unfilled limit orders
+      const candidateSignals = await this.prisma.signal.findMany({
+        where: {
+          symbol: 'GOLD',
+          direction: { in: ['BUY', 'SELL'] }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      });
+
+      for (const sig of candidateSignals) {
+        const r = (sig.aiReasoning as any) || {};
+        const isFilled = Boolean(r.isOrderFilled || r.status === 'POSITION_OPEN' || r.status === 'PARTIALLY_FILLED' || r.lifecycleState === 'POSITION_OPEN' || r.lifecycleState === 'PARTIALLY_FILLED');
+        if (!isFilled && this.isSignalActive(sig)) {
+          const updatedSig = await this.prisma.signal.update({
+            where: { id: sig.id },
+            data: {
+              expiresAt: new Date(),
+              aiReasoning: {
+                ...r,
+                status: 'CLOSED',
+                lifecycleState: 'CANCELLED',
+                outcome: 'CANCELLED',
+                closeReason: 'SUPERSEDED_BY_FRESH_SCAN',
+                closedAt: new Date().toISOString(),
+                lastStatusChange: new Date().toISOString(),
+                cancellationDetail: 'Pending limit order retired by manual force-fresh signal generation request.'
+              }
+            }
+          });
+          this.notificationsGateway.server.emit('signal:updated', updatedSig);
+          this.logger.log(`[SignalsController] Pending signal ${sig.id} retired via forceFresh.`);
+        }
+      }
+    }
+
+    const setup = await this.getOrComputeGoldSetup();
+
+    const gatesPassed = setup.fiveGates.allPassed && setup.finalValidationChecklist?.allPassed;
+    const hasDirection = setup.direction === 'BUY' || setup.direction === 'SELL';
+    const hasScore = setup.opportunityScore >= 70;
+
+    let aiVerdict = gatesPassed ? 'APPROVED' : 'HOLD';
+    let aiExplanation = setup.summary;
+    let aiReviewStatus: 'AI_REVIEWED' | 'AI_SERVICE_OFFLINE' = 'AI_SERVICE_OFFLINE';
+
+    if (gatesPassed && hasDirection && hasScore) {
+      try {
+        const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+        const aiRes = await this.fetchWithTimeout(`${aiServiceUrl}/ai/predict`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-AI-API-Key': process.env.AI_SERVICE_API_KEY || 'internal-secret-key'
+          },
+          body: JSON.stringify({
+            symbol: 'GOLD',
+            timeframe: '15m',
+            setup: {
+              direction: setup.direction,
+              entry: setup.entryPrice,
+              stop_loss: setup.stopLoss,
+              take_profit_1: setup.takeProfit1,
+              take_profit_2: setup.takeProfit2,
+              model: setup.model,
+              grade: setup.grade,
+              score: setup.opportunityScore,
+              risk_reward_ratio_tp1: setup.riskReward1,
+              risk_reward_ratio_tp2: setup.riskReward2,
+              confluence_reasons: setup.confluenceReasons,
+              levels: setup.levels,
+            },
+            session: setup.hierarchy?.level1_marketEnvironment?.session || (setup.levels as any)?.session || 'Active Session',
+            intermarket: setup.intermarket,
+            microstructure: setup.microstructure,
+            news_gate: setup.newsGate,
+            market_regime: setup.marketRegime,
+            volatility_metrics: setup.volatilityMetrics,
+            volume_profile: setup.volumeProfile,
+            expectancy: {
+              ...setup.tradePath,
+              calibratedWinRateTp1: setup.tradePath.probTp1BeforeSl
+            },
+            position_sizing: setup.positionSizing
+          })
+        }, 5000);
+
+        if (aiRes.ok) {
+          const aiJson = await aiRes.json();
+          if (aiJson && aiJson.ai_review_verdict) {
+            const rawV = String(aiJson.ai_review_verdict).toUpperCase();
+            aiVerdict = rawV === 'VETOED' ? 'VETOED' : (rawV === 'APPROVED' || rawV === 'CONDITIONAL') ? 'APPROVED' : rawV;
+            aiExplanation = aiJson.ai_explanation || aiExplanation;
+            aiReviewStatus = 'AI_REVIEWED';
+          }
+        }
+      } catch (e: any) {
+        this.logger.warn(`[runAtomicGoldScan] AI service desk review check notice: ${e.message}`);
+      }
+
+      if (aiVerdict !== 'VETOED' && (aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED')) {
+        const internalAudit = this.performInternalSeniorRiskDeskAudit(setup);
+        aiVerdict = internalAudit.verdict;
+        aiExplanation = internalAudit.explanation || aiExplanation;
+        if (internalAudit.approved) {
+          aiReviewStatus = 'AI_REVIEWED';
+        }
+      }
+
+      if (aiVerdict === 'APPROVED' && aiReviewStatus === 'AI_REVIEWED') {
+        const published = await this.publishGoldSetup(setup, aiExplanation, aiVerdict, aiReviewStatus, now);
+        return published;
+      }
+    }
+
+    return {
+      id: `gold-wait-${Date.now()}`,
+      symbol: 'GOLD',
+      direction: 'WAIT',
+      orderType: setup.orderType,
+      entryPrice: setup.entryPrice,
+      entryZone: setup.entryZone,
+      stopLoss: setup.stopLoss,
+      takeProfit1: setup.takeProfit1,
+      takeProfit2: setup.takeProfit2,
+      riskRewardRatio: setup.riskReward1,
+      winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
+      durationEstimate: 'Awaiting Gate Clearance',
+      aiReasoning: {
+        status: 'WAIT',
+        failedGate: setup.fiveGates.failingGate,
+        fiveGates: setup.fiveGates,
+        finalValidationChecklist: setup.finalValidationChecklist,
+        orderType: setup.orderType,
+        entryZone: setup.entryZone,
+        strategy: setup.model,
+        signalGrade: setup.grade,
+        opportunityScore: setup.opportunityScore,
+        marketBiasScore: setup.marketBiasScore,
+        entryQualityScore: setup.entryQualityScore,
+        tradePath: setup.tradePath,
+        invalidationAndExpiry: setup.invalidationAndExpiry,
+        indicators: setup.confluenceReasons,
+        explanation: aiExplanation,
+        aiVerdict: aiVerdict === 'VETOED' ? 'VETOED' : 'HOLD',
+        levels: setup.levels,
+        marketRegime: setup.marketRegime,
+        volatilityMetrics: setup.volatilityMetrics,
+        volumeProfile: setup.volumeProfile,
+        microstructure: setup.microstructure,
+        intermarket: setup.intermarket,
+        killSwitchActive: setup.killSwitchActive,
+        killSwitchTier: setup.killSwitchTier,
+        killSwitchReason: setup.killSwitchReason,
+        timeframe: '15m'
+      },
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 180 * 1000)
+    };
+  }
+
   @Get('gold/overview')
   @ApiOperation({ summary: 'Institutional Gold Engine V2 - Comprehensive Cockpit Snapshot' })
   async getGoldOverview() {
@@ -3698,10 +4145,9 @@ export class SignalsController implements OnModuleInit {
         setup.fiveGates.allPassed &&
         setup.finalValidationChecklist?.allPassed &&
         (setup.direction === 'BUY' || setup.direction === 'SELL') &&
-        setup.opportunityScore >= 70 &&
-        !this.isGeneratingSignal
+        setup.opportunityScore >= 70
       ) {
-        await this.handlePeriodicXauusdScan();
+        await this.runAtomicGoldScan();
       }
 
       const activeSignals = await this.getActiveGoldSignals(3);
@@ -3825,15 +4271,15 @@ export class SignalsController implements OnModuleInit {
         }
       }
 
-      // Top-level entry & risk telemetry MUST strictly reflect the locked active signal (or 0 when in WAIT scanning mode)
-      const effectiveEntry = activeSignal ? Number(activeSignal.entryPrice) : 0;
-      const effectiveSl = activeSignal ? Number(activeSignal.stopLoss) : 0;
-      const effectiveTp1 = activeSignal ? Number(activeSignal.takeProfit1) : 0;
-      const effectiveTp2 = activeSignal ? Number(activeSignal.takeProfit2 || (activeSignal.aiReasoning as any)?.takeProfit2 || 0) : 0;
-      const effectiveTp3 = activeSignal ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || 0) : 0;
+      // Top-level entry & risk telemetry: reflects active signal when open, or live candidate setup when scanning
+      const effectiveEntry = activeSignal ? Number(activeSignal.entryPrice) : setup.entryPrice;
+      const effectiveSl = activeSignal ? Number(activeSignal.stopLoss) : setup.stopLoss;
+      const effectiveTp1 = activeSignal ? Number(activeSignal.takeProfit1) : setup.takeProfit1;
+      const effectiveTp2 = activeSignal ? Number(activeSignal.takeProfit2 || (activeSignal.aiReasoning as any)?.takeProfit2 || setup.takeProfit2) : setup.takeProfit2;
+      const effectiveTp3 = activeSignal ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || setup.takeProfit2) : setup.takeProfit2;
       const effectiveZone: [number, number] = activeSignal && Array.isArray((activeSignal.aiReasoning as any)?.entryZone)
         ? (activeSignal.aiReasoning as any).entryZone
-        : [0, 0];
+        : setup.entryZone;
       const effectiveR1 = activeSignal ? Number(activeSignal.riskRewardRatio || setup.riskReward1) : setup.riskReward1;
       const effectiveConfidence = activeSignal ? (activeSignal.confluenceScore ?? activeSignal.winProbability ?? setup.opportunityScore) : setup.opportunityScore;
       const effectiveStrategy = activeSignal
@@ -3909,6 +4355,20 @@ export class SignalsController implements OnModuleInit {
         signalGrade: effectiveGrade,
         activeSignal: activeSignal || null,
         activeSignals,
+        candidateSetup: {
+          direction: setup.direction,
+          orderType: setup.orderType,
+          entryPrice: setup.entryPrice,
+          entryZone: setup.entryZone,
+          stopLoss: setup.stopLoss,
+          takeProfit1: setup.takeProfit1,
+          takeProfit2: setup.takeProfit2,
+          riskRewardRatio: setup.riskReward1,
+          expectedValueR: setup.tradePath.expectedValueR,
+          grade: setup.grade,
+          opportunityScore: setup.opportunityScore,
+          model: setup.model
+        },
         fiveGatesAudit: auditGates,
         macro: {
           dxyPrice: setup.intermarket.dxy,
@@ -4530,261 +4990,7 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
-    if (this.isGeneratingSignal) {
-      this.logger.log('[SignalsController] Signal generation request received while another scan is in-flight. Awaiting resolution...');
-      let waited = 0;
-      while (this.isGeneratingSignal && waited < 3000) {
-        await new Promise(r => setTimeout(r, 200));
-        waited += 200;
-      }
-      const existing = await this.getActiveGoldSignal();
-      if (existing) return existing;
-    }
-
-    this.isGeneratingSignal = true;
-
-    try {
-      if (dto.forceFresh) {
-        // Force fresh requested: safely retire only pending unfilled limit orders
-        // NEVER cancel live active market positions (POSITION_OPEN / PARTIALLY_FILLED)
-        const candidateSignals = await this.prisma.signal.findMany({
-          where: {
-            symbol: 'GOLD',
-            direction: { in: ['BUY', 'SELL'] }
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 10
-        });
-
-        for (const sig of candidateSignals) {
-          const r = (sig.aiReasoning as any) || {};
-          const isFilled = Boolean(r.isOrderFilled || r.status === 'POSITION_OPEN' || r.status === 'PARTIALLY_FILLED' || r.lifecycleState === 'POSITION_OPEN' || r.lifecycleState === 'PARTIALLY_FILLED');
-          if (!isFilled && this.isSignalActive(sig)) {
-            const updatedSig = await this.prisma.signal.update({
-              where: { id: sig.id },
-              data: {
-                expiresAt: new Date(),
-                aiReasoning: {
-                  ...r,
-                  status: 'CLOSED',
-                  lifecycleState: 'CANCELLED',
-                  outcome: 'CANCELLED',
-                  closeReason: 'SUPERSEDED_BY_FRESH_SCAN',
-                  closedAt: new Date().toISOString(),
-                  lastStatusChange: new Date().toISOString(),
-                  cancellationDetail: 'Pending limit order retired by manual force-fresh signal generation request.'
-                }
-              }
-            });
-            this.notificationsGateway.server.emit('signal:updated', updatedSig);
-            this.logger.log(`[SignalsController] Pending signal ${sig.id} retired via forceFresh.`);
-          }
-        }
-      }
-
-      // 1. Ingest Multi-timeframe Candles & Evaluate 5-Gate Decision Pipeline across W1, D1, 4H, 1H, 15M, 5M, 1M
-      const setup = await this.getOrComputeGoldSetup();
-
-      // 4. Contextual AI Reviewer (Gemini Context Layer - Auditable explainability)
-      let aiExplanation = setup.summary;
-      let aiVerdict = setup.fiveGates.allPassed ? 'APPROVED' : 'HOLD';
-      let aiReviewStatus: 'AI_REVIEWED' | 'AI_SERVICE_OFFLINE' = 'AI_SERVICE_OFFLINE';
-
-      try {
-        const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-        const aiRes = await this.fetchWithTimeout(`${aiServiceUrl}/ai/predict`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-AI-API-Key': process.env.AI_SERVICE_API_KEY || 'internal-secret-key'
-          },
-          body: JSON.stringify({
-            symbol: 'GOLD',
-            timeframe: dto.interval || '15m',
-            setup: {
-              direction: setup.direction,
-              entry: setup.entryPrice,
-              stop_loss: setup.stopLoss,
-              take_profit_1: setup.takeProfit1,
-              take_profit_2: setup.takeProfit2,
-              model: setup.model,
-              grade: setup.grade,
-              score: setup.opportunityScore,
-              risk_reward_ratio_tp1: setup.riskReward1,
-              confluence_reasons: setup.fiveGates.allPassed
-                ? setup.confluenceReasons
-                : [setup.fiveGates.gate3_setup.reason || setup.summary || 'Awaiting clean session liquidity sweep and displacement.'],
-            },
-            session: setup.hierarchy?.level1_marketEnvironment?.session || (setup.levels as any)?.session || 'Active Session',
-            intermarket: setup.intermarket,
-            microstructure: setup.microstructure,
-            news_gate: setup.newsGate,
-            market_regime: setup.marketRegime,
-            volatility_metrics: setup.volatilityMetrics,
-            volume_profile: setup.volumeProfile,
-            expectancy: {
-              ...setup.tradePath,
-              calibratedWinRateTp1: setup.tradePath.probTp1BeforeSl
-            },
-            position_sizing: setup.positionSizing
-          })
-        }, 5000);
-
-        if (aiRes.ok) {
-          const aiJson = await aiRes.json();
-          if (aiJson && aiJson.ai_explanation) {
-            aiExplanation = aiJson.ai_explanation;
-            const rawV = String(aiJson.ai_review_verdict || aiVerdict).toUpperCase();
-            aiVerdict = rawV === 'VETOED' ? 'VETOED' : (rawV === 'APPROVED' || rawV === 'CONDITIONAL') ? 'APPROVED' : rawV;
-            aiReviewStatus = 'AI_REVIEWED';
-          }
-        }
-      } catch (e: any) {
-        this.logger.warn(`[SignalsController] AI service review notice: ${e.message}`);
-      }
-
-      // If external AI service was unreachable or returned HOLD without an explicit VETO,
-      // run the deterministic in-process Senior Risk Desk Audit (5-Gate + 11-Point Checklist + Directional Geometry)
-      if (aiVerdict !== 'VETOED' && (aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED')) {
-        const internalAudit = this.performInternalSeniorRiskDeskAudit(setup);
-        aiVerdict = internalAudit.verdict;
-        aiExplanation = internalAudit.explanation || aiExplanation;
-        if (internalAudit.approved) {
-          aiReviewStatus = 'AI_REVIEWED';
-        }
-      }
-
-      // 5. Senior AI Desk Reviewer VETO & Fail-Closed Enforcement:
-      if (aiVerdict === 'VETOED' || aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED') {
-        const reason = aiVerdict === 'VETOED'
-          ? `Vetoed by Senior AI Desk Reviewer: ${aiExplanation}`
-          : `Held at Desk: ${aiExplanation}`;
-        this.logger.warn(`[SignalsController] Gold candidate held: ${reason}`);
-        setup.direction = 'WAIT';
-        setup.orderType = 'WAIT';
-        setup.fiveGates.allPassed = false;
-        setup.fiveGates.failingGate = 'GEMINI_DESK_VETO';
-        setup.fiveGates.failingReason = reason;
-      }
-
-      if (!dto.forceFresh) {
-        const syncedExisting = await this.syncActiveGoldSignalWithLiveSetup(setup);
-        if (syncedExisting) {
-          return syncedExisting;
-        }
-      }
-
-      if (setup.fiveGates.allPassed && aiReviewStatus === 'AI_REVIEWED' && aiVerdict === 'APPROVED' && (setup.direction === 'BUY' || setup.direction === 'SELL') && setup.opportunityScore >= 70) {
-        const isImmediateMarket = setup.orderType.includes('MARKET');
-        const initialLifecycleState = isImmediateMarket ? 'POSITION_OPEN' : 'WAITING_FOR_ENTRY';
-        const orderValidityExpiresAt = new Date(Date.now() + setup.invalidationAndExpiry.orderExpiryHours * 60 * 60 * 1000).toISOString();
-
-        const createdSignal = await this.prisma.signal.create({
-          data: {
-            symbol: 'GOLD',
-            direction: setup.direction,
-            entryPrice: setup.entryPrice,
-            stopLoss: setup.stopLoss,
-            takeProfit1: setup.takeProfit1,
-            takeProfit2: setup.takeProfit2,
-            riskRewardRatio: setup.riskReward1,
-            winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
-            confluenceScore: setup.opportunityScore,
-            durationEstimate: '4-8 hours',
-            aiReasoning: {
-              status: initialLifecycleState,
-              lifecycleState: initialLifecycleState,
-              isOrderFilled: isImmediateMarket,
-              filledAt: isImmediateMarket ? new Date().toISOString() : null,
-              filledPrice: isImmediateMarket ? setup.entryPrice : null,
-              orderValidityExpiresAt,
-              orderType: setup.orderType,
-              entryZone: setup.entryZone,
-              strategy: setup.model,
-              signalGrade: setup.grade,
-              opportunityScore: setup.opportunityScore,
-              confluenceScore: setup.opportunityScore,
-              marketBiasScore: setup.marketBiasScore,
-              entryQualityScore: setup.entryQualityScore,
-              fiveGates: setup.fiveGates,
-              tradePath: setup.tradePath,
-              invalidationAndExpiry: setup.invalidationAndExpiry,
-              positionSizing: setup.positionSizing,
-              auditTrail: setup.auditTrail,
-              indicators: setup.confluenceReasons,
-              explanation: aiExplanation,
-              aiVerdict,
-              aiReviewStatus,
-              levels: setup.levels,
-              marketRegime: setup.marketRegime,
-              volatilityMetrics: setup.volatilityMetrics,
-              volumeProfile: setup.volumeProfile,
-              microstructure: setup.microstructure,
-              intermarket: setup.intermarket,
-              timeframe: '15m'
-            } as any,
-            expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
-          }
-        });
-
-        // Instant Real-Time WebSocket Delivery to all active users & clients
-        this.notificationsGateway.server.emit('signal:created', createdSignal);
-        await this.notificationsGateway.broadcastTradeSignalNotification(
-          `⚡ Live Institutional Gold Signal (${setup.grade})`,
-          `${setup.direction} XAU/USD ${setup.orderType.replace(/_/g, ' ')} at $${setup.entryPrice.toFixed(2)} | TP1: $${setup.takeProfit1.toFixed(2)} | SL: $${setup.stopLoss.toFixed(2)}`,
-          '/dashboard/engines/gold'
-        );
-
-        return createdSignal;
-      }
-
-      // 6. Return transparent first-class WAIT response with exact gate diagnosis
-      return {
-        id: `gold-wait-${Date.now()}`,
-        symbol: 'GOLD',
-        direction: 'WAIT',
-        orderType: setup.orderType,
-        entryPrice: setup.entryPrice,
-        entryZone: setup.entryZone,
-        stopLoss: setup.stopLoss,
-        takeProfit1: setup.takeProfit1,
-        takeProfit2: setup.takeProfit2,
-        riskRewardRatio: setup.riskReward1,
-        winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
-        durationEstimate: 'Awaiting Gate Clearance',
-        aiReasoning: {
-          status: 'WAIT',
-          failedGate: setup.fiveGates.failingGate,
-          fiveGates: setup.fiveGates,
-          orderType: setup.orderType,
-          entryZone: setup.entryZone,
-          strategy: setup.model,
-          signalGrade: setup.grade,
-          opportunityScore: setup.opportunityScore,
-          marketBiasScore: setup.marketBiasScore,
-          entryQualityScore: setup.entryQualityScore,
-          tradePath: setup.tradePath,
-          invalidationAndExpiry: setup.invalidationAndExpiry,
-          indicators: setup.confluenceReasons,
-          explanation: aiExplanation,
-          aiVerdict: 'HOLD',
-          levels: setup.levels,
-          marketRegime: setup.marketRegime,
-          volatilityMetrics: setup.volatilityMetrics,
-          volumeProfile: setup.volumeProfile,
-          microstructure: setup.microstructure,
-          intermarket: setup.intermarket,
-          killSwitchActive: setup.killSwitchActive,
-          killSwitchTier: setup.killSwitchTier,
-          killSwitchReason: setup.killSwitchReason,
-          timeframe: '15m'
-        },
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 180 * 1000)
-      };
-    } finally {
-      this.isGeneratingSignal = false;
-    }
+    return await this.runAtomicGoldScan({ forceFresh: dto.forceFresh });
   }
 
   // Clock-Aligned Candle-Close Engine Heartbeat (Every 5 seconds check)
@@ -5053,284 +5259,10 @@ export class SignalsController implements OnModuleInit {
 
   // Completed-Candle Gold Analysis Scanner (Triggered on completed 5M candle close)
   async handlePeriodicXauusdScan() {
-    if (this.isGeneratingSignal) {
-      this.logger.log('[AUTOMATION] Periodic scan skipped: generation mutex is locked by in-flight scan.');
-      return;
-    }
-
-    this.isGeneratingSignal = true;
-
     try {
-      const now = new Date();
-      const day = now.getUTCDay();
-      const hour = now.getUTCHours();
-      if (day === 6 || (day === 0 && hour < 22) || (day === 5 && hour >= 22)) return;
-
-      const setup = await this.getOrComputeGoldSetup();
-
-      // Cap at configured max concurrent active signals (default 3)
-      const maxSignals = XAUUSD_ENGINE_CONFIG.signalManagement.maxActiveSignalsPerAsset || 3;
-      const activeSignals = await this.getActiveGoldSignals(maxSignals);
-      if (activeSignals.length >= maxSignals) {
-        this.logger.log(`[AUTOMATION] Scan complete: Active signal ceiling reached (${activeSignals.length}/${maxSignals}).`);
-        return;
-      }
-
-      // Portfolio Exposure Cap (Part F Rule 4 & Part B)
-      const maxCombinedRiskR = XAUUSD_ENGINE_CONFIG.signalManagement.maxCombinedRiskR || 2.0;
-      const currentCombinedRiskR = activeSignals.reduce((acc, s) => {
-        const posRisk = (s.aiReasoning as any)?.positionSizing?.riskPercent || 1.0;
-        return acc + posRisk;
-      }, 0);
-      const candidateRiskR = setup.positionSizing?.riskPercent || 1.0;
-      if (currentCombinedRiskR + candidateRiskR > maxCombinedRiskR) {
-        this.logger.log(`[AUTOMATION] Scan complete: Exposure cap reached (${currentCombinedRiskR.toFixed(1)}R + ${candidateRiskR.toFixed(1)}R > ${maxCombinedRiskR}R max).`);
-        return;
-      }
-
-      // Part F Rule 2: 3-rule duplicate setup suppression
-      const dupCheck = this.checkIsDuplicateCandidate(setup, activeSignals);
-      if (dupCheck.isDuplicate && dupCheck.matchingSignal) {
-        const matchingSig = dupCheck.matchingSignal;
-        const matchingReasoning = (matchingSig.aiReasoning as any) || {};
-        const revalEvent: SignalLifecycleEvent = {
-          timestamp: now.toISOString(),
-          state: matchingReasoning.lifecycleState || matchingReasoning.status || 'WAITING_FOR_ENTRY',
-          price: setup.levels.currentPrice,
-          reason: 'REVALIDATED',
-          details: `Candidate setup matched active signal (${dupCheck.reason}). Refreshed lastValidatedAt.`
-        };
-        const updated = await this.prisma.signal.update({
-          where: { id: matchingSig.id },
-          data: {
-            aiReasoning: {
-              ...matchingReasoning,
-              lastValidatedAt: now.toISOString(),
-              lifecycleEvents: this.appendLifecycleEvent(matchingReasoning, revalEvent)
-            }
-          }
-        });
-        this.notificationsGateway.server.emit('signal:updated', updated);
-        this.logger.log(`[LIFECYCLE] Duplicate setup suppressed. Refreshed lastValidatedAt on ${matchingSig.id} (${matchingReasoning.publicId || matchingSig.id}) due to ${dupCheck.reason}.`);
-        return;
-      }
-
-      // Part F Rule 6: Opposing-Signal Policy (INVALIDATE_OLD_THESIS_BEFORE_REVERSAL)
-      const opposing = activeSignals.find(s => s.direction !== setup.direction);
-      if (opposing) {
-        const opReasoning = (opposing.aiReasoning as any) || {};
-        const opStatus = opReasoning.status || 'ACTIVE';
-        const isOpFilled = opReasoning.isOrderFilled || opStatus === 'POSITION_OPEN' || opStatus === 'PARTIALLY_FILLED';
-
-        if (isOpFilled) {
-          this.logger.warn(`[LIFECYCLE] Active opposing ${opposing.direction} position (${opposing.id}) is live. Blocking executable ${setup.direction} signal per portfolio risk policy.`);
-          return;
-        }
-
-        // Opposing is WAITING_FOR_ENTRY (unfilled)
-        // Check if market structure shift or gate clearance invalidates the old thesis
-        const opSl = Number(opposing.stopLoss);
-        const opInvalidated = (opposing.direction === 'BUY' && setup.levels.currentPrice <= opSl) ||
-                              (opposing.direction === 'SELL' && setup.levels.currentPrice >= opSl);
-
-        if (opInvalidated || (setup.fiveGates.allPassed && setup.finalValidationChecklist?.allPassed)) {
-          const opInvEvent: SignalLifecycleEvent = {
-            timestamp: now.toISOString(),
-            state: 'INVALIDATED',
-            price: setup.levels.currentPrice,
-            reason: 'OPPOSING_THESIS_INVALIDATION',
-            details: `Pending ${opposing.direction} order invalidated by structural shift into ${setup.direction}.`
-          };
-          const updatedOp = await this.prisma.signal.update({
-            where: { id: opposing.id },
-            data: {
-              aiReasoning: {
-                ...opReasoning,
-                status: 'CLOSED',
-                lifecycleState: 'INVALIDATED',
-                outcome: 'CANCELLED',
-                closeReason: 'OPPOSING_THESIS_INVALIDATION',
-                closedAt: now.toISOString(),
-                lastValidatedAt: now.toISOString(),
-                lastStatusChange: now.toISOString(),
-                lifecycleEvents: this.appendLifecycleEvent(opReasoning, opInvEvent)
-              }
-            }
-          });
-          this.notificationsGateway.server.emit('signal:updated', updatedOp);
-          await this.notificationsGateway.broadcastTradeSignalNotification(
-            `🔄 Pending Order Invalidated: ${opposing.direction} Gold`,
-            `Pending ${opposing.direction} order cancelled due to structural trend reversal into ${setup.direction}.`,
-            '/dashboard/engines/gold',
-            'ORDER_CANCELLED'
-          );
-          this.logger.log(`[LIFECYCLE] Opposing pending signal ${opposing.id} marked INVALIDATED before publishing new ${setup.direction} signal.`);
-        } else {
-          this.logger.log(`[LIFECYCLE] Opposing pending signal ${opposing.id} is still valid. Blocking publication of conflicting ${setup.direction} signal.`);
-          return;
-        }
-      }
-
-      if (setup.fiveGates.allPassed && setup.finalValidationChecklist?.allPassed && (setup.direction === 'BUY' || setup.direction === 'SELL') && setup.opportunityScore >= 70) {
-        // Run AI Desk Review before automated publishing
-        let aiVerdict = setup.fiveGates.allPassed ? 'APPROVED' : 'HOLD';
-        let aiExplanation = setup.summary;
-        let aiReviewStatus: 'AI_REVIEWED' | 'AI_SERVICE_OFFLINE' = 'AI_SERVICE_OFFLINE';
-        try {
-          const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-          const aiRes = await this.fetchWithTimeout(`${aiServiceUrl}/ai/predict`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-AI-API-Key': process.env.AI_SERVICE_API_KEY || 'internal-secret-key'
-            },
-            body: JSON.stringify({
-              symbol: 'GOLD',
-              timeframe: '15m',
-              setup: {
-                direction: setup.direction,
-                entry: setup.entryPrice,
-                stop_loss: setup.stopLoss,
-                take_profit_1: setup.takeProfit1,
-                take_profit_2: setup.takeProfit2,
-                model: setup.model,
-                grade: setup.grade,
-                score: setup.opportunityScore,
-                risk_reward_ratio_tp1: setup.riskReward1,
-                risk_reward_ratio_tp2: setup.riskReward2,
-                confluence_reasons: setup.confluenceReasons,
-                levels: setup.levels,
-              },
-              session: setup.hierarchy?.level1_marketEnvironment?.session || (setup.levels as any)?.session || 'Active Session',
-              intermarket: setup.intermarket,
-              microstructure: setup.microstructure,
-              news_gate: setup.newsGate,
-              market_regime: setup.marketRegime,
-              volatility_metrics: setup.volatilityMetrics,
-              volume_profile: setup.volumeProfile,
-              expectancy: {
-                ...setup.tradePath,
-                calibratedWinRateTp1: setup.tradePath.probTp1BeforeSl
-              },
-              position_sizing: setup.positionSizing
-            })
-          }, 5000);
-
-          if (aiRes.ok) {
-            const aiJson = await aiRes.json();
-            if (aiJson && aiJson.ai_review_verdict) {
-              const rawV = String(aiJson.ai_review_verdict).toUpperCase();
-              aiVerdict = rawV === 'VETOED' ? 'VETOED' : (rawV === 'APPROVED' || rawV === 'CONDITIONAL') ? 'APPROVED' : rawV;
-              aiExplanation = aiJson.ai_explanation || aiExplanation;
-              aiReviewStatus = 'AI_REVIEWED';
-            }
-          }
-        } catch (e: any) {
-          this.logger.warn(`[AUTOMATION] AI service desk review check notice: ${e.message}`);
-        }
-
-        // If external AI service was unreachable or returned HOLD without an explicit VETO,
-        // run the deterministic in-process Senior Risk Desk Audit (5-Gate + 11-Point Checklist + Directional Geometry)
-        if (aiVerdict !== 'VETOED' && (aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED')) {
-          const internalAudit = this.performInternalSeniorRiskDeskAudit(setup);
-          aiVerdict = internalAudit.verdict;
-          aiExplanation = internalAudit.explanation || aiExplanation;
-          if (internalAudit.approved) {
-            aiReviewStatus = 'AI_REVIEWED';
-          }
-        }
-
-        if (aiVerdict === 'VETOED') {
-          this.logger.warn(`[AUTOMATION] Candidate signal vetoed by Senior AI Desk Reviewer: ${aiExplanation}`);
-          return;
-        }
-
-        // FAIL-CLOSED REQUIREMENT: Senior Risk Desk Review must explicitly be AI_REVIEWED and APPROVED
-        if (aiReviewStatus !== 'AI_REVIEWED' || aiVerdict !== 'APPROVED') {
-          this.logger.warn(`[AUTOMATION] Candidate signal publishing blocked: Senior AI Desk Review requires explicit APPROVED status (status: ${aiReviewStatus}, verdict: ${aiVerdict})`);
-          return;
-        }
-
-        this.logger.log(`[AUTOMATION] 5-Gate Cleared & Gemini AI Approved ${setup.grade} ${setup.orderType} on XAUUSD (Score: ${setup.opportunityScore}, EV: +${setup.tradePath.expectedValueR}R)`);
-
-        const isImmediateMarket = setup.orderType.includes('MARKET');
-        const initialLifecycleState = isImmediateMarket ? 'POSITION_OPEN' : 'WAITING_FOR_ENTRY';
-        const orderValidityExpiresAt = new Date(Date.now() + setup.invalidationAndExpiry.orderExpiryHours * 60 * 60 * 1000).toISOString();
-
-        // Part F Rule 1: Generate Human-Readable Institutional Public ID (e.g. G-20261030-001)
-        const publicId = await this.generateInstitutionalSignalId(now);
-        const initialEvent: SignalLifecycleEvent = {
-          timestamp: now.toISOString(),
-          state: initialLifecycleState,
-          price: setup.entryPrice,
-          reason: 'SIGNAL_PUBLISHED',
-          details: `Published ${setup.grade} ${setup.orderType} (Score: ${setup.opportunityScore}, EV: +${setup.tradePath.expectedValueR}R)`
-        };
-
-        const createdSignal = await this.prisma.signal.create({
-          data: {
-            symbol: 'GOLD',
-            direction: setup.direction,
-            entryPrice: setup.entryPrice,
-            stopLoss: setup.stopLoss,
-            takeProfit1: setup.takeProfit1,
-            takeProfit2: setup.takeProfit2,
-            riskRewardRatio: setup.riskReward1,
-            winProbability: Math.round(setup.tradePath.probTp1BeforeSl * 100),
-            confluenceScore: setup.opportunityScore,
-            durationEstimate: '4-8 hours',
-            aiReasoning: {
-              publicId,
-              status: initialLifecycleState,
-              lifecycleState: initialLifecycleState,
-              isOrderFilled: isImmediateMarket,
-              filledAt: isImmediateMarket ? new Date().toISOString() : null,
-              filledPrice: isImmediateMarket ? setup.entryPrice : null,
-              orderValidityExpiresAt,
-              orderType: setup.orderType,
-              entryZone: setup.entryZone,
-              strategy: setup.model,
-              signalGrade: setup.grade,
-              opportunityScore: setup.opportunityScore,
-              confluenceScore: setup.opportunityScore,
-              marketBiasScore: setup.marketBiasScore,
-              entryQualityScore: setup.entryQualityScore,
-              fiveGates: setup.fiveGates,
-              finalValidationChecklist: setup.finalValidationChecklist,
-              tradePath: setup.tradePath,
-              invalidationAndExpiry: setup.invalidationAndExpiry,
-              positionSizing: setup.positionSizing,
-              auditTrail: setup.auditTrail,
-              indicators: setup.confluenceReasons,
-              explanation: aiExplanation,
-              aiReviewVerdict: aiVerdict,
-              aiReviewStatus,
-              levels: setup.levels,
-              marketRegime: setup.marketRegime,
-              volatilityMetrics: setup.volatilityMetrics,
-              volumeProfile: setup.volumeProfile,
-              microstructure: setup.microstructure,
-              intermarket: setup.intermarket,
-              lastValidatedAt: now.toISOString(),
-              lifecycleEvents: [initialEvent],
-              timeframe: '15m'
-            } as any,
-            expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
-          }
-        });
-
-        // Broadcast automated signal instantly to all connected WebSocket users
-        this.notificationsGateway.server.emit('signal:created', createdSignal);
-        await this.notificationsGateway.broadcastTradeSignalNotification(
-          `⚡ Live Institutional Gold Signal (${setup.grade}) [${publicId}]`,
-          `${setup.direction} XAU/USD ${setup.orderType.replace(/_/g, ' ')} @ $${setup.entryPrice.toFixed(2)} | TP1: $${setup.takeProfit1.toFixed(2)} | SL: $${setup.stopLoss.toFixed(2)}`,
-          '/dashboard/engines/gold'
-        );
-      }
+      await this.runAtomicGoldScan();
     } catch (e: any) {
       this.logger.warn(`[handlePeriodicXauusdScan] Scan notice: ${e.message}`);
-    } finally {
-      this.isGeneratingSignal = false;
     }
   }
 
@@ -5443,7 +5375,8 @@ export class SignalsController implements OnModuleInit {
           const entryVal = Number(signal.entryPrice);
           const tp1Val = Number(signal.takeProfit1);
           const tpDistance = Math.abs(tp1Val - entryVal);
-          const thresholdDistance = tpDistance * 0.70;
+          // Calibrate runaway threshold: allow price breathing room to retrace into ICZ unless 90%+ of distance to TP1 is reached
+          const thresholdDistance = tpDistance * 0.90;
 
           const ranAwayToTp1 =
             (signal.direction === 'BUY' && currentBid >= (entryVal + thresholdDistance)) ||
@@ -5455,7 +5388,7 @@ export class SignalsController implements OnModuleInit {
               state: 'EXPIRED',
               price: currentPrice,
               reason: 'ENTRY_MISSED',
-              details: `Price moved 70%+ to TP1 without filling limit order entry zone.`
+              details: `Price moved 90%+ to TP1 without filling limit order entry zone.`
             };
             const updatedSig = await this.prisma.signal.update({
               where: { id: signal.id },

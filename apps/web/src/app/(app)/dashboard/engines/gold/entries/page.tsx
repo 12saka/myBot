@@ -168,7 +168,7 @@ export default function GoldEntriesPage() {
                 {plan?.orderType.replace(/_/g, ' ') || 'WAIT'}
               </span>
               <span className="font-mono text-xl text-slate-300">
-                @ ${plan?.preferredEntry?.toFixed(2) || p.toFixed(2)}
+                @ ${(plan?.preferredEntry && plan.preferredEntry > 0 ? plan.preferredEntry : p).toFixed(2)}
               </span>
             </div>
           </div>

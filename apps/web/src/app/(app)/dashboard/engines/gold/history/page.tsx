@@ -293,16 +293,16 @@ export default function GoldHistoryPage() {
                         </div>
                       </td>
                       <td className="py-3.5 px-4 font-mono font-bold text-white">
-                        ${sig.entryPrice?.toFixed(2)}
+                        ${Number(sig.entryPrice || 0).toFixed(2)}
                         {sig.fillPrice && sig.fillPrice !== sig.entryPrice && (
-                          <span className="text-[10px] text-slate-500 block">Filled: ${sig.fillPrice.toFixed(2)}</span>
+                          <span className="text-[10px] text-slate-500 block">Filled: ${Number(sig.fillPrice).toFixed(2)}</span>
                         )}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-rose-400">
-                        ${sig.stopLoss?.toFixed(2)}
+                        ${Number(sig.stopLoss || 0).toFixed(2)}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-emerald-400">
-                        ${sig.takeProfit1?.toFixed(2)}
+                        ${Number(sig.takeProfit1 || sig.takeProfit || 0).toFixed(2)}
                       </td>
                       <td className="py-3.5 px-4">
                         <span className={cn(
