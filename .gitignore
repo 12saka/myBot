@@ -62,3 +62,4 @@ pnpm-debug.log*
 
 # Scratch / temp testing directory
 scratch/
+.cache/

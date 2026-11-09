@@ -44,6 +44,11 @@ async function runFullAudit() {
         const item = dbSignals.find(s => s.id === where.id);
         if (item) Object.assign(item, data);
         return item || { id: where.id, ...data };
+      },
+      delete: async ({ where }: any) => {
+        const idx = dbSignals.findIndex(s => s.id === where.id);
+        if (idx !== -1) return dbSignals.splice(idx, 1)[0];
+        return { id: where.id };
       }
     },
     brokerAccount: {
