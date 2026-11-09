@@ -58,12 +58,11 @@ if GEMINI_API_KEY:
 else:
     print("[AI-Service] WARNING: GEMINI_API_KEY is not set.")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-lite")
 GEMINI_FALLBACK_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-2.5-pro",
+    "gemini-3.5-lite",
+    "gemini-3.5-flash",
+    "gemini-3.0-flash",
 ]
 
 API_KEY_NAME = "X-AI-API-Key"

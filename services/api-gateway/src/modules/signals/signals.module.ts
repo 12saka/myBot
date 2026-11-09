@@ -4349,8 +4349,8 @@ Respond strictly with valid JSON:
   "primary_risk_factor": "Key risk factor to watch."
 }`;
 
-    const preferredModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-    const modelsToTry = [preferredModel, 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const preferredModel = process.env.GEMINI_MODEL || 'gemini-3.5-lite';
+    const modelsToTry = [preferredModel, 'gemini-3.5-lite', 'gemini-3.5-flash', 'gemini-3.0-flash'];
     const uniqueModels = Array.from(new Set(modelsToTry));
 
     for (const model of uniqueModels) {
