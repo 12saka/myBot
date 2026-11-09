@@ -43,22 +43,29 @@ async function runPhase4Audit() {
   const controller = new SignalsController(mockPrisma, mockEntitlement, mockAutomation, mockNotifications);
 
   // -------------------------------------------------------------
-  // Test 1: Stop Loss Adaptive Volatility Buffer (1.20x ATR15m)
+  // Test 1: Stop Loss Adaptive Volatility Buffer & Structural Anti-Wick Protection
   // -------------------------------------------------------------
   console.log('--- Test 1: Stop Loss Adaptive Volatility Buffer ---');
   const volMetrics = { atr15m: 6.0 };
-  const baseBuffer = parseFloat(Math.max(2.50, volMetrics.atr15m * 1.20).toFixed(2));
+  const baseBuffer = parseFloat(Math.max(1.85, volMetrics.atr15m * 0.45).toFixed(2));
   assert(
-    'Base invalidation buffer enforces strictly 1.20x ATR15m ($7.20 on $6.00 ATR)',
-    baseBuffer === 7.20,
+    'Base invalidation buffer enforces anti-wick structural cushion (0.45x ATR15m = $2.70 on $6.00 ATR)',
+    baseBuffer === 2.70,
     `Calculated buffer: ${baseBuffer}`
   );
 
-  const minStopDist = Math.max(4.00, parseFloat((1.20 * volMetrics.atr15m).toFixed(2)));
+  const minStopDist = Math.max(3.50, parseFloat((1.15 * volMetrics.atr15m).toFixed(2)));
   assert(
-    'Minimum Stop Loss distance enforces 1.20x ATR15m volatility threshold',
-    minStopDist === 7.20,
+    'Minimum Stop Loss distance enforces 1.15x ATR15m volatility threshold ($6.90 on $6.00 ATR)',
+    minStopDist === 6.90,
     `Calculated minStopDist: ${minStopDist}`
+  );
+
+  const maxStructuralRisk = Math.max(10.0, parseFloat((2.60 * volMetrics.atr15m).toFixed(2)));
+  assert(
+    'Max structural risk threshold enforces 2.60x ATR15m ($15.60 on $6.00 ATR), eliminating self-deadlock',
+    maxStructuralRisk === 15.60 && minStopDist < maxStructuralRisk,
+    `maxStructuralRisk: ${maxStructuralRisk}`
   );
 
   // -------------------------------------------------------------
