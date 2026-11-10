@@ -41,8 +41,8 @@ services:
 
   ai-service:
     build:
-      context: .
-      dockerfile: services/ai-service/Dockerfile
+      context: services/ai-service
+      dockerfile: Dockerfile
     container_name: trademind-ai-service
     ports:
       - "8000:8000"

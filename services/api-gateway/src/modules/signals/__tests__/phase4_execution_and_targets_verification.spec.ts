@@ -69,7 +69,7 @@ async function runPhase4Audit() {
   );
 
   // -------------------------------------------------------------
-  // Test 2: Continuation Trades (BOS_PULLBACK_CONTINUATION) Structural Targets
+  // Test 2: Continuation Trades (BOS_PULLBACK_CONTINUATION) Structural Targets (1:2:3:4 Minimums)
   // -------------------------------------------------------------
   console.log('\n--- Test 2: Continuation Trade Targets ---');
   const entryPrice = 2735.0;
@@ -77,22 +77,24 @@ async function runPhase4Audit() {
   const risk = entryPrice - stopLoss; // 7.20
 
   const isContinuation = true;
-  const minTp1R = isContinuation ? 1.50 : 1.30;
+  const isLongMacroContinuation = true;
+  const minTp1R = isLongMacroContinuation ? 2.50 : isContinuation ? 2.20 : 2.00;
   assert(
-    'Continuation trade enforces >= 1.50R minimum target',
-    minTp1R === 1.50,
+    'Continuation trade enforces >= 2.20R minimum target (and 2.50R on Long Macro Continuation)',
+    minTp1R >= 2.20,
     `minTp1R: ${minTp1R}`
   );
 
-  // Preceding impulse swing measured move for all-time/fresh highs
+  // Preceding impulse swing measured move for all-time/fresh highs with macro extension
   const precedingHigh = 2742.0;
   const precedingLow = 2724.0;
-  const impulseSpan = Math.max(risk * 2.2, precedingHigh - precedingLow); // 18.0
-  const fib1272 = parseFloat((entryPrice + impulseSpan * 0.618).toFixed(2)); // 2735 + 11.12 = 2746.12
+  const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow); // 18.0
+  const fibMultiplier = isLongMacroContinuation ? 1.272 : 1.0;
+  const fib1272 = parseFloat((entryPrice + impulseSpan * fibMultiplier).toFixed(2)); // 2735 + 22.90 = 2757.90
   const tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, fib1272 - 0.20).toFixed(2));
   assert(
-    'Fibonacci 1.272 continuation target properly applies 20-cent front-running cushion',
-    tp1Price === 2745.92 && tp1Price >= entryPrice + minTp1R * risk,
+    'Fibonacci 1.272 macro continuation target properly applies 20-cent front-running cushion and achieves >= 2.20R',
+    tp1Price === 2757.70 && tp1Price >= entryPrice + minTp1R * risk,
     `tp1Price: ${tp1Price}`
   );
 

@@ -2693,8 +2693,21 @@ export class SignalsController implements OnModuleInit {
       (htfTrend === 'BEARISH' || trend4h === 'BEARISH' || (ema20 < ema50 && adx14 >= 22)) &&
       (bos15mSell || isBearPullback || isBearVwapPullback || priceNearBearObOrFvg || isBearFvgRetest || isBearObRetest || mss5mSell);
 
+    // Institutional Long / Short Macro Continuation (Deep Multi-Timeframe Alignment: 15M + 1H + 4H + D1 + Liquidity Draw)
+    const isLongMacroContinuation =
+      isBullTrend &&
+      (htfTrend === 'BULLISH' || trend4h === 'BULLISH' || trendDaily === 'BULLISH') &&
+      (intermarket.macroDrawOnLiquidity === 'BUY_SIDE_LIQUIDITY' || intermarket.macroAlignment === 'BULLISH' || (ema20 > ema50 && adx14 >= 22)) &&
+      (bos15mBuy || isBullPullback || isBullVwapPullback || priceNearBullObOrFvg || isBullFvgRetest || isBullObRetest || mss5mBuy);
+    const isShortMacroContinuation =
+      isBearTrend &&
+      (htfTrend === 'BEARISH' || trend4h === 'BEARISH' || trendDaily === 'BEARISH') &&
+      (intermarket.macroDrawOnLiquidity === 'SELL_SIDE_LIQUIDITY' || intermarket.macroAlignment === 'BEARISH' || (ema20 < ema50 && adx14 >= 22)) &&
+      (bos15mSell || isBearPullback || isBearVwapPullback || priceNearBearObOrFvg || isBearFvgRetest || isBearObRetest || mss5mSell);
+
     // Strict Trigger Requirement: must have an actual institutional catalyst (Continuation OR Reversal)
     const hasBullishTrigger =
+      isLongMacroContinuation ||
       isBullContinuation ||
       !!latestBullishSweep ||
       mss5mBuy ||
@@ -2706,6 +2719,7 @@ export class SignalsController implements OnModuleInit {
       (priceNearBullObOrFvg && trend15m !== 'BEARISH') ||
       rsiDiv === 'BULLISH_DIVERGENCE';
     const hasBearishTrigger =
+      isShortMacroContinuation ||
       isBearContinuation ||
       !!latestBearishSweep ||
       mss5mSell ||
@@ -2727,6 +2741,8 @@ export class SignalsController implements OnModuleInit {
     if (isBearObRetest) bearEvidence += 16;
     if (isBullContinuation) bullEvidence += 14;
     if (isBearContinuation) bearEvidence += 14;
+    if (isLongMacroContinuation) bullEvidence += 18;
+    if (isShortMacroContinuation) bearEvidence += 18;
 
     // Compare recency of Bullish vs Bearish Liquidity Sweeps so an older sweep never cancels a newer opposite sweep
     const bullSweepIdx = latestBullishSweep ? latestBullishSweep.candleIndex : -1;
@@ -3174,7 +3190,7 @@ export class SignalsController implements OnModuleInit {
     const isInsideIcz = currentPrice >= (icz.zoneLow - 0.12 * volMetrics.atr15m) && currentPrice <= (icz.zoneHigh + 0.12 * volMetrics.atr15m);
 
     if (bias === 'BUY') {
-      if (isBullContinuation || (isBullTrend && (htfTrend === 'BULLISH' || trend4h === 'BULLISH'))) {
+      if (isLongMacroContinuation || isBullContinuation || (isBullTrend && (htfTrend === 'BULLISH' || trend4h === 'BULLISH' || trendDaily === 'BULLISH'))) {
         selectedModel = 'BOS_PULLBACK_CONTINUATION';
       } else if (latestBullishSweep) {
         selectedModel = 'SWEEP_CHOCH_REVERSAL';
@@ -3188,7 +3204,7 @@ export class SignalsController implements OnModuleInit {
       const maxMarketLocation = selectedModel === 'BOS_PULLBACK_CONTINUATION' ? 68 : 62;
       orderType = (isInsideIcz && localLocationPct <= maxMarketLocation) ? 'MARKET_BUY' : 'BUY_LIMIT';
     } else if (bias === 'SELL') {
-      if (isBearContinuation || (isBearTrend && (htfTrend === 'BEARISH' || trend4h === 'BEARISH'))) {
+      if (isShortMacroContinuation || isBearContinuation || (isBearTrend && (htfTrend === 'BEARISH' || trend4h === 'BEARISH' || trendDaily === 'BEARISH'))) {
         selectedModel = 'BOS_PULLBACK_CONTINUATION';
       } else if (latestBearishSweep) {
         selectedModel = 'SWEEP_CHOCH_REVERSAL';
@@ -3329,19 +3345,22 @@ export class SignalsController implements OnModuleInit {
         ...obs1h.filter(o => !o.mitigated && o.type === 'BEARISH').map(o => ({ price: o.low, source: `1H Bearish Order Block ($${o.low.toFixed(2)})` }))
       ].filter(p => p.price && !isNaN(p.price) && p.price > entryPrice);
 
-      // Check if an unmitigated 1H Bearish OB blocks the path before 0.85R
+      // Check if an unmitigated 1H Bearish OB blocks the path before 1.40R
       const majorObstacles = obs1h
         .filter(o => !o.mitigated && o.type === 'BEARISH')
         .map(o => ({ price: o.low, name: `1H Bearish OB ($${o.low.toFixed(2)})` }))
-        .filter(o => o.price > entryPrice + 0.25 * risk && o.price < entryPrice + 0.85 * risk);
+        .filter(o => o.price > entryPrice + 0.25 * risk && o.price < entryPrice + 1.40 * risk);
       if (majorObstacles.length > 0) {
-        opposingObstacleReason = `Opposing HTF resistance (${majorObstacles[0].name}) sits at +${((majorObstacles[0].price - entryPrice) / risk).toFixed(2)}R before 1.3R minimum target.`;
+        opposingObstacleReason = `Opposing HTF resistance (${majorObstacles[0].name}) sits at +${((majorObstacles[0].price - entryPrice) / risk).toFixed(2)}R before 2.0R minimum target.`;
       }
 
       const isContinuation = selectedModel === 'BOS_PULLBACK_CONTINUATION';
-      const minTp1R = isContinuation ? 1.50 : 1.30;
+      const minTp1R = isLongMacroContinuation ? 2.50 : isContinuation ? 2.20 : 2.00;
+      const minTp2R = isLongMacroContinuation ? 3.50 : isContinuation ? 3.20 : 3.00;
+      const minTp3R = isLongMacroContinuation ? 5.00 : isContinuation ? 4.50 : 4.00;
+
       const tp1Candidates = allHighPools
-        .filter(p => p.price >= entryPrice + minTp1R * risk && p.price <= entryPrice + 2.60 * risk)
+        .filter(p => p.price >= entryPrice + minTp1R * risk && p.price <= entryPrice + 3.20 * risk)
         .sort((a, b) => a.price - b.price);
       if (tp1Candidates.length > 0) {
         tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, tp1Candidates[0].price - 0.20).toFixed(2));
@@ -3352,52 +3371,66 @@ export class SignalsController implements OnModuleInit {
           tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, extendedPools[0].price - 0.20).toFixed(2));
           tp1LiquiditySource = extendedPools[0].source;
         } else {
-          const precedingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || (entryPrice + 2.0 * risk);
+          const precedingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || (entryPrice + 2.5 * risk);
           const precedingLow = swings15.filter(s => s.type === 'LOW' && s.price < precedingHigh).slice(-1)[0]?.price || (entryPrice - 1.2 * risk);
-          const impulseSpan = Math.max(risk * 2.2, precedingHigh - precedingLow);
-          const fib1272 = parseFloat((entryPrice + impulseSpan * 0.618).toFixed(2));
+          const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
+          const fibMultiplier = isLongMacroContinuation ? 1.272 : 1.0;
+          const fib1272 = parseFloat((entryPrice + impulseSpan * fibMultiplier).toFixed(2));
           tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, fib1272 - 0.20).toFixed(2));
-          tp1LiquiditySource = 'Preceding Impulse 1.272 Fib Extension (Structural Continuation)';
+          tp1LiquiditySource = isLongMacroContinuation
+            ? 'Macro Long Continuation 1.272 Fib Extension (Institutional Expansion)'
+            : 'Preceding Impulse 1.272 Fib Extension (Structural Continuation)';
         }
       }
 
       const bslTarget = allHighPools.find(p =>
         (p.source.includes('PDH') || p.source.includes('Asian Session High') || p.source.includes('London Session High') || p.source.includes('4H Swing High')) &&
-        p.price >= Math.max(tp1Price + 0.45 * risk, entryPrice + 1.80 * risk)
+        p.price >= Math.max(tp1Price + 0.80 * risk, entryPrice + minTp2R * risk)
       );
 
       const tp2Candidates = allHighPools
-        .filter(p => p.price >= Math.max(tp1Price + 0.45 * risk, entryPrice + 2.0 * risk) && p.price <= entryPrice + 4.20 * risk)
+        .filter(p => p.price >= Math.max(tp1Price + 0.80 * risk, entryPrice + minTp2R * risk) && p.price <= entryPrice + 5.0 * risk)
         .sort((a, b) => a.price - b.price);
       if (intermarket.macroDrawOnLiquidity === 'BUY_SIDE_LIQUIDITY' && bslTarget) {
-        tp2Price = parseFloat((bslTarget.price - 0.25).toFixed(2));
+        tp2Price = parseFloat(Math.max(entryPrice + minTp2R * risk, bslTarget.price - 0.25).toFixed(2));
         tp2LiquiditySource = `Macro Draw on Liquidity (${bslTarget.source})`;
       } else if (tp2Candidates.length > 0) {
-        tp2Price = parseFloat((tp2Candidates[0].price - 0.25).toFixed(2));
+        tp2Price = parseFloat(Math.max(entryPrice + minTp2R * risk, tp2Candidates[0].price - 0.25).toFixed(2));
         tp2LiquiditySource = tp2Candidates[0].source;
       } else {
-        const nextExtended = allHighPools.filter(p => p.price > tp1Price + 0.45 * risk).sort((a, b) => a.price - b.price);
+        const nextExtended = allHighPools.filter(p => p.price > Math.max(tp1Price + 0.80 * risk, entryPrice + minTp2R * risk)).sort((a, b) => a.price - b.price);
         if (nextExtended.length > 0) {
-          tp2Price = parseFloat((nextExtended[0].price - 0.25).toFixed(2));
+          tp2Price = parseFloat(Math.max(entryPrice + minTp2R * risk, nextExtended[0].price - 0.25).toFixed(2));
           tp2LiquiditySource = nextExtended[0].source;
         } else {
-          const precedingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || (entryPrice + 2.0 * risk);
+          const precedingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || (entryPrice + 2.5 * risk);
           const precedingLow = swings15.filter(s => s.type === 'LOW' && s.price < precedingHigh).slice(-1)[0]?.price || (entryPrice - 1.2 * risk);
-          const impulseSpan = Math.max(risk * 2.2, precedingHigh - precedingLow);
-          const fib1618 = parseFloat((entryPrice + impulseSpan * 1.0).toFixed(2));
-          tp2Price = parseFloat(Math.max(tp1Price + 0.60 * risk, fib1618 - 0.25).toFixed(2));
-          tp2LiquiditySource = 'Preceding Impulse 1.618 Fib Extension (Macro Expansion)';
+          const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
+          const fibMultiplier = isLongMacroContinuation ? 1.618 : 1.382;
+          const fib1618 = parseFloat((entryPrice + impulseSpan * fibMultiplier).toFixed(2));
+          tp2Price = parseFloat(Math.max(tp1Price + 0.80 * risk, Math.max(entryPrice + minTp2R * risk, fib1618 - 0.25)).toFixed(2));
+          tp2LiquiditySource = isLongMacroContinuation
+            ? 'Macro Long Continuation 1.618 Fib Extension (Institutional Expansion)'
+            : 'Preceding Impulse 1.618 Fib Extension (Macro Expansion)';
         }
       }
 
       const tp3Candidates = allHighPools
-        .filter(p => p.price >= Math.max(tp2Price + 0.5 * risk, entryPrice + 3.0 * risk) && p.price <= entryPrice + 5.50 * risk)
+        .filter(p => p.price >= Math.max(tp2Price + 0.80 * risk, entryPrice + minTp3R * risk) && p.price <= entryPrice + 7.50 * risk)
         .sort((a, b) => a.price - b.price);
       if (tp3Candidates.length > 0) {
-        tp3Price = parseFloat((tp3Candidates[0].price - 0.30).toFixed(2));
+        tp3Price = parseFloat(Math.max(entryPrice + minTp3R * risk, tp3Candidates[0].price - 0.30).toFixed(2));
         tp3LiquiditySource = tp3Candidates[0].source;
       } else {
-        tp3Price = parseFloat((entryPrice + Math.max(10.5, risk * 3.40)).toFixed(2));
+        const precedingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || (entryPrice + 2.5 * risk);
+        const precedingLow = swings15.filter(s => s.type === 'LOW' && s.price < precedingHigh).slice(-1)[0]?.price || (entryPrice - 1.2 * risk);
+        const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
+        const fibMultiplier = isLongMacroContinuation ? 2.0 : 1.618;
+        const fib20 = parseFloat((entryPrice + impulseSpan * fibMultiplier).toFixed(2));
+        tp3Price = parseFloat(Math.max(tp2Price + 0.80 * risk, Math.max(entryPrice + minTp3R * risk, fib20 - 0.30)).toFixed(2));
+        tp3LiquiditySource = isLongMacroContinuation
+          ? 'Macro Long Continuation 2.000 Fib Major Expansion Target'
+          : 'Macro Extended Liquidity Pool Target';
       }
     } else {
       const allLowPools: { price: number; source: string }[] = [
@@ -3412,19 +3445,22 @@ export class SignalsController implements OnModuleInit {
         ...obs1h.filter(o => !o.mitigated && o.type === 'BULLISH').map(o => ({ price: o.high, source: `1H Bullish Order Block ($${o.high.toFixed(2)})` }))
       ].filter(p => p.price && !isNaN(p.price) && p.price < entryPrice);
 
-      // Check if an unmitigated 1H Bullish OB blocks the path before 0.85R
+      // Check if an unmitigated 1H Bullish OB blocks the path before 1.40R
       const majorObstacles = obs1h
         .filter(o => !o.mitigated && o.type === 'BULLISH')
         .map(o => ({ price: o.high, name: `1H Bullish OB ($${o.high.toFixed(2)})` }))
-        .filter(o => o.price < entryPrice - 0.25 * risk && o.price > entryPrice - 0.85 * risk);
+        .filter(o => o.price < entryPrice - 0.25 * risk && o.price > entryPrice - 1.40 * risk);
       if (majorObstacles.length > 0) {
-        opposingObstacleReason = `Opposing HTF demand (${majorObstacles[0].name}) sits at +${((entryPrice - majorObstacles[0].price) / risk).toFixed(2)}R before 1.3R minimum target.`;
+        opposingObstacleReason = `Opposing HTF demand (${majorObstacles[0].name}) sits at +${((entryPrice - majorObstacles[0].price) / risk).toFixed(2)}R before 2.0R minimum target.`;
       }
 
       const isContinuation = selectedModel === 'BOS_PULLBACK_CONTINUATION';
-      const minTp1R = isContinuation ? 1.50 : 1.30;
+      const minTp1R = isShortMacroContinuation ? 2.50 : isContinuation ? 2.20 : 2.00;
+      const minTp2R = isShortMacroContinuation ? 3.50 : isContinuation ? 3.20 : 3.00;
+      const minTp3R = isShortMacroContinuation ? 5.00 : isContinuation ? 4.50 : 4.00;
+
       const tp1Candidates = allLowPools
-        .filter(p => p.price <= entryPrice - minTp1R * risk && p.price >= entryPrice - 2.60 * risk)
+        .filter(p => p.price <= entryPrice - minTp1R * risk && p.price >= entryPrice - 3.20 * risk)
         .sort((a, b) => b.price - a.price);
       if (tp1Candidates.length > 0) {
         tp1Price = parseFloat(Math.min(entryPrice - minTp1R * risk, tp1Candidates[0].price + 0.20).toFixed(2));
@@ -3435,52 +3471,66 @@ export class SignalsController implements OnModuleInit {
           tp1Price = parseFloat(Math.min(entryPrice - minTp1R * risk, extendedPools[0].price + 0.20).toFixed(2));
           tp1LiquiditySource = extendedPools[0].source;
         } else {
-          const precedingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || (entryPrice - 2.0 * risk);
+          const precedingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || (entryPrice - 2.5 * risk);
           const precedingHigh = swings15.filter(s => s.type === 'HIGH' && s.price > precedingLow).slice(-1)[0]?.price || (entryPrice + 1.2 * risk);
-          const impulseSpan = Math.max(risk * 2.2, precedingHigh - precedingLow);
-          const fib1272 = parseFloat((entryPrice - impulseSpan * 0.618).toFixed(2));
+          const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
+          const fibMultiplier = isShortMacroContinuation ? 1.272 : 1.0;
+          const fib1272 = parseFloat((entryPrice - impulseSpan * fibMultiplier).toFixed(2));
           tp1Price = parseFloat(Math.min(entryPrice - minTp1R * risk, fib1272 + 0.20).toFixed(2));
-          tp1LiquiditySource = 'Preceding Impulse 1.272 Fib Extension (Structural Continuation)';
+          tp1LiquiditySource = isShortMacroContinuation
+            ? 'Macro Short Continuation 1.272 Fib Extension (Institutional Expansion)'
+            : 'Preceding Impulse 1.272 Fib Extension (Structural Continuation)';
         }
       }
 
       const sslTarget = allLowPools.find(p =>
         (p.source.includes('PDL') || p.source.includes('Asian Session Low') || p.source.includes('London Session Low') || p.source.includes('4H Swing Low')) &&
-        p.price <= Math.min(tp1Price - 0.45 * risk, entryPrice - 1.80 * risk)
+        p.price <= Math.min(tp1Price - 0.80 * risk, entryPrice - minTp2R * risk)
       );
 
       const tp2Candidates = allLowPools
-        .filter(p => p.price <= Math.min(tp1Price - 0.45 * risk, entryPrice - 2.0 * risk) && p.price >= entryPrice - 4.20 * risk)
+        .filter(p => p.price <= Math.min(tp1Price - 0.80 * risk, entryPrice - minTp2R * risk) && p.price >= entryPrice - 5.0 * risk)
         .sort((a, b) => b.price - a.price);
       if (intermarket.macroDrawOnLiquidity === 'SELL_SIDE_LIQUIDITY' && sslTarget) {
-        tp2Price = parseFloat((sslTarget.price + 0.25).toFixed(2));
+        tp2Price = parseFloat(Math.min(entryPrice - minTp2R * risk, sslTarget.price + 0.25).toFixed(2));
         tp2LiquiditySource = `Macro Draw on Liquidity (${sslTarget.source})`;
       } else if (tp2Candidates.length > 0) {
-        tp2Price = parseFloat((tp2Candidates[0].price + 0.25).toFixed(2));
+        tp2Price = parseFloat(Math.min(entryPrice - minTp2R * risk, tp2Candidates[0].price + 0.25).toFixed(2));
         tp2LiquiditySource = tp2Candidates[0].source;
       } else {
-        const nextExtended = allLowPools.filter(p => p.price < tp1Price - 0.45 * risk).sort((a, b) => b.price - a.price);
+        const nextExtended = allLowPools.filter(p => p.price < Math.min(tp1Price - 0.80 * risk, entryPrice - minTp2R * risk)).sort((a, b) => b.price - a.price);
         if (nextExtended.length > 0) {
-          tp2Price = parseFloat((nextExtended[0].price + 0.25).toFixed(2));
+          tp2Price = parseFloat(Math.min(entryPrice - minTp2R * risk, nextExtended[0].price + 0.25).toFixed(2));
           tp2LiquiditySource = nextExtended[0].source;
         } else {
-          const precedingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || (entryPrice - 2.0 * risk);
+          const precedingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || (entryPrice - 2.5 * risk);
           const precedingHigh = swings15.filter(s => s.type === 'HIGH' && s.price > precedingLow).slice(-1)[0]?.price || (entryPrice + 1.2 * risk);
-          const impulseSpan = Math.max(risk * 2.2, precedingHigh - precedingLow);
-          const fib1618 = parseFloat((entryPrice - impulseSpan * 1.0).toFixed(2));
-          tp2Price = parseFloat(Math.min(tp1Price - 0.60 * risk, fib1618 + 0.25).toFixed(2));
-          tp2LiquiditySource = 'Preceding Impulse 1.618 Fib Extension (Macro Expansion)';
+          const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
+          const fibMultiplier = isShortMacroContinuation ? 1.618 : 1.382;
+          const fib1618 = parseFloat((entryPrice - impulseSpan * fibMultiplier).toFixed(2));
+          tp2Price = parseFloat(Math.min(tp1Price - 0.80 * risk, Math.min(entryPrice - minTp2R * risk, fib1618 + 0.25)).toFixed(2));
+          tp2LiquiditySource = isShortMacroContinuation
+            ? 'Macro Short Continuation 1.618 Fib Extension (Institutional Expansion)'
+            : 'Preceding Impulse 1.618 Fib Extension (Macro Expansion)';
         }
       }
 
       const tp3Candidates = allLowPools
-        .filter(p => p.price <= Math.min(tp2Price - 0.5 * risk, entryPrice - 3.0 * risk) && p.price >= entryPrice - 5.50 * risk)
+        .filter(p => p.price <= Math.min(tp2Price - 0.80 * risk, entryPrice - minTp3R * risk) && p.price >= entryPrice - 7.50 * risk)
         .sort((a, b) => b.price - a.price);
       if (tp3Candidates.length > 0) {
-        tp3Price = parseFloat((tp3Candidates[0].price + 0.30).toFixed(2));
+        tp3Price = parseFloat(Math.min(entryPrice - minTp3R * risk, tp3Candidates[0].price + 0.30).toFixed(2));
         tp3LiquiditySource = tp3Candidates[0].source;
       } else {
-        tp3Price = parseFloat((entryPrice - Math.max(10.5, risk * 3.40)).toFixed(2));
+        const precedingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || (entryPrice - 2.5 * risk);
+        const precedingHigh = swings15.filter(s => s.type === 'HIGH' && s.price > precedingLow).slice(-1)[0]?.price || (entryPrice + 1.2 * risk);
+        const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
+        const fibMultiplier = isShortMacroContinuation ? 2.0 : 1.618;
+        const fib20 = parseFloat((entryPrice - impulseSpan * fibMultiplier).toFixed(2));
+        tp3Price = parseFloat(Math.min(tp2Price - 0.80 * risk, Math.min(entryPrice - minTp3R * risk, fib20 + 0.30)).toFixed(2));
+        tp3LiquiditySource = isShortMacroContinuation
+          ? 'Macro Short Continuation 2.000 Fib Major Expansion Target'
+          : 'Macro Extended Liquidity Pool Target';
       }
     }
 
@@ -3550,11 +3600,11 @@ export class SignalsController implements OnModuleInit {
       gate4Score = 40;
       gate4Code = 'AWAITING_PULLBACK';
       gate4Reason = `Price ($${currentPrice.toFixed(2)}) is outside the executable zone for preferred entry ($${entryPrice.toFixed(2)}).`;
-    } else if (r1 < 1.3) {
+    } else if (r1 < 2.0) {
       gate4Passed = false;
       gate4Score = 30;
       gate4Code = 'INSUFFICIENT_RR';
-      gate4Reason = `R:R1 is ${r1} (< 1.3 institutional minimum). Opposing structural target is too close to entry.`;
+      gate4Reason = `R:R1 is 1:${r1} (< 1:2.0 institutional minimum target). Setup rejected to ensure high-yield execution.`;
     } else if (ev < 0.25) {
       gate4Passed = false;
       gate4Score = 35;
@@ -3703,8 +3753,8 @@ export class SignalsController implements OnModuleInit {
     const targetsRealistic = !opposingObstacleReason && tp1Price > 0;
     if (!targetsRealistic && opposingObstacleReason) checklistReasons.push(opposingObstacleReason);
 
-    const rrAcceptable = r1 >= 1.3 && ev >= 0.25;
-    if (!rrAcceptable) checklistReasons.push(`R:R (${r1}) or EV (+${ev}R) below institutional thresholds.`);
+    const rrAcceptable = r1 >= 2.0 && r2 >= 3.0 && ev >= 0.25;
+    if (!rrAcceptable) checklistReasons.push(`R:R (TP1: 1:${r1}, TP2: 1:${r2}) below 1:2.0 / 1:3.0 institutional minimums or EV (+${ev}R) < +0.25R.`);
 
     const newsRiskAcceptable = !newsGate.isBlackout && !newsGate.feedOffline && marketRegime !== 'NEWS_SHOCK';
     if (!newsRiskAcceptable) checklistReasons.push(newsGate.feedOffline ? 'News calendar feed is offline.' : 'Active economic news blackout or post-news shock.');
@@ -4269,11 +4319,11 @@ export class SignalsController implements OnModuleInit {
       };
     }
 
-    if (setup.opportunityScore < 70 || setup.riskReward1 < 1.3 || setup.tradePath.expectedValueR < 0.25) {
+    if (setup.opportunityScore < 70 || setup.riskReward1 < 2.0 || setup.riskReward2 < 3.0 || setup.tradePath.expectedValueR < 0.25) {
       return {
         approved: false,
         verdict: 'HOLD',
-        explanation: `Held by Risk Desk: Opportunity score (${setup.opportunityScore}), R:R (${setup.riskReward1}), or EV (+${setup.tradePath.expectedValueR}R) below institutional threshold.`
+        explanation: `Held by Risk Desk: Opportunity score (${setup.opportunityScore}), R:R1 (1:${setup.riskReward1} < 1:2.0), R:R2 (1:${setup.riskReward2} < 1:3.0), or EV (+${setup.tradePath.expectedValueR}R) below institutional threshold.`
       };
     }
 
@@ -4340,7 +4390,8 @@ Macro & Microstructure:
 Risk Desk Rules:
 1. Directional Geometry: If BUY, SL must be strictly below Entry. If SELL, SL must be strictly above Entry. If violated, you MUST output "verdict": "VETOED".
 2. Macro Consistency: If technicals directly oppose surging yields/USD or impending tier-1 news shock, output "verdict": "VETOED".
-3. If the trade location is sound, risk is protected behind structure, and macro flow does not directly contradict, output "verdict": "APPROVED".
+3. High-Yield Target Calibration: Institutional setups must provide strong reward (TP1 >= 1:2.0R, TP2 >= 1:3.0R). Low-yield trades (< 2.0R) are not permitted.
+4. If the trade location is sound, risk is protected behind structure, and macro flow does not directly contradict, output "verdict": "APPROVED".
 
 Respond strictly with valid JSON:
 {
@@ -4349,8 +4400,14 @@ Respond strictly with valid JSON:
   "primary_risk_factor": "Key risk factor to watch."
 }`;
 
-    const preferredModel = process.env.GEMINI_MODEL || 'gemini-3.5-lite';
-    const modelsToTry = [preferredModel, 'gemini-3.5-lite', 'gemini-3.5-flash', 'gemini-3.0-flash'];
+    const preferredModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+    const modelsToTry = [
+      preferredModel,
+      'gemini-3.5-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-3.5-flash',
+      'gemini-3.5-lite'
+    ];
     const uniqueModels = Array.from(new Set(modelsToTry));
 
     for (const model of uniqueModels) {
@@ -4734,7 +4791,8 @@ Respond strictly with valid JSON:
       // 2. Fallback to local AI microservice if configured and Gemini direct was skipped
       if (!geminiResult && process.env.AI_SERVICE_URL) {
         try {
-          const aiServiceUrl = process.env.AI_SERVICE_URL;
+          const rawUrl = process.env.AI_SERVICE_URL;
+          const aiServiceUrl = (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) ? rawUrl : `http://${rawUrl}`;
           const aiRes = await this.fetchWithTimeout(`${aiServiceUrl}/ai/predict`, {
             method: 'POST',
             headers: {

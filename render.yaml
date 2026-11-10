@@ -9,12 +9,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 4000
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
         sync: false
+      - key: AI_SERVICE_API_KEY
+        value: internal-secret-key
       - key: AI_SERVICE_URL
         fromService:
           type: web
@@ -30,7 +30,11 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PORT
-        value: 8000
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: AI_SERVICE_API_KEY
+        value: internal-secret-key
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
       - key: GEMINI_API_KEY
         sync: false
