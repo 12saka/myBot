@@ -123,6 +123,7 @@ export default function GoldOverviewPage() {
 
   // Real structural levels for Conditional Analytical Scenarios (Properly bounded to intraday structure)
   const struct = data?.structure;
+  const tf = data?.multiTf;
   const atr = Math.max(1, data?.volatilityAtr15m || 6);
 
   // Bullish Scenario: Demand expansion from nearest bullish demand / discount level
@@ -249,6 +250,19 @@ export default function GoldOverviewPage() {
           </div>
         </div>
       </div>
+
+      {/* Stage 1: Key S/R Proximity Banner */}
+      {struct?.approachingDecisionArea && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 text-amber-200 shadow-lg">
+          <Compass className="text-amber-400 flex-shrink-0 animate-pulse" size={20} />
+          <div className="text-xs">
+            <span className="font-bold uppercase tracking-wider text-amber-300 block mb-0.5">
+              Stage 1 Telemetry: Approaching Major Key S/R Decision Area
+            </span>
+            <span className="opacity-90">{struct.decisionAreaDetails || 'Price is within 0.5x ATR of a major structural liquidity level.'}</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Interactive Annotated Gold Chart (SMC, Order Blocks, FVGs, BOS/CHoCH, Liquidity, Levels) */}
       <GoldAnnotatedChart
@@ -540,6 +554,213 @@ export default function GoldOverviewPage() {
         </div>
       </div>
 
+      {/* Multi-Timeframe Structure & Institutional Liquidity Map */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <Layers size={14} />
+            </div>
+            <h3 className="text-sm font-extrabold text-white">
+              Multi-Timeframe Structure & Institutional Liquidity Map
+            </h3>
+          </div>
+          <span className="text-[10px] font-mono text-slate-400">
+            4H Macro • 1H Directional • 15M Tactical Execution
+          </span>
+        </div>
+
+        {/* 3-Timeframe Concordance Pillars */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* 4H Higher-Timeframe Pillar */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#0B0F17] border border-amber-500/20 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/25">
+                4-Hour Macro Frame
+              </span>
+              <span className={cn(
+                "text-xs font-bold px-2 py-0.5 rounded-full uppercase border",
+                tf?.trend4h === 'BULLISH' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : tf?.trend4h === 'BEARISH' ? "bg-rose-500/20 text-rose-400 border-rose-500/30" : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+              )}>
+                {tf?.trend4h || '—'}
+              </span>
+            </div>
+            <div className="text-xs text-slate-400 space-y-2 mt-4">
+              <div className="flex justify-between py-1 border-b border-white/5">
+                <span>Displacement Size:</span>
+                <span className="font-mono text-white">{tf?.displacement4hAtr ? `$${tf.displacement4hAtr.toFixed(2)}` : '—'}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-white/5">
+                <span>HTF Direction:</span>
+                <span className="font-bold text-slate-200">Institutional Trend Core</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 1H Intermediary Structure */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#0B0F17] border border-amber-500/20 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/25">
+                1-Hour Directional Frame
+              </span>
+              <span className={cn(
+                "text-xs font-bold px-2 py-0.5 rounded-full uppercase border",
+                tf?.trend1h === 'BULLISH' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : tf?.trend1h === 'BEARISH' ? "bg-rose-500/20 text-rose-400 border-rose-500/30" : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+              )}>
+                {tf?.trend1h || '—'}
+              </span>
+            </div>
+            <div className="text-xs text-slate-400 space-y-2 mt-4">
+              <div className="flex justify-between py-1 border-b border-white/5">
+                <span>Volume POC:</span>
+                <span className="font-mono text-amber-400">{tf?.volumeProfilePoc ? `$${tf.volumeProfilePoc.toFixed(2)}` : '—'}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-white/5">
+                <span>Session VWAP:</span>
+                <span className="font-mono text-white">{tf?.sessionVwap ? `$${tf.sessionVwap.toFixed(2)}` : '—'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 15M Tactical Execution */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-[#0B0F17] border border-amber-500/20 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/25">
+                15-Minute Tactical Frame
+              </span>
+              <span className={cn(
+                "text-xs font-bold px-2 py-0.5 rounded-full uppercase border",
+                tf?.trend15m === 'BULLISH' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : tf?.trend15m === 'BEARISH' ? "bg-rose-500/20 text-rose-400 border-rose-500/30" : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+              )}>
+                {tf?.trend15m || '—'}
+              </span>
+            </div>
+            <div className="text-xs text-slate-400 space-y-2 mt-4">
+              <div className="flex justify-between py-1 border-b border-white/5">
+                <span>Concordance Status:</span>
+                <span className="font-bold text-amber-300">{tf?.concordanceStatus ? tf.concordanceStatus.replace(/_/g, ' ') : '—'}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-white/5">
+                <span>Tactical Bias:</span>
+                <span className="font-bold text-slate-200">Valid for Entry Desk</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Structural Levels & Liquidity Map */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+          {/* Session Liquidity Pools */}
+          <div className="rounded-2xl bg-[#0B0F17] border border-amber-500/25 p-5 sm:p-6 shadow-2xl">
+            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+              <Target className="text-amber-400" size={16} />
+              <span>Institutional Session Liquidity Pools</span>
+            </h3>
+            <div className="space-y-3">
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-slate-200">Asian Session Range (Asia H/L)</div>
+                  <div className="text-[11px] text-slate-500">Early liquidity baseline</div>
+                </div>
+                <div className="text-right font-mono text-xs">
+                  <span className="text-rose-400 font-bold">{struct?.asianHigh ? `$${struct.asianHigh.toFixed(2)}` : '—'}</span>
+                  <span className="text-slate-500 mx-1.5">/</span>
+                  <span className="text-emerald-400 font-bold">{struct?.asianLow ? `$${struct.asianLow.toFixed(2)}` : '—'}</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-slate-200">London Session Range (London H/L)</div>
+                  <div className="text-[11px] text-slate-500">Major European sweep levels</div>
+                </div>
+                <div className="text-right font-mono text-xs">
+                  <span className="text-rose-400 font-bold">{struct?.londonHigh ? `$${struct.londonHigh.toFixed(2)}` : '—'}</span>
+                  <span className="text-slate-500 mx-1.5">/</span>
+                  <span className="text-emerald-400 font-bold">{struct?.londonLow ? `$${struct.londonLow.toFixed(2)}` : '—'}</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-slate-200">Previous Day Range (PDH / PDL)</div>
+                  <div className="text-[11px] text-slate-500">Primary external liquidity targets</div>
+                </div>
+                <div className="text-right font-mono text-xs">
+                  <span className="text-rose-400 font-bold">{struct?.previousDayHigh ? `$${struct.previousDayHigh.toFixed(2)}` : '—'}</span>
+                  <span className="text-slate-500 mx-1.5">/</span>
+                  <span className="text-emerald-400 font-bold">{struct?.previousDayLow ? `$${struct.previousDayLow.toFixed(2)}` : '—'}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Unmitigated Order Blocks & Fair Value Gaps */}
+          <div className="rounded-2xl bg-[#0B0F17] border border-amber-500/25 p-5 sm:p-6 shadow-2xl">
+            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+              <Compass className="text-amber-400" size={16} />
+              <span>Institutional Imbalances & Order Blocks</span>
+            </h3>
+            <div className="space-y-3">
+              {/* Real Unmitigated Order Blocks */}
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-bold text-amber-300">Unmitigated Order Blocks</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">15M TF</span>
+                </div>
+                {struct?.unmitigatedOrderBlocks && struct.unmitigatedOrderBlocks.length > 0 ? (
+                  <div className="space-y-1.5 mt-2">
+                    {struct.unmitigatedOrderBlocks.slice(-3).map((ob, idx) => (
+                      <div key={idx} className="flex justify-between text-xs text-slate-300 font-mono">
+                        <span className={ob.type === 'BULLISH' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                          {ob.type} OB
+                        </span>
+                        <span>${ob.low.toFixed(2)} – ${ob.high.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">No active unmitigated order blocks in current price window.</p>
+                )}
+              </div>
+
+              {/* Real Fair Value Gaps */}
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-bold text-emerald-400">Tactical Fair Value Gaps (FVG)</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">ACTIVE</span>
+                </div>
+                {struct?.fairValueGaps && struct.fairValueGaps.length > 0 ? (
+                  <div className="space-y-1.5 mt-2">
+                    {struct.fairValueGaps.slice(-3).map((fvg, idx) => (
+                      <div key={idx} className="flex justify-between text-xs text-slate-300 font-mono">
+                        <span className={fvg.type === 'BULLISH' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                          {fvg.type} FVG
+                        </span>
+                        <span>${fvg.bottom.toFixed(2)} – ${fvg.top.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">No active fair value gaps in current price window.</p>
+                )}
+              </div>
+
+              {/* Real Volume Profile Equities */}
+              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-bold text-slate-200">Volume Profile Levels</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-slate-300">Session POC</span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  POC: <span className="font-mono text-white">${tf?.volumeProfilePoc?.toFixed(2) || '—'}</span> | VWAP: <span className="font-mono text-white">${tf?.sessionVwap?.toFixed(2) || '—'}</span>
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Macro Intermarket & Structural Quick Strip */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="p-4 rounded-xl bg-[#0B0F17] border border-amber-500/20">
@@ -579,7 +800,25 @@ export default function GoldOverviewPage() {
             {data?.macro?.forexFactoryGate === 'FEED_OFFLINE'
               ? 'Calendar feed offline — fail-closed halt active'
               : data?.macro?.nextHighImpactEvent
-              ? `${data.macro.nextHighImpactEvent.minutesRemaining}m to ${data.macro.nextHighImpactEvent.title}`
+              ? (
+                <span className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-semibold text-white">
+                    {new Date(data.macro.nextHighImpactEvent.timeUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                  <span className="text-slate-500">•</span>
+                  <span className={data.macro.nextHighImpactEvent.minutesRemaining <= 15 ? 'text-rose-400 font-bold' : 'text-amber-300'}>
+                    {data.macro.nextHighImpactEvent.minutesRemaining > 0
+                      ? `in ${data.macro.nextHighImpactEvent.minutesRemaining}m`
+                      : data.macro.nextHighImpactEvent.minutesRemaining === 0
+                      ? 'Releasing now'
+                      : `${Math.abs(data.macro.nextHighImpactEvent.minutesRemaining)}m ago`}
+                  </span>
+                  <span className="text-slate-500">•</span>
+                  <span className="text-slate-300 truncate max-w-[180px]" title={data.macro.nextHighImpactEvent.title}>
+                    {data.macro.nextHighImpactEvent.title}
+                  </span>
+                </span>
+              )
               : data?.macro?.forexFactoryGate === 'CLEAR'
               ? 'No immediate high impact event'
               : 'Calendar shield active'}

@@ -203,9 +203,19 @@ export default function GoldFundamentalsPage() {
               </span>
             ) : macro?.nextHighImpactEvent ? (
               <div>
-                <span className="font-bold text-slate-200">{macro.nextHighImpactEvent.title}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-white">
+                    {new Date(macro.nextHighImpactEvent.timeUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                  <span className="text-slate-500">•</span>
+                  <span className="font-bold text-slate-200">{macro.nextHighImpactEvent.title}</span>
+                </div>
                 <div className="text-[11px] text-amber-300 mt-0.5">
-                  In ~{macro.nextHighImpactEvent.minutesRemaining} minutes (USD Impact)
+                  {macro.nextHighImpactEvent.minutesRemaining > 0
+                    ? `In ~${macro.nextHighImpactEvent.minutesRemaining} minutes (USD Impact)`
+                    : macro.nextHighImpactEvent.minutesRemaining === 0
+                    ? 'Releasing now'
+                    : `Released ~${Math.abs(macro.nextHighImpactEvent.minutesRemaining)} minutes ago`}
                 </div>
               </div>
             ) : (

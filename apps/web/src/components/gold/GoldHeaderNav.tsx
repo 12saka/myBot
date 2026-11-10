@@ -32,12 +32,6 @@ const NAV_ITEMS: NavItem[] = [
     description: 'Hero Barometer & Live 5-Gate State'
   },
   {
-    name: 'Multi-TF Structure',
-    href: '/dashboard/engines/gold/analysis',
-    icon: Layers,
-    description: '4H/1H/15M Liquidity & FVGs'
-  },
-  {
     name: 'Entry Intelligence',
     href: '/dashboard/engines/gold/entries',
     icon: Target,

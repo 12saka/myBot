@@ -247,6 +247,7 @@ export interface NewsGateState {
   eventStage: 'PRE_EVENT' | 'EVENT_SHOCK' | 'PRICE_DISCOVERY' | 'STRUCTURE_REBUILD' | 'NORMAL_MODE';
   minutesToEvent: number | null;
   eventTitle: string | null;
+  eventTimeUtc?: string | null;
   impactTier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
   feedOffline?: boolean;
   actual?: string | null;
@@ -502,6 +503,7 @@ export class SignalsController implements OnModuleInit {
   } | null = null;
 
   private candleCache: Map<string, { timestamp: number; candles: Candle[] }> = new Map();
+  private tvWsRateLimitedUntil: number = 0;
   private cachedGoldSetup: { timestamp: number; setup: XauusdInstitutionalSetup } | null = null;
   private readonly GOLD_SETUP_CACHE_TTL_MS = 3500; // 3.5s cache for concurrent cockpit tab queries
   private inflightGoldSetupPromise: Promise<XauusdInstitutionalSetup> | null = null;
@@ -816,7 +818,15 @@ export class SignalsController implements OnModuleInit {
       return cached.candles.slice(-nBars).map(c => ({ ...c }));
     }
 
-    const symbolsToTry = [symbol, 'OANDA:XAUUSD'];
+    // If TradingView WebSocket is temporarily rate-limited (429), serve best-effort cached candles
+    if (now < this.tvWsRateLimitedUntil) {
+      if (cached && cached.candles.length >= Math.min(20, nBars)) {
+        return cached.candles.slice(-nBars).map(c => ({ ...c }));
+      }
+      return [];
+    }
+
+    const symbolsToTry = symbol === 'OANDA:XAUUSD' ? ['OANDA:XAUUSD'] : [symbol, 'OANDA:XAUUSD'];
     const WsConstructor: any = (WS as any).default || WS;
 
     for (const sym of symbolsToTry) {
@@ -897,7 +907,13 @@ export class SignalsController implements OnModuleInit {
           return candles;
         }
       } catch (err: any) {
-        this.logger.warn(`[fetchTradingViewCandles] Warning for ${sym} (${resolution}): ${err.message}`);
+        const msg = String(err?.message || '');
+        if (msg.includes('429')) {
+          this.tvWsRateLimitedUntil = Date.now() + 60000;
+          this.logger.warn(`[fetchTradingViewCandles] TradingView WebSocket rate-limited (429). Pausing new connections for 60s.`);
+          break;
+        }
+        this.logger.warn(`[fetchTradingViewCandles] Warning for ${sym} (${resolution}): ${msg}`);
       }
     }
 
@@ -1324,7 +1340,7 @@ export class SignalsController implements OnModuleInit {
     }
 
     // 2. Exponential backoff active after previous network failure -> return cached data without hammering FF!
-    if (now < this.nextAllowedCalendarFetchTime && this.cachedCalendarEvents.length > 0) {
+    if (now < this.nextAllowedCalendarFetchTime) {
       return this.cachedCalendarEvents;
     }
 
@@ -1517,14 +1533,19 @@ export class SignalsController implements OnModuleInit {
     const nowMs = Date.now();
     const tierRank = { LOW: 0, MEDIUM: 1, HIGH: 2, EXTREME: 3 } as const;
 
-    // Freshness check: if cached calendar events are older than 24 hours or missing, feed is offline
-    const isCalendarFresh = this.lastCalendarFetchTime > 0 && (nowMs - this.lastCalendarFetchTime) <= (24 * 60 * 60 * 1000);
+    // Freshness check: ForexFactory publishes a weekly schedule. If we have cached events covering the current week (or fetched within 7 days), the calendar is active.
+    const hasCurrentOrFutureEvents = events.some(e => {
+      const t = new Date(e.date).getTime();
+      return isFinite(t) && t >= (nowMs - 24 * 60 * 60 * 1000);
+    });
+    const isCalendarFresh = (this.lastCalendarFetchTime > 0 && (nowMs - this.lastCalendarFetchTime) <= (7 * 24 * 60 * 60 * 1000)) || hasCurrentOrFutureEvents;
     let calendarFeedResponded = events.length > 0 && isCalendarFresh;
 
     type Candidate = {
       title: string;
       tier: 'MEDIUM' | 'HIGH' | 'EXTREME';
       diffMin: number;
+      timeMs: number;
       actual?: string | null;
       forecast?: string | null;
       previous?: string | null;
@@ -1539,10 +1560,10 @@ export class SignalsController implements OnModuleInit {
       const diffMin = (timeMs - nowMs) / 60_000;
       const w = this.newsWindowFor(tier);
       if (diffMin <= w.pre && diffMin >= -w.post) {
-        active.push({ title, tier, diffMin, actual, forecast, previous });
+        active.push({ title, tier, diffMin, timeMs, actual, forecast, previous });
       }
       if (diffMin < 0 && diffMin >= -120 && (tier === 'HIGH' || tier === 'EXTREME')) {
-        recentReleased.push({ title, tier, diffMin, actual, forecast, previous });
+        recentReleased.push({ title, tier, diffMin, timeMs, actual, forecast, previous });
       }
     };
 
@@ -1595,6 +1616,7 @@ export class SignalsController implements OnModuleInit {
         isBlackout: true,
         eventStage: stage,
         minutesToEvent: Math.round(top.diffMin),
+        eventTimeUtc: new Date(top.timeMs).toISOString(),
         eventTitle: top.title,
         impactTier: top.tier,
         feedOffline: false,
@@ -1609,6 +1631,7 @@ export class SignalsController implements OnModuleInit {
     let fundamentalBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
     let fundamentalSummary: string | undefined;
     let eventTitle: string | null = null;
+    let eventTimeUtc: string | null = null;
     let impactTier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
     let actual: string | null = null;
     let forecast: string | null = null;
@@ -1622,6 +1645,7 @@ export class SignalsController implements OnModuleInit {
       fundamentalBias = evalRes.fundamentalGoldBias;
       fundamentalSummary = evalRes.reason;
       eventTitle = mostRecent.title;
+      eventTimeUtc = new Date(mostRecent.timeMs).toISOString();
       impactTier = mostRecent.tier;
       actual = mostRecent.actual || null;
       forecast = mostRecent.forecast || null;
@@ -1633,6 +1657,7 @@ export class SignalsController implements OnModuleInit {
       isBlackout: false,
       eventStage: 'NORMAL_MODE',
       minutesToEvent,
+      eventTimeUtc,
       eventTitle,
       impactTier,
       feedOffline: !calendarFeedResponded,
@@ -5020,11 +5045,16 @@ Respond strictly with valid JSON:
       // Find next upcoming high/medium impact USD event from cached ForexFactory calendar even when outside blackout
       let nextHighImpactEvent: { title: string; currency: string; timeUtc: string; minutesRemaining: number } | undefined;
       if (setup.newsGate.eventTitle) {
+        const timeUtc = setup.newsGate.eventTimeUtc || (
+          setup.newsGate.minutesToEvent !== null
+            ? new Date(Date.now() + setup.newsGate.minutesToEvent * 60000).toISOString()
+            : new Date().toISOString()
+        );
         nextHighImpactEvent = {
           title: setup.newsGate.eventTitle,
           currency: 'USD',
-          timeUtc: new Date(Date.now() + (setup.newsGate.minutesToEvent || 60) * 60000).toISOString(),
-          minutesRemaining: setup.newsGate.minutesToEvent || 0
+          timeUtc,
+          minutesRemaining: setup.newsGate.minutesToEvent !== null ? setup.newsGate.minutesToEvent : 0
         };
       } else if (Array.isArray(this.cachedCalendarEvents) && this.cachedCalendarEvents.length > 0) {
         const nowMs = Date.now();
