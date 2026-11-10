@@ -10,13 +10,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements file into the container
-COPY requirements.txt ./
+COPY services/ai-service/requirements.txt ./
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the service source code
-COPY . ./
+COPY services/ai-service/ ./
 
 # Expose port 8000 for FastAPI
 EXPOSE 8000
@@ -24,5 +24,5 @@ EXPOSE 8000
 # Define environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Run uvicorn on container startup, binding dynamically to $PORT or 8000
+# Run uvicorn on container startup, binding dynamically to Render's $PORT or 8000
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
