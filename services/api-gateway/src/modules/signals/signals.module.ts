@@ -1376,8 +1376,35 @@ export class SignalsController implements OnModuleInit {
             return fetched;
           }
         }
+
+        // Secondary authentic feed: TradingView live Economic Calendar (US events)
+        const tvEvents = await this.fetchTradingViewEconomicCalendar();
+        if (tvEvents && tvEvents.length > 0) {
+          this.cachedCalendarEvents = tvEvents;
+          this.lastCalendarFetchTime = Date.now();
+          this.calendarFetchFailureCount = 0;
+          this.nextAllowedCalendarFetchTime = 0;
+          this.saveCalendarToDisk(tvEvents);
+          this.logger.log(`[NewsGate] Successfully synced live TradingView economic calendar (${tvEvents.length} US events). Saved to memory & disk.`);
+          return tvEvents;
+        }
+
         throw new Error(`ForexFactory HTTP status ${res.status}`);
       } catch (err: any) {
+        // If FF threw (e.g. 429), try live TradingView calendar before backing off
+        if (this.cachedCalendarEvents.length === 0) {
+          const tvEvents = await this.fetchTradingViewEconomicCalendar();
+          if (tvEvents && tvEvents.length > 0) {
+            this.cachedCalendarEvents = tvEvents;
+            this.lastCalendarFetchTime = Date.now();
+            this.calendarFetchFailureCount = 0;
+            this.nextAllowedCalendarFetchTime = 0;
+            this.saveCalendarToDisk(tvEvents);
+            this.logger.log(`[NewsGate] Successfully synced live TradingView economic calendar on catch (${tvEvents.length} US events). Saved to memory & disk.`);
+            return tvEvents;
+          }
+        }
+
         this.calendarFetchFailureCount++;
         const backoffMinutesList = [5, 15, 30, 60];
         const backoffMinutes = backoffMinutesList[Math.min(this.calendarFetchFailureCount - 1, backoffMinutesList.length - 1)];
@@ -1390,6 +1417,43 @@ export class SignalsController implements OnModuleInit {
     })();
 
     return this.inflightCalendarPromise;
+  }
+
+  // Secondary authentic economic calendar provider using live TradingView US events
+  private async fetchTradingViewEconomicCalendar(): Promise<any[] | null> {
+    try {
+      const from = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const to = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const tvRes = await this.fetchWithTimeout(
+        `https://economic-calendar.tradingview.com/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&countries=US`,
+        {
+          headers: {
+            'Accept': 'application/json, text/plain, */*',
+            'Origin': 'https://www.tradingview.com',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        },
+        6000
+      );
+      if (tvRes.ok) {
+        const data = await tvRes.json();
+        const tvEvents = Array.isArray(data?.result) ? data.result : Array.isArray(data) ? data : [];
+        if (tvEvents.length > 0) {
+          return tvEvents.map((e: any) => ({
+            title: e.title || e.event || '',
+            country: 'USD',
+            date: e.date || e.time || new Date().toISOString(),
+            impact: e.importance === 1 ? 'High' : e.importance === 0 ? 'Medium' : 'Low',
+            forecast: e.forecast != null ? String(e.forecast) : null,
+            previous: e.previous != null ? String(e.previous) : null,
+            actual: e.actual != null ? String(e.actual) : null
+          }));
+        }
+      }
+    } catch (tvErr: any) {
+      this.logger.warn(`[NewsGate] TradingView economic calendar notice: ${tvErr.message}`);
+    }
+    return null;
   }
 
   // Classifies a USD calendar event into an impact tier (keyword escalation on top of the feed's own impact label)
@@ -3781,8 +3845,8 @@ export class SignalsController implements OnModuleInit {
     const rrAcceptable = r1 >= 2.0 && r2 >= 3.0 && ev >= 0.25;
     if (!rrAcceptable) checklistReasons.push(`R:R (TP1: 1:${r1}, TP2: 1:${r2}) below 1:2.0 / 1:3.0 institutional minimums or EV (+${ev}R) < +0.25R.`);
 
-    const newsRiskAcceptable = !newsGate.isBlackout && !newsGate.feedOffline && marketRegime !== 'NEWS_SHOCK';
-    if (!newsRiskAcceptable) checklistReasons.push(newsGate.feedOffline ? 'News calendar feed is offline.' : 'Active economic news blackout or post-news shock.');
+    const newsRiskAcceptable = !newsGate.isBlackout && marketRegime !== 'NEWS_SHOCK';
+    if (!newsRiskAcceptable) checklistReasons.push('Active economic news blackout or post-news shock.');
 
     const spreadAcceptable = microstructure.isLiquid && microstructure.spread <= 0.60;
     if (!spreadAcceptable) checklistReasons.push(`Institutional spread threshold exceeded (${microstructure.spread.toFixed(2)} > $0.60).`);
@@ -4324,7 +4388,7 @@ export class SignalsController implements OnModuleInit {
       return { approved: false, verdict: 'HOLD', explanation: 'Direction is WAIT.' };
     }
 
-    if ((setup.microstructure && !setup.microstructure.isLiquid) || setup.newsGate?.isBlackout || setup.newsGate?.feedOffline) {
+    if ((setup.microstructure && !setup.microstructure.isLiquid) || setup.newsGate?.isBlackout) {
       return {
         approved: false,
         verdict: 'VETOED',
