@@ -255,67 +255,67 @@ export default function SecureWalletPage() {
   );
 
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
+    <motion.div className="space-y-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
       <PageHeader
         title="TradeMind — Secure Wallet"
         subtitle="Financial command center & encrypted credential vault for broker account integration, risk guard, and automated execution permissions."
         icon={WalletIcon}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setIsConnectOpen(true)}
-            className="btn-primary px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-lg shadow-purple-500/20"
+            className="btn-primary px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md shadow-purple-500/20"
           >
-            <Plus size={16} />
+            <Plus size={14} />
             <span>Connect Broker Account</span>
           </button>
         </div>
       </PageHeader>
 
       {/* Main Portfolio Aggregation Metrics */}
-      <div className="glass-card rounded-2xl p-6 border border-white/5 bg-gradient-to-br from-slate-900/90 via-purple-950/20 to-slate-950">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div className="glass-card rounded-xl p-3.5 sm:p-4 border border-white/5 bg-gradient-to-br from-slate-900/90 via-purple-950/20 to-slate-950">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            <ShieldCheck size={20} className="text-purple-400" />
-            <h3 className="font-display font-bold text-white text-base">Total Aggregated Portfolio</h3>
+            <ShieldCheck size={18} className="text-purple-400" />
+            <h3 className="font-display font-bold text-white text-xs sm:text-sm">Total Aggregated Portfolio</h3>
           </div>
-          <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-500/20">
+          <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
             ● Vault Connection Active
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
-          <div className="p-3 rounded-xl bg-white/2 border border-white/5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 sm:gap-3">
+          <div className="p-2.5 rounded-lg bg-white/2 border border-white/5">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Total Balance</span>
-            <div className="text-base font-bold font-mono text-white mt-1">{formatCurrency(data.summary?.totalBalance || 0)}</div>
+            <div className="text-sm sm:text-base font-bold font-mono text-white mt-0.5">{formatCurrency(data.summary?.totalBalance || 0)}</div>
           </div>
-          <div className="p-3 rounded-xl bg-white/2 border border-white/5">
+          <div className="p-2.5 rounded-lg bg-white/2 border border-white/5">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Total Equity</span>
-            <div className="text-base font-bold font-mono text-purple-300 mt-1">{formatCurrency(data.summary?.totalEquity || 0)}</div>
+            <div className="text-sm sm:text-base font-bold font-mono text-purple-300 mt-0.5">{formatCurrency(data.summary?.totalEquity || 0)}</div>
           </div>
-          <div className="p-3 rounded-xl bg-white/2 border border-white/5">
+          <div className="p-2.5 rounded-lg bg-white/2 border border-white/5">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Free Margin</span>
-            <div className="text-base font-bold font-mono text-emerald-400 mt-1">{formatCurrency(data.summary?.availableMargin || 0)}</div>
+            <div className="text-sm sm:text-base font-bold font-mono text-emerald-400 mt-0.5">{formatCurrency(data.summary?.availableMargin || 0)}</div>
           </div>
-          <div className="p-3 rounded-xl bg-white/2 border border-white/5">
+          <div className="p-2.5 rounded-lg bg-white/2 border border-white/5">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Used Margin</span>
-            <div className="text-base font-bold font-mono text-slate-300 mt-1">{formatCurrency(data.summary?.usedMargin || 0)}</div>
+            <div className="text-sm sm:text-base font-bold font-mono text-slate-300 mt-0.5">{formatCurrency(data.summary?.usedMargin || 0)}</div>
           </div>
-          <div className="p-3 rounded-xl bg-white/2 border border-white/5">
+          <div className="p-2.5 rounded-lg bg-white/2 border border-white/5">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Unrealized P/L</span>
-            <div className={cn("text-base font-bold font-mono mt-1", (data.summary?.unrealizedPl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
+            <div className={cn("text-sm sm:text-base font-bold font-mono mt-0.5", (data.summary?.unrealizedPl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
               {(data.summary?.unrealizedPl || 0) >= 0 ? '+' : ''}${Number(data.summary?.unrealizedPl || 0).toFixed(2)}
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-white/2 border border-white/5">
+          <div className="p-2.5 rounded-lg bg-white/2 border border-white/5">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Today's P/L</span>
-            <div className={cn("text-base font-bold font-mono mt-1", (data.summary?.todayPl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
+            <div className={cn("text-sm sm:text-base font-bold font-mono mt-0.5", (data.summary?.todayPl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
               {(data.summary?.todayPl || 0) >= 0 ? '+' : ''}${Number(data.summary?.todayPl || 0).toFixed(2)}
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-white/2 border border-white/5">
+          <div className="p-2.5 rounded-lg bg-white/2 border border-white/5">
             <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Overall P/L</span>
-            <div className={cn("text-base font-bold font-mono mt-1", (data.summary?.overallPl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
+            <div className={cn("text-sm sm:text-base font-bold font-mono mt-0.5", (data.summary?.overallPl || 0) >= 0 ? "text-emerald-400" : "text-rose-400")}>
               {(data.summary?.overallPl || 0) >= 0 ? '+' : ''}${Number(data.summary?.overallPl || 0).toFixed(2)}
             </div>
           </div>
@@ -324,12 +324,12 @@ export default function SecureWalletPage() {
 
       {/* Account Type Navigation Tabs (Live Accounts vs Demo Accounts) */}
       <div className="flex items-center justify-between border-b border-white/5 pb-2">
-        <div className="flex items-center gap-2 bg-white/5 p-1 rounded-xl border border-white/5">
+        <div className="flex items-center gap-1.5 bg-white/5 p-1 rounded-lg border border-white/5">
           <button
             onClick={() => setActiveTab('live')}
             className={cn(
-              "px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer",
-              activeTab === 'live' ? "bg-purple-600 text-white shadow-md shadow-purple-500/20" : "text-slate-400 hover:text-white"
+              "px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+              activeTab === 'live' ? "bg-purple-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
             )}
           >
             <span>🟢 Live Accounts</span>
@@ -340,8 +340,8 @@ export default function SecureWalletPage() {
           <button
             onClick={() => setActiveTab('demo')}
             className={cn(
-              "px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 cursor-pointer",
-              activeTab === 'demo' ? "bg-purple-600 text-white shadow-md shadow-purple-500/20" : "text-slate-400 hover:text-white"
+              "px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+              activeTab === 'demo' ? "bg-purple-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
             )}
           >
             <span>🔵 Demo Accounts</span>
@@ -355,37 +355,37 @@ export default function SecureWalletPage() {
           onClick={() => setIsConnectOpen(true)}
           className="text-xs text-purple-400 hover:text-purple-300 font-bold flex items-center gap-1 transition-colors cursor-pointer"
         >
-          <Plus size={14} /> Add Account
+          <Plus size={13} /> Add Account
         </button>
       </div>
 
       {/* Connected Accounts Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
         {(activeTab === 'live' ? data.liveAccounts : data.demoAccounts)?.map((acc: any) => (
           <motion.div
             key={acc.id}
-            className="glass-card rounded-2xl p-5 border border-white/5 hover:border-purple-500/30 transition-all flex flex-col justify-between space-y-4"
+            className="glass-card rounded-xl p-3.5 sm:p-4 border border-white/5 hover:border-purple-500/30 transition-all flex flex-col justify-between space-y-3"
             whileHover={{ y: -2 }}
           >
             <div>
               {/* Card Header */}
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-xl">🟢</span>
+                  <span className="text-lg">🟢</span>
                   <div>
-                    <h4 className="font-display font-bold text-white text-base">{acc.broker}</h4>
+                    <h4 className="font-display font-bold text-white text-sm">{acc.broker}</h4>
                     <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
                       <span>{acc.accountType}</span> • <span>{acc.platform}</span> • <span className="text-slate-300">{acc.server}</span>
                     </span>
                   </div>
                 </div>
                 <Badge variant={acc.aiTradingEnabled ? "green" : "neutral"} size="xs">
-                  {acc.aiTradingEnabled ? '⚡ Auto-Executing' : '👁 Read-Only'}
+                  {acc.aiTradingEnabled ? '⚡ Auto' : '👁 Read-Only'}
                 </Badge>
               </div>
 
               {/* Account Balance Metrics */}
-              <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 space-y-2 mb-3">
+              <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-1.5 mb-2.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-slate-400">Account ID</span>
                   <span className="font-mono font-bold text-slate-200">#{acc.accountNumber}</span>
@@ -407,7 +407,7 @@ export default function SecureWalletPage() {
               {/* Status & Security Indicator */}
               <div className="flex items-center justify-between text-[11px] text-slate-400">
                 <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Connected
                 </span>
                 <span className="font-mono text-[10px] text-slate-500">
@@ -420,15 +420,15 @@ export default function SecureWalletPage() {
             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/5">
               <button
                 onClick={() => { setSelectedAccount(acc); setActiveModalTab('overview'); }}
-                className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                className="py-1.5 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
               >
-                <Eye size={14} /> View Account
+                <Eye size={13} /> View Account
               </button>
               <button
                 onClick={() => { setSelectedAccount(acc); setActiveModalTab('permissions'); }}
-                className="py-2 px-3 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs font-bold border border-purple-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                className="py-1.5 px-2.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs font-bold border border-purple-500/30 transition-all flex items-center justify-center gap-1 cursor-pointer"
               >
-                <Sliders size={14} /> Manage & Risk
+                <Sliders size={13} /> Manage & Risk
               </button>
             </div>
           </motion.div>
@@ -437,12 +437,12 @@ export default function SecureWalletPage() {
         {/* Empty state button card */}
         <div
           onClick={() => setIsConnectOpen(true)}
-          className="rounded-2xl border-2 border-dashed border-white/10 hover:border-purple-500/40 p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all hover:bg-purple-500/5 group"
+          className="rounded-xl border-2 border-dashed border-white/10 hover:border-purple-500/40 p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-all hover:bg-purple-500/5 group"
         >
-          <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-3 group-hover:scale-110 transition-transform">
-            <Plus size={24} />
+          <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-2 group-hover:scale-110 transition-transform">
+            <Plus size={20} />
           </div>
-          <h4 className="font-display font-bold text-white text-sm mb-1">Connect {activeTab === 'live' ? 'Live' : 'Demo'} Broker Account</h4>
+          <h4 className="font-display font-bold text-white text-xs sm:text-sm mb-1">Connect {activeTab === 'live' ? 'Live' : 'Demo'} Broker Account</h4>
           <p className="text-xs text-slate-500 max-w-xs">
             Connect JustMarkets, FBS, Exness, XM, or IC Markets via secure investor/trading credentials vault.
           </p>

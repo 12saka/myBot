@@ -13,19 +13,19 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, subtitle, icon: Icon, iconColor = '#a78bfa', children, className }: PageHeaderProps) {
   return (
-    <div className={cn('flex flex-col sm:flex-row sm:items-center justify-between gap-4', className)}>
-      <div className="flex items-center gap-3">
+    <div className={cn('flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4', className)}>
+      <div className="flex items-center gap-2.5 sm:gap-3">
         {Icon && (
-          <div className="p-2.5 rounded-xl" style={{ background: `${iconColor}1a` }}>
-            <Icon size={22} style={{ color: iconColor }} />
+          <div className="p-2 rounded-lg shrink-0" style={{ background: `${iconColor}1a` }}>
+            <Icon size={18} style={{ color: iconColor }} />
           </div>
         )}
-        <div>
-          <h1 className="text-2xl md:text-3xl font-display font-bold tracking-tight text-white">{title}</h1>
-          {subtitle && <p className="text-slate-400 text-sm mt-0.5">{subtitle}</p>}
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-white truncate">{title}</h1>
+          {subtitle && <p className="text-slate-400 text-xs sm:text-sm mt-0.5 line-clamp-1 sm:line-clamp-none">{subtitle}</p>}
         </div>
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">{children}</div>}
+      {children && <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0">{children}</div>}
     </div>
   );
 }

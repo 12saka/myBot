@@ -166,7 +166,7 @@ export default function AutomationPage() {
   };
 
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
+    <motion.div className="space-y-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
       <PageHeader
         title="Autonomous Trading Engine & Strategy Rules"
         subtitle="3-Brain Guardian Architecture: Signal Intelligence proposes, Risk Guardian decides, Execution Engine obeys."
@@ -175,71 +175,71 @@ export default function AutomationPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={handleCheckBreakEven}
-            className="px-3 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+            className="px-3 py-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
             title="Scan positions and move Stop Loss to Entry for trades past TP1"
           >
-            <Shield size={14} />
+            <Shield size={13} />
             <span>Break-Even Guardian</span>
           </button>
           <button
             onClick={handleKillSwitch}
             disabled={isEmergencyStopping}
-            className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-rose-950/40"
+            className="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-lg shadow-rose-950/40"
             title="Instantly disarm all broker auto-trade execution"
           >
-            <AlertTriangle size={14} className="text-rose-400" />
+            <AlertTriangle size={13} className="text-rose-400" />
             <span>Kill Switch</span>
           </button>
           <button
             onClick={fetchAutomationData}
-            className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
             title="Refresh Rules & Strategies"
           >
-            <RefreshCw size={14} className={cn(loadState === 'loading' && "animate-spin")} />
+            <RefreshCw size={13} className={cn(loadState === 'loading' && "animate-spin")} />
           </button>
         </div>
       </PageHeader>
 
       {/* Grid status cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="md:col-span-2 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="glass-card rounded-2xl p-5 flex flex-col justify-between h-36 border border-white/5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <div className="glass-card rounded-xl p-3.5 sm:p-4 flex flex-col justify-between border border-white/5">
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Guardian Status</span>
-                <h3 className="text-xl font-display font-bold text-white mt-1 flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-display font-bold text-white mt-0.5 flex items-center gap-2">
                   <span className={`h-2.5 w-2.5 rounded-full ${autoTradeAccounts.length > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
                   {autoTradeAccounts.length > 0 ? `${autoTradeAccounts.length} Broker(s) Armed` : 'Auto-Trade Disarmed'}
                 </h3>
               </div>
-              <p className="text-xs text-slate-500 leading-normal">
+              <p className="text-xs text-slate-500 leading-normal mt-2">
                 {autoTradeAccounts.length > 0
                   ? `Active brokers: ${autoTradeAccounts.map(a => `${a.broker} #${a.accountNumber}`).join(', ')}`
                   : 'Connect a broker in Wallet and enable Autonomous Trading to automate execution.'}
               </p>
             </div>
-            <div className="glass-card rounded-2xl p-5 flex flex-col justify-between h-36 border border-white/5">
+            <div className="glass-card rounded-xl p-3.5 sm:p-4 flex flex-col justify-between border border-white/5">
               <div>
                 <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Trading Constitution Limits</span>
-                <h3 className="text-xl font-display font-bold text-purple-400 mt-1">
+                <h3 className="text-base sm:text-lg font-display font-bold text-purple-400 mt-0.5">
                   Max 1-3% Risk / Trade
                 </h3>
               </div>
-              <p className="text-xs text-slate-500 leading-normal">
+              <p className="text-xs text-slate-500 leading-normal mt-2">
                 Daily Drawdown Cap: 3.0% max | Min R:R: 1:1.5 | Break-Even SL auto-secures at TP1.
               </p>
             </div>
           </div>
 
           {/* Active Rules List */}
-          <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
-            <h3 className="font-display font-bold text-white text-sm">Configured Automation Rules</h3>
+          <div className="glass-card rounded-xl p-3.5 sm:p-4 border border-white/5 space-y-3">
+            <h3 className="font-display font-bold text-white text-xs sm:text-sm">Configured Automation Rules</h3>
             {userRules.length === 0 ? (
-              <p className="text-xs text-slate-500 italic">No saved automation rules yet. Use the form below to configure a new strategy rule.</p>
+              <p className="text-xs text-slate-500 italic">No saved automation rules yet. Use the form to configure a new strategy rule.</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {userRules.map(rule => (
-                  <div key={rule.id} className="p-4 rounded-xl border border-white/5 bg-white/2 flex items-center justify-between">
+                  <div key={rule.id} className="p-3 rounded-lg border border-white/5 bg-white/2 flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white text-xs">{rule.name}</span>
@@ -247,20 +247,20 @@ export default function AutomationPage() {
                           {rule.isActive ? 'ACTIVE' : 'PAUSED'}
                         </Badge>
                       </div>
-                      <p className="text-[10px] text-slate-400 mt-1">
+                      <p className="text-[10px] text-slate-400 mt-0.5">
                         Strategy: <span className="text-purple-300 font-semibold">{rule.strategy}</span> | Capital: ${rule.allocation.toLocaleString()} | Risk: {rule.riskLimit}%
                       </p>
                     </div>
                     <button
                       onClick={() => handleToggleRule(rule)}
                       className={cn(
-                        "px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer",
+                        "px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer",
                         rule.isActive
                           ? "bg-purple-600 hover:bg-purple-700 text-white"
                           : "bg-white/5 hover:bg-white/10 text-slate-400 border border-white/10"
                       )}
                     >
-                      {rule.isActive ? <Pause size={12} /> : <Play size={12} />}
+                      {rule.isActive ? <Pause size={11} /> : <Play size={11} />}
                       {rule.isActive ? 'Pause' : 'Start'}
                     </button>
                   </div>
@@ -270,25 +270,25 @@ export default function AutomationPage() {
           </div>
 
           {/* Strategies Catalog */}
-          <div className="glass-card rounded-2xl p-5 border border-white/5 space-y-4">
-            <h3 className="font-display font-bold text-white text-sm">Select Institutional Strategy Template</h3>
+          <div className="glass-card rounded-xl p-3.5 sm:p-4 border border-white/5 space-y-3">
+            <h3 className="font-display font-bold text-white text-xs sm:text-sm">Select Institutional Strategy Template</h3>
             {loadState === 'loading' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[1, 2, 3, 4].map(i => (
-                  <div key={i} className="glass-card rounded-2xl p-4 h-32 animate-pulse bg-white/3" />
+                  <div key={i} className="glass-card rounded-xl p-3.5 h-24 animate-pulse bg-white/3" />
                 ))}
               </div>
             )}
 
             {loadState === 'ready' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {strategies.map((strat) => {
                   const isSelected = selectedStratName === strat.name;
                   return (
                     <div
                       key={strat.id}
                       onClick={() => setSelectedStratName(strat.name)}
-                      className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                      className={`p-3 rounded-lg border transition-all cursor-pointer flex flex-col justify-between ${
                         isSelected
                           ? 'border-purple-500 bg-purple-500/10'
                           : 'border-white/5 bg-white/2 hover:border-white/20'
@@ -394,27 +394,27 @@ export default function AutomationPage() {
       </div>
 
       {/* 3-Brain Guardian Autonomous Order Log */}
-      <div className="glass-card rounded-2xl p-6 border border-white/5 space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
-              <Zap size={20} />
+      <div className="glass-card rounded-xl p-3.5 sm:p-4 border border-white/5 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400 shrink-0">
+              <Zap size={16} />
             </div>
             <div>
-              <h3 className="font-display font-bold text-white text-base flex items-center gap-2">
+              <h3 className="font-display font-bold text-white text-sm flex items-center gap-2">
                 Guardian Auto-Executed Orders
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   {liveOrders.length} Recorded
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                1-Click autonomous broker orders dispatched by 3-Brain Risk Guardian. Operating in Paper Trading simulation mode.
+                Autonomous broker orders dispatched by 3-Brain Risk Guardian. Operating in Paper Trading simulation mode.
               </p>
             </div>
           </div>
           <button
             onClick={fetchAutomationData}
-            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold flex items-center gap-1.5 border border-white/10 transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-semibold flex items-center gap-1.5 border border-white/10 transition-colors cursor-pointer"
           >
             <RefreshCw size={12} className={loadState === 'loading' ? 'animate-spin' : ''} />
             Refresh Orders

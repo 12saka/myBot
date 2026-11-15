@@ -51,7 +51,7 @@ import {
   type ProfileData,
 } from '@/lib/api';
 
-type TabType = 'overview' | 'broker' | 'ai' | 'kyc' | 'security' | 'billing' | 'activity';
+type TabType = 'overview' | 'broker' | 'ai' | 'security' | 'billing' | 'activity';
 
 interface ApiKey {
   id: string;
@@ -70,7 +70,6 @@ export default function SettingsPage() {
     totalTrades: 0,
     winRate: '0.0%',
     signalsFollowed: 0,
-    aiAccuracy: '94.2%',
     totalProfit: 0,
   });
   const [walletBalance, setWalletBalance] = useState<number>(0);
@@ -105,7 +104,6 @@ export default function SettingsPage() {
             totalTrades: stats.value.totalTrades || 0,
             winRate: stats.value.winRate || '0.0%',
             signalsFollowed: stats.value.signalsFollowed || 0,
-            aiAccuracy: stats.value.aiAccuracy || '94.2%',
             totalProfit: Number(stats.value.totalProfit || 0),
           });
         }
@@ -144,7 +142,7 @@ export default function SettingsPage() {
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         const tab = params.get('tab');
-        if (tab && ['overview', 'broker', 'ai', 'kyc', 'security', 'billing', 'activity'].includes(tab)) {
+        if (tab && ['overview', 'broker', 'ai', 'security', 'billing', 'activity'].includes(tab)) {
           setActiveTab(tab as TabType);
         }
       }
@@ -841,19 +839,17 @@ export default function SettingsPage() {
         </PageHeader>
       </div>
 
-      {/* --- Hero Identity, Live Mastery & Broker Status Banner --- */}
-      <div className="glass-card rounded-2xl p-6 border border-purple-500/25 bg-gradient-to-r from-slate-950/90 via-purple-950/20 to-indigo-950/30 relative overflow-hidden">
-        <div className="absolute -top-24 -right-24 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="flex flex-col lg:flex-row gap-6 items-center justify-between relative z-10">
-          <div className="flex flex-col sm:flex-row gap-5 items-center w-full lg:w-auto">
-            {/* Avatar Area */}
-            <div className="relative group flex-shrink-0">
-              <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden bg-gradient-to-tr from-purple-600 to-indigo-600 border-2 border-purple-400/40 flex items-center justify-center shadow-2xl relative">
+      {/* --- Compact Hero Identity Banner --- */}
+      <div className="glass-card rounded-xl p-3.5 sm:p-4 border border-white/10 bg-gradient-to-r from-slate-950/90 via-purple-950/20 to-indigo-950/30 relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row gap-3.5 items-center justify-between relative z-10">
+          <div className="flex items-center gap-3.5 w-full sm:w-auto">
+            {/* Avatar */}
+            <div className="relative group shrink-0">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden bg-gradient-to-tr from-purple-600 to-indigo-600 border border-purple-400/40 flex items-center justify-center shadow-md relative">
                 {profilePhoto ? (
                   <img src={profilePhoto} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
-                  <span className="text-4xl font-black text-white">
+                  <span className="text-lg sm:text-xl font-bold text-white">
                     {profileData.firstName?.charAt(0) || 'T'}
                     {profileData.lastName?.charAt(0) || 'M'}
                   </span>
@@ -861,93 +857,73 @@ export default function SettingsPage() {
               </div>
               <button
                 onClick={() => avatarInputRef.current?.click()}
-                className="absolute -bottom-2 -right-2 bg-purple-600 hover:bg-purple-500 text-white p-2.5 rounded-xl border border-white/15 shadow-lg cursor-pointer transition-all print:hidden"
-                title="Upload New Profile Photo"
+                className="absolute -bottom-1 -right-1 bg-purple-600 hover:bg-purple-500 text-white p-1 rounded-md border border-white/15 shadow cursor-pointer transition-all print:hidden"
+                title="Change Photo"
               >
-                <UploadCloud size={14} />
+                <UploadCloud size={10} />
               </button>
             </div>
 
-            <div className="text-center sm:text-left space-y-2">
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                <h2 className="text-xl sm:text-2xl font-display font-black text-white">
+            <div className="space-y-0.5 min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h2 className="text-sm sm:text-base font-bold text-white truncate">
                   {profileData.firstName} {profileData.lastName}
                 </h2>
-                <Badge className="bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                <Badge className="bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] py-0 px-1.5">
                   Institutional Pro
                 </Badge>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                  <Flame size={11} className="text-amber-400 fill-amber-400" /> Level {traderRankLevel} • {academyStats.totalXp} XP
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <Flame size={10} className="text-amber-400 fill-amber-400" /> Lvl {traderRankLevel} • {academyStats.totalXp} XP
                 </span>
-                {isBrokerConnected ? (
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                    <CheckCircle2 size={11} /> {profileData.brokerType?.toUpperCase()} Connected
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => setActiveTab('broker')}
-                    className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-teal-500/15 text-teal-300 border border-teal-500/30 hover:bg-teal-500/25 cursor-pointer"
-                  >
-                    + Connect MT5 / Alpaca
-                  </button>
-                )}
               </div>
 
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs text-slate-400 font-mono">
-                <span>📧 {displayValue(profileData.email)}</span>
-                <span>🌍 {profileData.timezone || 'UTC'}</span>
-                <span>🎯 Strategy: Gold Engine v3 SMC</span>
+              <div className="flex flex-wrap items-center gap-2.5 text-[11px] text-slate-400 font-mono">
+                <span>{displayValue(profileData.email)}</span>
+                <span>• {profileData.timezone || 'UTC'}</span>
+                <span>• Gold Engine v3.2 SMC</span>
               </div>
             </div>
           </div>
 
-          {/* Right: Profile & KYC Completion Meter */}
-          <div className="w-full lg:w-72 p-4 rounded-2xl bg-slate-900/70 border border-white/10 space-y-2.5">
-            <div className="flex justify-between items-center text-[11px] font-mono">
-              <span className="text-slate-300 font-bold uppercase">Account & KYC Readiness</span>
-              <span className="text-emerald-400 font-black">{completionPercent}%</span>
-            </div>
-            <div className="w-full h-2 rounded-full bg-white/5 border border-white/5 overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-purple-500 via-teal-400 to-emerald-400 rounded-full transition-all duration-500"
-                style={{ width: `${completionPercent}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[10px] text-slate-400">
-              <span>{completionPercent === 100 ? '✅ Fully Verified' : 'Upload KYC docs for 100%'}</span>
+          {/* Right Broker Status */}
+          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+            {isBrokerConnected ? (
+              <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
+                <CheckCircle2 size={12} /> {profileData.brokerType?.toUpperCase()} Active
+              </span>
+            ) : (
               <button
-                onClick={() => setActiveTab('kyc')}
-                className="text-purple-400 hover:underline font-bold cursor-pointer"
+                onClick={() => setActiveTab('broker')}
+                className="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-teal-500/15 text-teal-300 border border-teal-500/30 hover:bg-teal-500/25 cursor-pointer flex items-center gap-1"
               >
-                Open KYC Vault →
+                <Link2 size={12} /> Connect MT5
               </button>
-            </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* --- 7-Tab Modern Navigation Bar --- */}
-      <div className="flex flex-wrap border-b border-white/10 gap-1.5 sm:gap-2 pb-2 print:hidden">
+      {/* --- Modern Navigation Bar (Clean & Horizontally Scrollable on Mobile) --- */}
+      <div className="flex items-center border-b border-white/10 gap-1 sm:gap-2 pb-1 overflow-x-auto no-scrollbar print:hidden">
         {[
-          { id: 'overview', label: 'Identity & Profile', icon: User },
-          { id: 'broker', label: 'Broker & MT5 Bridge', icon: Link2 },
-          { id: 'ai', label: 'Gold Engine v3 & Alerts', icon: BrainCircuit },
-          { id: 'kyc', label: 'Verification (KYC)', icon: Shield },
-          { id: 'security', label: 'Security & API Keys', icon: Key },
-          { id: 'billing', label: 'Wallet & Subscription', icon: Wallet },
-          { id: 'activity', label: 'Academy & Activity Log', icon: GraduationCap },
+          { id: 'overview', label: 'Profile', icon: User },
+          { id: 'broker', label: 'MT5 & Broker', icon: Link2 },
+          { id: 'ai', label: 'Engine & Risk', icon: BrainCircuit },
+          { id: 'security', label: 'Security & 2FA', icon: Key },
+          { id: 'billing', label: 'Plan & Billing', icon: Wallet },
+          { id: 'activity', label: 'Academy & Activity', icon: GraduationCap },
         ].map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as TabType)}
             className={cn(
-              'flex items-center gap-2 px-3.5 py-2.5 rounded-xl font-display font-bold text-xs whitespace-nowrap transition-all cursor-pointer border',
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-xs whitespace-nowrap transition-all cursor-pointer border shrink-0',
               activeTab === tab.id
-                ? 'bg-purple-600/20 border-purple-500/50 text-white shadow-lg shadow-purple-500/10'
+                ? 'bg-purple-600/20 border-purple-500/50 text-white shadow-sm shadow-purple-500/20'
                 : 'border-transparent text-slate-400 hover:text-white hover:bg-white/5'
             )}
           >
-            <tab.icon size={14} className={activeTab === tab.id ? 'text-purple-400' : 'text-slate-400'} />
+            <tab.icon size={13} className={activeTab === tab.id ? 'text-purple-400' : 'text-slate-400'} />
             <span>{tab.label}</span>
           </button>
         ))}
@@ -1685,119 +1661,7 @@ export default function SettingsPage() {
               </motion.div>
             )}
 
-            {/* TAB 4: KYC VERIFICATION VAULT */}
-            {activeTab === 'kyc' && (
-              <motion.div
-                key="tab-kyc"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="glass-card rounded-2xl p-6 border border-white/5 space-y-6"
-              >
-                <div className="border-b border-white/5 pb-3">
-                  <h3 className="font-display font-bold text-white text-sm flex items-center gap-2">
-                    <Shield size={16} className="text-purple-400" />
-                    Regulatory Identity Verification (KYC Vault)
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Submit regulatory documents to unlock unlimited wallet withdrawals and institutional prop-firm execution.
-                  </p>
-                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-start gap-4">
-                    <div className="space-y-1.5">
-                      <h4 className="font-semibold text-slate-200 text-xs">1. Identity Document (ID / Passport)</h4>
-                      <p className="text-[10px] text-slate-500">Government-issued Passport or National ID Card.</p>
-                      {idCardFile && (
-                        <div className="text-[10px] text-purple-300 font-mono flex items-center gap-1.5 mt-2 bg-purple-500/10 p-1.5 rounded-lg border border-purple-500/20">
-                          <FileText size={12} /> {idCardFile}
-                        </div>
-                      )}
-                      <button
-                        onClick={() => idInputRef.current?.click()}
-                        className="text-[11px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 pt-2 cursor-pointer"
-                      >
-                        <UploadCloud size={13} /> {idCardFile ? 'Replace ID Document' : 'Upload ID Card'}
-                      </button>
-                    </div>
-                    <Badge
-                      className={
-                        idCardFile
-                          ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
-                          : 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
-                      }
-                    >
-                      {idCardFile ? '✅ Uploaded' : 'Pending'}
-                    </Badge>
-                  </div>
-
-                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-start gap-4">
-                    <div className="space-y-1.5">
-                      <h4 className="font-semibold text-slate-200 text-xs">2. Biometric Selfie Verification</h4>
-                      <p className="text-[10px] text-slate-500">Clear facial photo matching your government ID.</p>
-                      {selfieFile && (
-                        <div className="text-[10px] text-purple-300 font-mono flex items-center gap-1.5 mt-2 bg-purple-500/10 p-1.5 rounded-lg border border-purple-500/20">
-                          <FileText size={12} /> {selfieFile}
-                        </div>
-                      )}
-                      <button
-                        onClick={() => selfieInputRef.current?.click()}
-                        className="text-[11px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 pt-2 cursor-pointer"
-                      >
-                        <UploadCloud size={13} /> {selfieFile ? 'Replace Selfie' : 'Upload Selfie Photo'}
-                      </button>
-                    </div>
-                    <Badge
-                      className={
-                        selfieFile
-                          ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
-                          : 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
-                      }
-                    >
-                      {selfieFile ? '✅ Uploaded' : 'Pending'}
-                    </Badge>
-                  </div>
-
-                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-start gap-4">
-                    <div className="space-y-1.5">
-                      <h4 className="font-semibold text-slate-200 text-xs">3. Proof of Residence</h4>
-                      <p className="text-[10px] text-slate-500">Utility bill or bank statement (&lt; 3 months old).</p>
-                      {addressFile && (
-                        <div className="text-[10px] text-purple-300 font-mono flex items-center gap-1.5 mt-2 bg-purple-500/10 p-1.5 rounded-lg border border-purple-500/20">
-                          <FileText size={12} /> {addressFile}
-                        </div>
-                      )}
-                      <button
-                        onClick={() => addressInputRef.current?.click()}
-                        className="text-[11px] font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 pt-2 cursor-pointer"
-                      >
-                        <UploadCloud size={13} /> {addressFile ? 'Replace Proof' : 'Upload Address Proof'}
-                      </button>
-                    </div>
-                    <Badge
-                      className={
-                        addressFile
-                          ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
-                          : 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
-                      }
-                    >
-                      {addressFile ? '✅ Uploaded' : 'Pending'}
-                    </Badge>
-                  </div>
-
-                  <div className="p-4 rounded-xl border border-white/5 bg-slate-900/40 flex justify-between items-start gap-4">
-                    <div>
-                      <h4 className="font-semibold text-slate-200 text-xs">4. Tax & AML Declaration</h4>
-                      <p className="text-[10px] text-slate-500">Automated anti-money-laundering & regional tax check.</p>
-                    </div>
-                    <Badge className="bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
-                      ✅ Verified
-                    </Badge>
-                  </div>
-                </div>
-              </motion.div>
-            )}
 
             {/* TAB 5: SECURITY CENTER & PERSONAL API KEYS */}
             {activeTab === 'security' && (
@@ -2197,7 +2061,7 @@ export default function SettingsPage() {
                 { label: 'Executed Trades', val: portfolioStats.totalTrades.toLocaleString() },
                 { label: 'Account Win Rate', val: `${portfolioStats.winRate}`.includes('%') ? portfolioStats.winRate : `${portfolioStats.winRate}%` },
                 { label: 'Academy XP Earned', val: `${academyStats.totalXp} XP` },
-                { label: 'Engine Precision', val: `${portfolioStats.aiAccuracy}`.includes('%') ? portfolioStats.aiAccuracy : `${portfolioStats.aiAccuracy}%` },
+                { label: 'Risk Protocol', val: '5/5 Passed' },
               ].map((stat) => (
                 <div key={stat.label} className="p-3 rounded-xl border border-white/5 bg-slate-900/40">
                   <div className="font-bold text-white text-sm font-mono">{stat.val}</div>

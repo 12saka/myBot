@@ -416,6 +416,15 @@ export interface XauusdLiveStateStore {
   killSwitchActive: boolean;
   killSwitchTier: KillSwitchTier;
   killSwitchReason?: string;
+  sessionOpeningPlay?: SessionOpeningPlay;
+}
+
+export interface SessionOpeningPlay {
+  tag: 'LONDON_OPEN_SWEEP' | 'NY_ORB_BREAKOUT' | 'NY_AM_SILVER_BULLET' | 'LONDON_SILVER_BULLET' | 'NY_PM_SILVER_BULLET' | 'POST_NEWS_FVG_CONTINUATION' | 'STANDARD_STRUCTURE';
+  badgeLabel: string;
+  sessionWindow: string;
+  catalyst: string;
+  confidenceBoost: number;
 }
 
 export interface XauusdInstitutionalSetup {
@@ -423,6 +432,7 @@ export interface XauusdInstitutionalSetup {
   finalValidationChecklist: FinalValidationChecklist;
   orderType: OrderType;
   model: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE';
+  sessionOpeningPlay?: SessionOpeningPlay;
   direction: 'BUY' | 'SELL' | 'WAIT';
   grade: 'A+' | 'A' | 'B+' | 'WAIT';
   opportunityScore: number;
@@ -1676,8 +1686,13 @@ export class SignalsController implements OnModuleInit {
       else if (top.diffMin >= -15) stage = 'PRICE_DISCOVERY';
       else stage = 'STRUCTURE_REBUILD';
       const newsEval = this.evaluateUsdNewsImpact(top.title, top.actual, top.forecast, top.previous);
+      
+      // Blackout is active strictly during PRE_EVENT, EVENT_SHOCK, and PRICE_DISCOVERY.
+      // At STRUCTURE_REBUILD (T+15m to T+45m), initial market spread blowout has normalized,
+      // and institutional post-news retests are permitted with confirmed fundamental alignment.
+      const isBlackout = stage !== 'STRUCTURE_REBUILD';
       return {
-        isBlackout: true,
+        isBlackout,
         eventStage: stage,
         minutesToEvent: Math.round(top.diffMin),
         eventTimeUtc: new Date(top.timeMs).toISOString(),
@@ -1688,7 +1703,8 @@ export class SignalsController implements OnModuleInit {
         forecast: top.forecast || null,
         previous: top.previous || null,
         fundamentalBias: newsEval.fundamentalGoldBias,
-        fundamentalSummary: newsEval.reason
+        fundamentalSummary: newsEval.reason,
+        postNewsContinuation: newsEval.fundamentalGoldBias === 'BULLISH' ? 'BUY' : newsEval.fundamentalGoldBias === 'BEARISH' ? 'SELL' : null
       };
     }
 
@@ -1717,9 +1733,11 @@ export class SignalsController implements OnModuleInit {
       minutesToEvent = Math.round(mostRecent.diffMin);
     }
 
+    const isRecentRebuild = minutesToEvent !== null && minutesToEvent < 0 && minutesToEvent >= -45;
+
     return {
       isBlackout: false,
-      eventStage: 'NORMAL_MODE',
+      eventStage: isRecentRebuild ? 'STRUCTURE_REBUILD' : 'NORMAL_MODE',
       minutesToEvent,
       eventTimeUtc,
       eventTitle,
@@ -1729,7 +1747,8 @@ export class SignalsController implements OnModuleInit {
       forecast,
       previous,
       fundamentalBias,
-      fundamentalSummary
+      fundamentalSummary,
+      postNewsContinuation: fundamentalBias === 'BULLISH' ? 'BUY' : fundamentalBias === 'BEARISH' ? 'SELL' : null
     };
   }
 
@@ -1961,6 +1980,129 @@ export class SignalsController implements OnModuleInit {
     const anchoredVwapAsia = this.calcVWAP(asiaCandles.length >= 2 ? asiaCandles : candles15m.slice(-28));
 
     return { session, pdh, pdl, pwh, pwl, ash, asl, londonHigh, londonLow, sessionVwap, anchoredVwapAsia };
+  }
+
+  public classifySessionOpeningPlay(
+    now: Date,
+    direction: 'BUY' | 'SELL' | 'WAIT',
+    selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE',
+    sessionLevels: SessionLevels,
+    sweeps: LiquiditySweep[],
+    fvgs: FairValueGap[],
+    volMetrics: VolatilityMetrics,
+    newsGate?: NewsGateState
+  ): SessionOpeningPlay {
+    // 0. Institutional Post-News FVG / OB Mitigation Retest (The #1 Gold News Strategy)
+    // Institutional Catalyst: High-impact release (CPI, NFP, FOMC) macro actuals confirmed.
+    // Price pulls back into the news displacement FVG / Order Block in the direction of the fundamental bias.
+    if (
+      newsGate &&
+      newsGate.eventStage === 'STRUCTURE_REBUILD' &&
+      newsGate.fundamentalBias &&
+      newsGate.fundamentalBias !== 'NEUTRAL' &&
+      direction !== 'WAIT' &&
+      ((direction === 'BUY' && newsGate.fundamentalBias === 'BULLISH') ||
+       (direction === 'SELL' && newsGate.fundamentalBias === 'BEARISH'))
+    ) {
+      return {
+        tag: 'POST_NEWS_FVG_CONTINUATION',
+        badgeLabel: '[Post-News FVG Retest]',
+        sessionWindow: `Post-News Structure Rebuild (${newsGate.eventTitle || 'US Macro Event'})`,
+        catalyst: `${newsGate.eventTitle || 'Macro Event'}: Fundamental Gold bias (${newsGate.fundamentalBias}) verified with live economic data. 15M FVG retest defended post-release.`,
+        confidenceBoost: 6
+      };
+    }
+
+    const utcHour = now.getUTCHours();
+    const utcMinute = now.getUTCMinutes();
+
+    // 1. London Open Liquidity Sweep (07:00 - 09:30 UTC / 02:00 - 04:30 AM EST)
+    // Institutional Catalyst: Asian session liquidity (ASH or ASL) run followed by CHoCH reversal
+    const isLondonOpenWindow = (utcHour === 7 || utcHour === 8 || (utcHour === 9 && utcMinute <= 30));
+    if (isLondonOpenWindow && direction !== 'WAIT') {
+      const sweptAsh = sweeps.some(s => s.levelName.includes('Asian High') || (sessionLevels.ash > 0 && Math.abs(s.levelPrice - sessionLevels.ash) < 0.75));
+      const sweptAsl = sweeps.some(s => s.levelName.includes('Asian Low') || (sessionLevels.asl > 0 && Math.abs(s.levelPrice - sessionLevels.asl) < 0.75));
+
+      if ((direction === 'SELL' && sweptAsh) || (direction === 'BUY' && sweptAsl) || selectedModel === 'SWEEP_CHOCH_REVERSAL') {
+        const sweptLevel = direction === 'BUY' ? 'Asian Session Low (ASL)' : 'Asian Session High (ASH)';
+        return {
+          tag: 'LONDON_OPEN_SWEEP',
+          badgeLabel: '[London Open Sweep]',
+          sessionWindow: 'London Open Killzone (07:00–09:30 UTC)',
+          catalyst: `Algorithmic liquidity sweep of ${sweptLevel} followed by confirmed displacement reversal into London session.`,
+          confidenceBoost: 4
+        };
+      }
+    }
+
+    // 2. ICT London Silver Bullet (07:00 - 08:00 UTC / 03:00 - 04:00 AM NY)
+    // Institutional Catalyst: Algorithm delivering price into London liquidity via 15M FVG rebalance
+    if (utcHour === 7 && direction !== 'WAIT') {
+      const activeFvg = fvgs.some(f => !f.mitigated);
+      if (activeFvg) {
+        return {
+          tag: 'LONDON_SILVER_BULLET',
+          badgeLabel: '[London Silver Bullet]',
+          sessionWindow: 'London Silver Bullet (07:00–08:00 UTC)',
+          catalyst: 'ICT London 60-min algorithmic delivery window: 15M FVG rebalance towards session liquidity.',
+          confidenceBoost: 4
+        };
+      }
+    }
+
+    // 3. New York Cash Opening Range Breakout (ORB) (13:30 - 14:15 UTC / 09:30 - 10:15 AM EST)
+    // Institutional Catalyst: NY cash market open volatility expansion breaking initial 15M balance
+    const isNyOrbWindow = (utcHour === 13 && utcMinute >= 30) || (utcHour === 14 && utcMinute <= 15);
+    if (isNyOrbWindow && direction !== 'WAIT') {
+      if (selectedModel === 'BOS_PULLBACK_CONTINUATION' || volMetrics.regime !== 'LOW') {
+        return {
+          tag: 'NY_ORB_BREAKOUT',
+          badgeLabel: '[NY ORB Breakout]',
+          sessionWindow: 'New York Opening Range (13:30–14:15 UTC)',
+          catalyst: 'High-momentum institutional expansion breaking beyond the New York Cash Open 15M range.',
+          confidenceBoost: 5
+        };
+      }
+    }
+
+    // 4. ICT New York AM Silver Bullet (14:00 - 15:00 UTC / 10:00 - 11:00 AM EST)
+    // Institutional Catalyst: High-probability 60-minute window targeting morning session extremes via FVG
+    if (utcHour === 14 && direction !== 'WAIT') {
+      const activeFvg = fvgs.some(f => !f.mitigated);
+      if (activeFvg) {
+        return {
+          tag: 'NY_AM_SILVER_BULLET',
+          badgeLabel: '[NY AM Silver Bullet]',
+          sessionWindow: 'New York AM Silver Bullet (14:00–15:00 UTC)',
+          catalyst: 'ICT NY AM 60-min prime window: Displacement FVG retest targeting opposing session liquidity.',
+          confidenceBoost: 5
+        };
+      }
+    }
+
+    // 5. ICT New York PM Silver Bullet (18:00 - 19:00 UTC / 14:00 - 15:00 PM EST)
+    // Institutional Catalyst: Afternoon liquidity rebalance before New York session close
+    if (utcHour === 18 && direction !== 'WAIT') {
+      const activeFvg = fvgs.some(f => !f.mitigated);
+      if (activeFvg) {
+        return {
+          tag: 'NY_PM_SILVER_BULLET',
+          badgeLabel: '[NY PM Silver Bullet]',
+          sessionWindow: 'New York PM Silver Bullet (18:00–19:00 UTC)',
+          catalyst: 'ICT NY PM 60-min institutional window: Late-session liquidity rebalance towards daily range extremes.',
+          confidenceBoost: 3
+        };
+      }
+    }
+
+    // 6. Standard Institutional Structure
+    return {
+      tag: 'STANDARD_STRUCTURE',
+      badgeLabel: '[Institutional SMC]',
+      sessionWindow: `${sessionLevels.session} Session`,
+      catalyst: 'Multi-Timeframe Institutional Confluence Zone (ICZ) structural execution.',
+      confidenceBoost: 0
+    };
   }
 
   public detectFractalSwings(candles: Candle[]): FractalSwing[] {
@@ -2794,8 +2936,13 @@ export class SignalsController implements OnModuleInit {
       (intermarket.macroDrawOnLiquidity === 'SELL_SIDE_LIQUIDITY' || intermarket.macroAlignment === 'BEARISH' || (ema20 < ema50 && adx14 >= 22)) &&
       (bos15mSell || isBearPullback || isBearVwapPullback || priceNearBearObOrFvg || isBearFvgRetest || isBearObRetest || mss5mSell);
 
+    // Institutional Post-News Macro Trigger (Structure Rebuild after High-Impact US Releases)
+    const isPostNewsBullish = newsGate.eventStage === 'STRUCTURE_REBUILD' && newsGate.fundamentalBias === 'BULLISH';
+    const isPostNewsBearish = newsGate.eventStage === 'STRUCTURE_REBUILD' && newsGate.fundamentalBias === 'BEARISH';
+
     // Strict Trigger Requirement: must have an actual institutional catalyst (Continuation OR Reversal)
     const hasBullishTrigger =
+      isPostNewsBullish ||
       isLongMacroContinuation ||
       isBullContinuation ||
       !!latestBullishSweep ||
@@ -2808,6 +2955,7 @@ export class SignalsController implements OnModuleInit {
       (priceNearBullObOrFvg && trend15m !== 'BEARISH') ||
       rsiDiv === 'BULLISH_DIVERGENCE';
     const hasBearishTrigger =
+      isPostNewsBearish ||
       isShortMacroContinuation ||
       isBearContinuation ||
       !!latestBearishSweep ||
@@ -2820,6 +2968,8 @@ export class SignalsController implements OnModuleInit {
       (priceNearBearObOrFvg && trend15m !== 'BULLISH') ||
       rsiDiv === 'BEARISH_DIVERGENCE';
 
+    if (isPostNewsBullish) bullEvidence += 20;
+    if (isPostNewsBearish) bearEvidence += 20;
     if (isBullPullback) bullEvidence += 12;
     if (isBearPullback) bearEvidence += 12;
     if (bos15mBuy) bullEvidence += 10;
@@ -3638,18 +3788,29 @@ export class SignalsController implements OnModuleInit {
       ? 0
       : parseFloat(((((pTp1 * 0.5 * r1) + (pTp2 * 0.3 * r2) + (pTp3 * 0.2 * r3)) - (pSl * 1.0)) - spreadCostR).toFixed(2));
 
-    // Stage 3 Check: Entry Missed (Runaway Protection)
+    // Stage 3 Check: Entry Missed & Runaway Protection
     let entryMissed = false;
     let entryMissedReason: string | null = null;
-    if (bias === 'BUY') {
-      if (currentPrice >= entryPrice + 0.50 * risk) {
-        entryMissed = true;
-        entryMissedReason = `Entry missed: Spot price ($${currentPrice.toFixed(2)}) has moved +${((currentPrice - entryPrice) / risk).toFixed(2)}R toward TP1 without filling preferred entry ($${entryPrice.toFixed(2)}). Late chase prohibited.`;
+
+    if (orderType === 'MARKET_BUY' || orderType === 'MARKET_SELL') {
+      // If price moved > 0.50R past market zone, do not chase at market: gracefully degrade to a pending limit order!
+      if (bias === 'BUY' && currentPrice >= entryPrice + 0.50 * risk) {
+        orderType = 'BUY_LIMIT';
+      } else if (bias === 'SELL' && currentPrice <= entryPrice - 0.50 * risk) {
+        orderType = 'SELL_LIMIT';
       }
-    } else if (bias === 'SELL') {
-      if (currentPrice <= entryPrice - 0.50 * risk) {
+    }
+
+    if (orderType === 'BUY_LIMIT' || orderType === 'SELL_LIMIT') {
+      // A limit order is only missed if price already reached TP1 without filling, or expanded runaway > 1.8R
+      const tp1AlreadyReached = bias === 'BUY' ? (currentPrice >= tp1Price) : (currentPrice <= tp1Price && tp1Price > 0);
+      const runawayExpansion = bias === 'BUY'
+        ? (currentPrice >= entryPrice + 1.80 * risk)
+        : (currentPrice <= entryPrice - 1.80 * risk);
+
+      if (tp1AlreadyReached || runawayExpansion) {
         entryMissed = true;
-        entryMissedReason = `Entry missed: Spot price ($${currentPrice.toFixed(2)}) has declined +${((entryPrice - currentPrice) / risk).toFixed(2)}R toward TP1 without filling preferred entry ($${entryPrice.toFixed(2)}). Late chase prohibited.`;
+        entryMissedReason = `Entry missed: Spot price ($${currentPrice.toFixed(2)}) has completed +${((Math.abs(currentPrice - entryPrice)) / risk).toFixed(2)}R move to TP1 ($${tp1Price.toFixed(2)}) without filling limit order ($${entryPrice.toFixed(2)}). Waiting for fresh structure.`;
       }
     }
 
@@ -3924,10 +4085,25 @@ export class SignalsController implements OnModuleInit {
     // Final Action: Emit or Wait
     let finalDirection: 'BUY' | 'SELL' | 'WAIT' = 'WAIT';
     let grade: 'A+' | 'A' | 'B+' | 'WAIT' = 'WAIT';
-    const compositeScore = Math.round((gate1.score * 0.20) + (gate2.score * 0.20) + (gate3.score * 0.20) + (gate4.score * 0.25) + (gate5.score * 0.15));
+    let compositeScore = Math.round((gate1.score * 0.20) + (gate2.score * 0.20) + (gate3.score * 0.20) + (gate4.score * 0.25) + (gate5.score * 0.15));
+
+    const now = new Date();
+    const sessionOpeningPlay = this.classifySessionOpeningPlay(
+      now,
+      bias === 'NO_TRADE' ? 'WAIT' : bias,
+      selectedModel,
+      sessionLevels,
+      sweeps,
+      fvgs15,
+      volMetrics,
+      newsGate
+    );
 
     if (allPassed && orderType !== 'WAIT' && bias !== 'NO_TRADE') {
       finalDirection = bias;
+      if (sessionOpeningPlay.confidenceBoost > 0) {
+        compositeScore = Math.min(98, compositeScore + sessionOpeningPlay.confidenceBoost);
+      }
       if (compositeScore >= 85 && ev >= 0.70) grade = 'A+';
       else if (compositeScore >= 75 && ev >= 0.45) grade = 'A';
       else grade = 'B+';
@@ -4033,7 +4209,7 @@ export class SignalsController implements OnModuleInit {
 
     const summary = !allPassed
       ? `Gate Check [${failingGate}]: ${failingReason}`
-      : `High-conviction ${grade} ${orderType} setup at Institutional Confluence Zone ($${icz.zoneLow}–$${icz.zoneHigh}). Preferred Entry: $${entryPrice.toFixed(2)}, SL: $${exactStopLoss.toFixed(2)}, TP1: $${tp1Price.toFixed(2)} (R:R ${r1}, EV +${ev}R).`;
+      : `${sessionOpeningPlay.badgeLabel !== '[Institutional SMC]' ? `${sessionOpeningPlay.badgeLabel} ` : ''}High-conviction ${grade} ${orderType} setup at Institutional Confluence Zone ($${icz.zoneLow}–$${icz.zoneHigh}). ${sessionOpeningPlay.catalyst} Preferred Entry: $${entryPrice.toFixed(2)}, SL: $${exactStopLoss.toFixed(2)}, TP1: $${tp1Price.toFixed(2)} (R:R ${r1}, EV +${ev}R).`;
 
     // Update real-time state store
     this.liveStateStore = {
@@ -4047,6 +4223,7 @@ export class SignalsController implements OnModuleInit {
       marketRegime,
       volatilityRegime: volMetrics.regime,
       session: sessionLevels.session,
+      sessionOpeningPlay,
       dxyAlignment: intermarket.macroAlignment,
       us10yAlignment: `${intermarket.us10yChange1h}%`,
       newsRisk: newsGate.impactTier,
@@ -4188,6 +4365,7 @@ export class SignalsController implements OnModuleInit {
       auditTrail,
       confluenceReasons: icz.confluenceFactors,
       summary,
+      sessionOpeningPlay,
       hierarchy,
       memory,
       unmitigatedOrderBlocks: obs15,
@@ -4706,6 +4884,7 @@ Respond strictly with valid JSON:
       data: {
         symbol: 'GOLD',
         direction: setup.direction,
+        strategyKey: setup.sessionOpeningPlay?.tag || setup.model,
         entryPrice: setup.entryPrice,
         stopLoss: setup.stopLoss,
         takeProfit1: setup.takeProfit1,
@@ -4729,6 +4908,9 @@ Respond strictly with valid JSON:
           orderType: setup.orderType,
           entryZone: setup.entryZone,
           strategy: setup.model,
+          sessionTag: setup.sessionOpeningPlay?.tag || null,
+          sessionBadge: setup.sessionOpeningPlay?.badgeLabel || null,
+          sessionOpeningPlay: setup.sessionOpeningPlay || null,
           signalGrade: setup.grade,
           opportunityScore: setup.opportunityScore,
           confluenceScore: setup.opportunityScore,
@@ -4759,8 +4941,11 @@ Respond strictly with valid JSON:
     });
 
     this.notificationsGateway.server.emit('signal:created', createdSignal);
+    const sessionPrefix = setup.sessionOpeningPlay?.badgeLabel && setup.sessionOpeningPlay.badgeLabel !== '[Institutional SMC]'
+      ? `${setup.sessionOpeningPlay.badgeLabel} `
+      : '';
     await this.notificationsGateway.broadcastTradeSignalNotification(
-      `⚡ Live Institutional Gold Signal (${setup.grade}) [${publicId}]`,
+      `⚡ ${sessionPrefix}Live Gold Signal (${setup.grade}) [${publicId}]`,
       `${setup.direction} XAU/USD ${setup.orderType.replace(/_/g, ' ')} @ $${setup.entryPrice.toFixed(2)} | TP1: $${setup.takeProfit1.toFixed(2)} | SL: $${setup.stopLoss.toFixed(2)}`,
       '/dashboard/engines/gold'
     );

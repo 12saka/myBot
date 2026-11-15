@@ -170,7 +170,7 @@ export default function OrdersPage() {
   });
 
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
+    <motion.div className="space-y-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
       <PageHeader
         title="Order History"
         subtitle="Monitor current pending entries, executed signals, manual orders, and historical trade logs."
@@ -178,20 +178,20 @@ export default function OrdersPage() {
       >
         <button
           onClick={fetchOrders}
-          className="btn-ghost flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold cursor-pointer"
+          className="btn-ghost flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer"
         >
-          <RefreshCw size={14} /> Refresh
+          <RefreshCw size={13} /> Refresh
         </button>
         <button
           onClick={() => setIsPlacingOrder(true)}
-          className="btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer"
+          className="btn-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer"
         >
-          <Plus size={14} /> New Order
+          <Plus size={13} /> New Order
         </button>
       </PageHeader>
 
       {/* --- Filter Controls Tape --- */}
-      <div className="flex flex-wrap gap-4 items-center justify-between bg-slate-950/20 border border-white/5 p-4 rounded-2xl glass-card text-xs">
+      <div className="flex flex-wrap gap-2.5 sm:gap-4 items-center justify-between bg-slate-950/20 border border-white/5 p-2.5 sm:p-3 rounded-xl glass-card text-xs">
         <div className="flex flex-wrap items-center gap-2">
           {/* Search bar */}
           <div className="relative">
@@ -201,7 +201,7 @@ export default function OrdersPage() {
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder="Search by Symbol/ID..."
-              className="input-glass rounded-xl pl-9 pr-4 py-2 w-[180px]"
+              className="input-glass rounded-lg pl-8 pr-3 py-1.5 text-xs w-[160px] sm:w-[180px]"
             />
           </div>
 
@@ -209,7 +209,7 @@ export default function OrdersPage() {
           <select
             value={selectedAssetType}
             onChange={e => setSelectedAssetType(e.target.value as any)}
-            className="input-glass rounded-xl px-3 py-2 bg-slate-950"
+            className="input-glass rounded-lg px-2.5 py-1.5 bg-slate-950 text-xs"
           >
             <option value="all">All Asset Classes</option>
             <option value="crypto">Cryptocurrencies</option>
@@ -242,40 +242,40 @@ export default function OrdersPage() {
       </div>
 
       {/* --- Orders Data Table --- */}
-      <div className="glass-card rounded-2xl border border-white/5 overflow-hidden">
+      <div className="glass-card rounded-xl border border-white/5 overflow-hidden">
         <div className="overflow-x-auto">
           {errorMessage ? (
-            <div className="py-12 text-center text-xs text-rose-300">
-              <AlertTriangle size={24} className="mx-auto mb-2" />
+            <div className="py-8 text-center text-xs text-rose-300">
+              <AlertTriangle size={20} className="mx-auto mb-2" />
               {errorMessage}
             </div>
           ) : isLoading ? (
-            <div className="py-12 text-center text-xs text-slate-500">
-              <RefreshCw size={24} className="mx-auto mb-2 animate-spin" />
+            <div className="py-8 text-center text-xs text-slate-500">
+              <RefreshCw size={20} className="mx-auto mb-2 animate-spin" />
               Loading live order history...
             </div>
           ) : (
-          <table className="w-full text-left border-collapse text-xs min-w-[800px]">
+          <table className="w-full text-left border-collapse text-xs min-w-[760px]">
             <thead>
               <tr className="border-b border-white/5 bg-slate-900/40 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                <th className="py-4 px-5">Order ID</th>
-                <th className="py-4 px-4">Timestamp</th>
-                <th className="py-4 px-4">Asset Symbol</th>
-                <th className="py-4 px-4">Type</th>
-                <th className="py-4 px-4">Side</th>
-                <th className="py-4 px-4">Quantity</th>
-                <th className="py-4 px-4">Price</th>
-                <th className="py-4 px-4 text-right">Total Value</th>
-                <th className="py-4 px-4">Status</th>
-                <th className="py-4 px-5 text-right">Actions</th>
+                <th className="py-2.5 px-3.5">Order ID</th>
+                <th className="py-2.5 px-3">Timestamp</th>
+                <th className="py-2.5 px-3">Asset Symbol</th>
+                <th className="py-2.5 px-3">Type</th>
+                <th className="py-2.5 px-3">Side</th>
+                <th className="py-2.5 px-3">Quantity</th>
+                <th className="py-2.5 px-3">Price</th>
+                <th className="py-2.5 px-3 text-right">Total Value</th>
+                <th className="py-2.5 px-3">Status</th>
+                <th className="py-2.5 px-3.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-slate-300">
               <AnimatePresence mode="popLayout">
                 {filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-slate-500">
-                      <FileText size={24} className="mx-auto mb-2 opacity-35" />
+                    <td colSpan={10} className="py-8 text-center text-slate-500">
+                      <FileText size={20} className="mx-auto mb-2 opacity-35" />
                       No matching transaction orders found.
                     </td>
                   </tr>
@@ -288,26 +288,26 @@ export default function OrdersPage() {
                       exit={{ opacity: 0 }}
                       className="hover:bg-white/2 transition-colors"
                     >
-                      <td className="py-4 px-5 font-mono text-slate-400">{order.id}</td>
-                      <td className="py-4 px-4 text-slate-500 font-mono">{order.timestamp}</td>
-                      <td className="py-4 px-4 font-bold text-slate-200">{order.symbol}</td>
-                      <td className="py-4 px-4">
+                      <td className="py-2.5 px-3.5 font-mono text-slate-400">{order.id}</td>
+                      <td className="py-2.5 px-3 text-slate-500 font-mono text-[11px]">{order.timestamp}</td>
+                      <td className="py-2.5 px-3 font-bold text-slate-200">{order.symbol}</td>
+                      <td className="py-2.5 px-3">
                         <span className="px-2 py-0.5 rounded bg-white/5 border border-white/5 text-[10px] font-semibold text-slate-400">
                           {order.type}
                         </span>
                       </td>
-                      <td className="py-4 px-4">
+                      <td className="py-2.5 px-3">
                         <span className={`font-bold flex items-center gap-1 ${order.side === 'Buy' ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {order.side === 'Buy' ? <ArrowDownLeft size={12} /> : <ArrowUpRight size={12} />}
                           {order.side}
                         </span>
                       </td>
-                      <td className="py-4 px-4 font-semibold">{order.quantity}</td>
-                      <td className="py-4 px-4 font-mono">${order.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="py-4 px-4 text-right font-bold text-slate-200 font-mono">
+                      <td className="py-2.5 px-3 font-semibold">{order.quantity}</td>
+                      <td className="py-2.5 px-3 font-mono">${order.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="py-2.5 px-3 text-right font-bold text-slate-200 font-mono">
                         ${order.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="py-4 px-4">
+                      <td className="py-2.5 px-3">
                         <Badge className={
                           order.status === 'Filled' ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400' :
                           order.status === 'Pending' ? 'bg-purple-500/15 border border-purple-500/30 text-purple-400 animate-pulse' :

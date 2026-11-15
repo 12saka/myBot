@@ -147,19 +147,19 @@ export default function PortfolioPage() {
   };
 
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+    <motion.div className="space-y-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
 
       <PageHeader
         title="Portfolio Intelligence"
-        subtitle="Real-time position tracking, risk analytics, and AI-powered optimization."
+        subtitle="Real-time position tracking, risk analytics, and performance telemetry."
         icon={Briefcase}
       >
-        <button onClick={refreshPortfolio} className="btn-ghost flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs cursor-pointer"><RefreshCw size={14} /> Refresh</button>
-        <button className="btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs"><Plus size={14} /> Add Position</button>
+        <button onClick={refreshPortfolio} className="btn-ghost flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs cursor-pointer"><RefreshCw size={12} /> Sync</button>
+        <button className="btn-primary flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"><Plus size={12} /> Add Position</button>
       </PageHeader>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         <StatCard
           label="Total Portfolio Value" value={formatCurrency(totalValue)}
           change={{ value: `${formatPercent(totalPnlPct)} all-time`, positive: totalPnlPct >= 0 }}
@@ -183,9 +183,9 @@ export default function PortfolioPage() {
       </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
         {/* Performance Chart */}
-        <div className="lg:col-span-2 glass-card rounded-2xl p-5">
+        <div className="lg:col-span-2 glass-card rounded-xl p-3.5 sm:p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-display font-bold text-white">Portfolio Performance</h3>
             <div className="flex bg-white/5 rounded-lg p-0.5 text-xs">

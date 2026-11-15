@@ -428,32 +428,32 @@ export default function AcademyPage() {
     (qotd ? 1 : 0);
 
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4 }}>
+    <motion.div className="space-y-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
       <PageHeader
         title="Academy LMS & Mastery Hub"
-        subtitle="All published instructor courses, study notes, market breakdowns, homework assignments, quizzes, daily challenges, and live webinars in one unified hub."
+        subtitle="All published courses, study notes, homework, quizzes, and live webinars."
         icon={BookOpen}
       >
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             onClick={() => setAskModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            className="px-2.5 py-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
           >
-            <Plus size={14} className="text-purple-400" />
-            <span>Ask Instructor a Question</span>
+            <Plus size={12} className="text-purple-400" />
+            <span>Ask Instructor</span>
           </button>
           <button
             onClick={() => router.push('/academy/qotd')}
-            className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            className="px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
           >
-            <Flame size={14} className="text-amber-400" />
+            <Flame size={12} className="text-amber-400" />
             <span>Daily Challenge (+25 XP)</span>
           </button>
         </div>
       </PageHeader>
 
-      {/* Unified Tab Switcher */}
-      <div className="flex flex-wrap border-b border-white/10 pb-2 gap-2 sm:gap-4">
+      {/* Unified Tab Switcher (Horizontally scrollable on mobile) */}
+      <div className="flex items-center border-b border-white/10 pb-1 gap-1.5 sm:gap-3 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setMainTab('ALL')}
           className={cn(

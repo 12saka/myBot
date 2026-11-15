@@ -114,7 +114,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               animate={{ opacity: 1 }}
               transition={{ duration: 0.3, ease: 'easeOut' }}
             >
-              <div className="max-w-screen-2xl mx-auto px-4 md:px-6 py-6 pb-28 md:pb-10">
+              <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-5 pb-24 md:pb-8">
                 {children}
               </div>
             </motion.main>

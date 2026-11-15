@@ -166,7 +166,7 @@ export default function GoldOverviewPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto px-2 sm:px-4 py-4">
+    <div className="space-y-3.5 max-w-7xl mx-auto px-1 sm:px-2 py-2">
       {/* Navigation & Global Bullion Header */}
       <GoldHeaderNav 
         currentPrice={p} 
@@ -176,77 +176,77 @@ export default function GoldOverviewPage() {
       />
 
       {/* Hero Intelligence Cockpit Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {/* Spot & Spread */}
-        <div className="p-4 rounded-2xl bg-[#0B0F17] border border-amber-500/25 shadow-xl flex items-center justify-between">
+        <div className="p-3 rounded-xl bg-[#0B0F17] border border-amber-500/20 shadow-lg flex items-center justify-between">
           <div>
-            <div className="text-[10px] uppercase font-bold text-slate-400">Spot XAU/USD</div>
-            <div className="text-2xl font-black font-mono text-amber-400 mt-0.5">
+            <div className="text-[9px] uppercase font-bold text-slate-400">Spot XAU/USD</div>
+            <div className="text-xl font-black font-mono text-amber-400 mt-0.5">
               {p > 0 ? `$${p.toFixed(2)}` : '—'}
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              Broker Spread: <span className="font-mono text-emerald-400 font-bold">{spread > 0 ? `$${spread.toFixed(2)}` : '—'}</span>
+              Spread: <span className="font-mono text-emerald-400 font-bold">{spread > 0 ? `$${spread.toFixed(2)}` : '—'}</span>
             </div>
           </div>
-          <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-            <Flame className="text-amber-400" size={20} />
+          <div className="h-8 w-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+            <Flame className="text-amber-400" size={16} />
           </div>
         </div>
 
         {/* Regime State */}
-        <div className="p-4 rounded-2xl bg-[#0B0F17] border border-amber-500/25 shadow-xl flex items-center justify-between">
+        <div className="p-3 rounded-xl bg-[#0B0F17] border border-amber-500/20 shadow-lg flex items-center justify-between">
           <div>
-            <div className="text-[10px] uppercase font-bold text-slate-400">Market Regime</div>
-            <div className="text-sm font-extrabold text-white mt-1">
+            <div className="text-[9px] uppercase font-bold text-slate-400">Market Regime</div>
+            <div className="text-xs sm:text-sm font-extrabold text-white mt-0.5 truncate">
               {regime.replace(/_/g, ' ')}
             </div>
             <div className="text-[10px] text-amber-400 font-mono mt-0.5">
-              Vol Percentile: {data?.volatilityPercentile !== undefined ? `${data.volatilityPercentile}%` : '—'}
+              Vol: {data?.volatilityPercentile !== undefined ? `${data.volatilityPercentile}%` : '—'}
             </div>
           </div>
-          <div className="h-10 w-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-            <Activity className="text-purple-400" size={20} />
+          <div className="h-8 w-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+            <Activity className="text-purple-400" size={16} />
           </div>
         </div>
 
         {/* ATR Volatility */}
-        <div className="p-4 rounded-2xl bg-[#0B0F17] border border-amber-500/25 shadow-xl flex items-center justify-between">
+        <div className="p-3 rounded-xl bg-[#0B0F17] border border-amber-500/20 shadow-lg flex items-center justify-between">
           <div>
-            <div className="text-[10px] uppercase font-bold text-slate-400">15M ATR Volatility</div>
-            <div className="text-2xl font-black font-mono text-white mt-0.5">
+            <div className="text-[9px] uppercase font-bold text-slate-400">15M ATR Volatility</div>
+            <div className="text-xl font-black font-mono text-white mt-0.5">
               {data?.volatilityAtr15m ? `$${data.volatilityAtr15m.toFixed(2)}` : '—'}
             </div>
             <div className="text-[10px] text-slate-500 mt-0.5">
-              Expected intraday range
+              Intraday Expected
             </div>
           </div>
-          <div className="h-10 w-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
-            <Layers className="text-cyan-400" size={20} />
+          <div className="h-8 w-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+            <Layers className="text-cyan-400" size={16} />
           </div>
         </div>
 
         {/* Setup & Institutional Confidence */}
-        <div className="p-4 rounded-2xl bg-[#0B0F17] border border-amber-500/25 shadow-xl flex items-center justify-between">
+        <div className="p-3 rounded-xl bg-[#0B0F17] border border-amber-500/20 shadow-lg flex items-center justify-between">
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] uppercase font-bold text-slate-400">Institutional Setup</span>
-              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <span className="text-[9px] uppercase font-bold text-slate-400">Setup</span>
+              <span className="text-[8px] font-mono px-1 py-0.2 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 {signalGrade}
               </span>
             </div>
-            <div className="text-sm font-extrabold text-amber-300 mt-1 flex items-center gap-1.5">
+            <div className="text-xs sm:text-sm font-extrabold text-amber-300 mt-0.5 truncate flex items-center gap-1">
               <span>{orderType === 'WAIT' ? 'SCANNING (WAIT)' : orderType.replace(/_/g, ' ')}</span>
             </div>
-            <div className="text-[11px] font-mono text-emerald-400 font-bold mt-0.5 flex items-center gap-1">
-              <span>{confidenceScore}% Confluence</span>
+            <div className="text-[10px] font-mono text-emerald-400 font-bold mt-0.5 flex items-center gap-1">
+              <span>{confidenceScore}% Conf</span>
               <span className="text-slate-500">•</span>
               <span className="text-slate-400 font-normal">
                 EV: {data?.riskPlan?.expectedValueR !== undefined ? `${data.riskPlan.expectedValueR >= 0 ? '+' : ''}${data.riskPlan.expectedValueR.toFixed(2)}R` : '0.00R'}
               </span>
             </div>
           </div>
-          <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-            <Target className="text-amber-400" size={20} />
+          <div className="h-8 w-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+            <Target className="text-amber-400" size={16} />
           </div>
         </div>
       </div>
@@ -314,6 +314,8 @@ export default function GoldOverviewPage() {
               const sTp1 = Number(sig.takeProfit1 || sig.takeProfit || 0);
               const sTp2 = Number(sig.takeProfit2 || r.takeProfit2 || sTp1);
               const sEntryZone = Array.isArray(r.entryZone) && r.entryZone.length === 2 ? r.entryZone : [sEntry, sEntry];
+              const sSessionBadge = r.sessionBadge || (r.sessionOpeningPlay ? r.sessionOpeningPlay.badgeLabel : null);
+              const sCatalyst = r.sessionOpeningPlay?.catalyst;
 
               const isCardSelected = displayedSignal?.id === sig.id;
 
@@ -339,6 +341,16 @@ export default function GoldOverviewPage() {
                             ON CHART
                           </span>
                         )}
+                        {sSessionBadge && sSessionBadge !== '[Institutional SMC]' && (
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border animate-pulse",
+                            sSessionBadge.includes('Post-News')
+                              ? "bg-emerald-500/25 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-500/20"
+                              : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                          )}>
+                            {sSessionBadge}
+                          </span>
+                        )}
                         <span className={cn(
                           "px-2 py-0.5 rounded text-[10px] font-mono font-bold border",
                           dir === 'BUY'
@@ -358,6 +370,11 @@ export default function GoldOverviewPage() {
                         <span>•</span>
                         <span className="text-emerald-400 font-bold">{sConf}% Confluence</span>
                       </div>
+                      {sCatalyst && (
+                        <div className="text-[10px] font-mono text-amber-400/90 mt-1 leading-snug">
+                          ⚡ {sCatalyst}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1.5">

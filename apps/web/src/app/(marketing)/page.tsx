@@ -116,10 +116,10 @@ function TradeMindLogo({ size = 36 }: { size?: number }) {
 const NAV_LINKS = ['Features', 'Markets', 'Security', 'Pricing', 'Academy'];
 
 const HERO_STATS = [
-  { value: 50000, suffix: '+', label: 'Active Traders', icon: Users },
-  { value: 94, suffix: '%', label: 'AI Accuracy',     icon: Bot },
-  { value: 2800000, suffix: '+', prefix: '$', label: 'Daily Volume', icon: DollarSign },
-  { value: 10000, suffix: '+', label: 'Assets Covered', icon: Globe },
+  { value: 5, suffix: ' Gates', label: 'Institutional Validation', icon: ShieldCheck },
+  { value: 2, prefix: '1:', suffix: '+', label: 'Minimum R:R Target', icon: Target },
+  { value: 3, suffix: ' Engines', label: 'Gold, US100 & Crypto', icon: Cpu },
+  { value: 100, suffix: '%', label: 'Live Data (Zero Synthetic)', icon: Activity },
 ];
 
 
@@ -129,62 +129,62 @@ const WHY_FEATURES = [
     icon: BrainCircuit,
     color: BRAND.purple,
     bg: 'rgba(124,58,237,0.12)',
-    title: 'AI Market Analysis',
-    desc: 'Multi-agent neural networks process millions of data points per second, detecting patterns invisible to human traders.',
+    title: 'Smart Money Concepts (SMC)',
+    desc: 'Dual-model institutional engine detecting liquidity sweeps, Change of Character (ChoCH), and Order Block (OB) pullback zones on XAU/USD.',
   },
   {
     icon: Zap,
     color: BRAND.amber,
     bg: 'rgba(245,158,8,0.12)',
-    title: 'Automated Trading',
-    desc: 'Execute strategies autonomously with sub-50ms order routing, smart position sizing, and real-time risk controls.',
+    title: 'Precision Limit Order Zones',
+    desc: 'Automated pending limit order calculations prevent emotional chasing. Live pip distance tracking ensures institutional trade location.',
   },
   {
     icon: Shield,
     color: BRAND.green,
     bg: 'rgba(16,185,129,0.12)',
-    title: 'Risk Management',
-    desc: 'Dynamic stop-losses, max drawdown limits, portfolio hedging, and AML compliance protect your capital at all times.',
+    title: '5-Gate Risk Protocol & Event Shield',
+    desc: 'Dynamic economic calendar locks (TradingView & ForexFactory feeds) protect capital before high-impact news releases like FOMC, CPI, and NFP.',
   },
   {
     icon: GraduationCap,
     color: BRAND.cyan,
     bg: 'rgba(6,187,212,0.12)',
-    title: 'Learn & Grow',
-    desc: 'Interactive academy with AI-guided courses, strategy backtesting labs, and expert live sessions to sharpen your edge.',
+    title: 'Living Academy & Daily Drills',
+    desc: 'Interactive SMC curriculum with daily Question of the Day (QOTD), streak tracking, and institutional trade setup diagrams.',
   },
   {
     icon: LineChart,
     color: '#a855f7',
     bg: 'rgba(168,85,247,0.12)',
-    title: 'Real-Time Insights',
-    desc: 'Live market sentiment, institutional order flow tracking, and AI-generated forecasts updated every 500 milliseconds.',
+    title: 'Session Killzone Telemetry',
+    desc: 'High-probability London Open, London Close, and New York Overlap liquidity tracking filtered against multi-timeframe weekly/daily bias.',
   },
   {
     icon: Headphones,
     color: '#f43f5e',
     bg: 'rgba(244,63,94,0.12)',
-    title: '24/7 AI Support',
-    desc: 'TradeMind Copilot is always online to answer questions, analyze markets, optimize strategies, and guide decisions.',
+    title: 'Instant Signal Dispatch',
+    desc: 'Real-time push alerts and Telegram notifications detailing exact entry, SL, TP1/TP2/TP3 targets, and institutional rationale.',
   },
 ];
 
 const MARKET_TYPES = [
-  { label: 'Crypto',      count: '2,400+', color: BRAND.purple, icon: 'BTC' },
-  { label: 'Forex',       count: '180+',   color: BRAND.cyan,   icon: 'FX' },
-  { label: 'Stocks',      count: '7,000+', color: BRAND.green,  icon: 'EQ' },
-  { label: 'Commodities', count: '80+',    color: BRAND.amber,  icon: 'XAU' },
-  { label: 'Indices',     count: '60+',    color: '#a855f7',    icon: 'IDX' },
-  { label: 'ETFs',        count: '300+',   color: '#f43f5e',    icon: 'ETF' },
+  { label: 'Gold (XAU/USD)',   count: 'MasterGold v3.2', color: BRAND.amber, icon: 'XAU' },
+  { label: 'Tech 100 Index',   count: 'Am_100 Momentum', color: '#a855f7',  icon: 'US100' },
+  { label: 'Bitcoin (BTC)',    count: 'MrCrypto Engine', color: BRAND.purple, icon: 'BTC' },
+  { label: 'Ethereum (ETH)',   count: 'Smart Flow Imbalance', color: BRAND.cyan, icon: 'ETH' },
+  { label: 'Forex Majors',     count: 'Session Killzones', color: BRAND.green, icon: 'EUR/USD' },
+  { label: 'Live Risk Gates',  count: '11-Point Verification', color: '#f43f5e', icon: 'SHIELD' },
 ];
 
 const SECURITY_FEATURES = [
-  { icon: ShieldCheck, title: '2FA & Biometrics',    desc: 'Two-factor authentication and biometric verification for all access.' },
-  { icon: Shield,   title: 'AES-256 Encryption',    desc: 'Military-grade encryption for all data in transit and at rest.' },
-  { icon: Eye,      title: 'AI Fraud Detection',     desc: 'Real-time behavioral AI monitors for suspicious activity 24/7.' },
-  { icon: Award,    title: 'SOC 2 Type II Certified', desc: 'Independent annual audits verify our security controls and practices.' },
-  { icon: Layers,   title: 'Immutable Audit Logs',   desc: 'Every action is cryptographically signed and permanently recorded.' },
-  { icon: Target,   title: 'Risk AI Monitoring',     desc: 'Automated circuit breakers halt trading if anomalous patterns detected.' },
+  { icon: ShieldCheck, title: '2FA Verification',      desc: 'Two-factor authentication with email and secure temporary passcodes.' },
+  { icon: Shield,      title: '256-Bit SSL/TLS',       desc: 'End-to-end encrypted sessions and hardened API communications.' },
+  { icon: Eye,         title: 'Zero Synthetic Feeds',  desc: '100% verified real-time tick and candle microstructure data with no simulated fills.' },
+  { icon: Award,       title: 'Stage 7 Hard Vetoes',   desc: 'Automated 11-point mathematical validation rejects invalid geometry or negative EV.' },
+  { icon: Layers,      title: 'Event Shield Telemetry', desc: 'Real-time economic event lockouts prevent entries during extreme volatility spikes.' },
+  { icon: Target,      title: '1:2+ R:R Enforcement',  desc: 'Mandatory asymmetric reward-to-risk geometry before any signal can be broadcast.' },
 ];
 
 const PRICING_PLANS = [
@@ -218,7 +218,7 @@ const PRICING_PLANS = [
       'Basic Quantitative Strategy',
       'Full Living Academy & Quizzes',
       'PayHero M-Pesa STK Push',
-      'Crypto & Forex Coverage',
+      'Gold & Crypto Coverage',
       'Email & Push Notifications',
     ],
   },
@@ -234,9 +234,9 @@ const PRICING_PLANS = [
       '50 Signals / week',
       'Advanced SMC Strategy Engine',
       'Full Academy & Advanced Quizzes',
-      'Gold, Crypto & Forex Markets',
+      'Gold XAU/USD, US100 & Crypto',
       'Advanced Indicators & Alerts',
-      'Zoom Live Webinar Access',
+      'Session Killzone Telemetry',
       'PayHero Instant STK Push',
     ],
   },
@@ -252,8 +252,8 @@ const PRICING_PLANS = [
       '100 Signals / week (Highest)',
       'Full Institutional Quantitative Engine',
       'Full Academy & Instructor Q&A',
-      'ALL Market Assets + Stocks',
-      'Assignments & Homework Grading',
+      'MasterGold, Am_100 & MrCrypto',
+      'Stage 7 Verification Breakdown',
       'Priority 24/7 VIP Support',
       'PayHero Instant STK Push',
     ],
@@ -261,11 +261,11 @@ const PRICING_PLANS = [
 ];
 
 const JOURNEY_STEPS = [
-  { step: '01', title: 'Sign Up & Verify',   desc: 'Create your account in 60 seconds. Complete KYC verification with automated document scanning.', icon: Users },
-  { step: '02', title: 'Fund Your Wallet',   desc: 'Deposit via bank transfer, card, or crypto. Multi-currency wallets with instant settlement.', icon: DollarSign },
-  { step: '03', title: 'Get Market Signals', desc: 'Real-time BUY/SELL signals generated by our quantitative strategy engine with full reasoning transparency.', icon: Zap },
-  { step: '04', title: 'Execute & Automate', desc: 'Trade manually or enable autonomous execution. Set risk parameters and let the system work for you.', icon: Cpu },
-  { step: '05', title: 'Track & Optimise',   desc: 'Monitor portfolio performance, review strategy analytics, and continuously improve your execution.', icon: BarChart3 },
+  { step: '01', title: 'Sign Up in 60s',      desc: 'Create your account and choose your preferred notification channels.', icon: Users },
+  { step: '02', title: 'Activate via M-Pesa', desc: 'Instant subscription activation via PayHero STK push or card with a 14-day trial.', icon: DollarSign },
+  { step: '03', title: 'Select Your Engine',  desc: 'Monitor MasterGold (XAU/USD), Am_100 (US100), or MrCrypto (BTC/ETH) in the cockpit.', icon: Cpu },
+  { step: '04', title: 'Receive Live Setups', desc: 'Get institutional limit/market order zones, exact SL, and multi-TPs with complete rationale.', icon: Zap },
+  { step: '05', title: 'Learn & Level Up',    desc: 'Sharpen your SMC edge in the Living Academy with daily trading quizzes and streak rewards.', icon: GraduationCap },
 ];
 
 const TESTIMONIALS = [
@@ -305,35 +305,35 @@ const TESTIMONIALS = [
 
 const FAQS = [
   {
-    q: 'How does TradeMind generate its trading signals?',
-    a: 'Our quantitative multi-factor engine combines specialized analytical models trained on technical analysis, fundamental data, macroeconomic indicators, and market sentiment. Signals are generated by an ensemble confluence across all indicators, weighted by historical accuracy for each asset class.',
+    q: 'How does TradeMind generate institutional trading signals?',
+    a: 'Our platform utilizes specialized quantitative engines—MasterGold v3.2 (XAU/USD), Am_100 (US100), and MrCrypto (BTC/ETH). They analyze Smart Money Concepts (SMC), liquidity sweeps, and order blocks across multi-timeframe weekly to 15-minute structures, filtered by an 11-point Stage 7 verification matrix.',
   },
   {
-    q: 'Is my money safe on the platform?',
-    a: 'TradeMind uses AES-256 encryption, SOC 2 Type II certified infrastructure, 2FA/biometric authentication, and segregated client wallets. We are regulated and compliant in all jurisdictions we operate. Insurance covers up to $500,000 per account.',
+    q: 'Do I deposit my trading funds into TradeMind?',
+    a: 'No. TradeMind is not a broker or custodian. You keep full control of your trading capital with your preferred MT4/MT5, prop firm (such as FTMO or FundedNext), or crypto broker. TradeMind provides validated signals, exact entry zones, stop losses, take profits, and educational intelligence.',
   },
   {
-    q: 'Can I use TradeMind for automated trading without watching the markets?',
-    a: 'Yes. Our Autonomous Trading Engine allows you to define your risk parameters (max drawdown, position size, daily loss limit) and then executes strategies fully automatically 24/7. You receive real-time notifications for every action taken.',
+    q: 'How does the Event Shield news protection work?',
+    a: 'TradeMind connects directly to live TradingView and ForexFactory economic calendars. When high-impact macroeconomic events (FOMC, CPI, NFP, Fed interest rate decisions) approach, the system automatically activates the Event Shield lockout, halting signal generation to protect your capital from extreme slippage and whipsaws.',
   },
   {
-    q: 'What markets and assets does TradeMind support?',
-    a: 'We currently support 10,000+ assets across Crypto (2,400+), Stocks (7,000+), Forex (180+ pairs), Commodities (80+), Indices (60+), and ETFs (300+). New assets are added monthly based on liquidity and user demand.',
+    q: 'What assets are prioritized by the platform?',
+    a: 'Rather than diluting analysis across thousands of low-liquidity instruments, TradeMind specializes in premier high-volume assets: Gold (XAU/USD), US Tech 100 (NAS100 / US100), Bitcoin (BTC/USD), and Ethereum (ETH/USD), where institutional Smart Money footprints are most reliable.',
   },
   {
-    q: 'How accurate are the trading signals?',
-    a: 'Backtested across 2019–2026 data, our signals achieve a 94.2% directional accuracy rate. Live trading performance (accounting for slippage and fees) shows an average 73% win rate. Past performance does not guarantee future results.',
+    q: 'What is the risk-to-reward ratio for generated signals?',
+    a: 'TradeMind strictly enforces an asymmetric risk-to-reward requirement of at least 1:2 R:R (often reaching 1:2.8+ R:R) with scaled targets (TP1, TP2, TP3) and automated breakeven stop loss moves. Trades that do not offer positive spread-adjusted expected value are mathematically vetoed.',
   },
   {
-    q: 'Do I need trading experience to use TradeMind?',
-    a: 'No. The Academy section provides guided learning paths from beginner to advanced. The Copilot explains every signal and strategy in plain language. Most users are executing structured trades within their first session.',
+    q: 'What is the Living Academy and Question of the Day?',
+    a: 'The Living Academy is an integrated educational portal offering progressive SMC curriculum, interactive trading drills, and a daily Question of the Day (QOTD) with streak tracking. It enables traders to master market microstructure and trade location alongside live platform signals.',
   },
 ];
 
 const FOOTER_LINKS = {
-  Platform:  ['Dashboard', 'Markets', 'Signals', 'Portfolio', 'Wallet'],
+  Platform:  ['Dashboard', 'Gold Engine', 'US100 Engine', 'Crypto Engine', 'Academy'],
   Company:   ['About Us', 'Careers', 'Press', 'Partners', 'Contact'],
-  Resources: ['Academy', 'API Docs', 'Blog', 'Changelog', 'Status'],
+  Resources: ['Living Academy', 'Question of the Day', 'SMC Cheat-Sheet', 'Changelog', 'System Status'],
   Legal:     ['Privacy Policy', 'Terms of Service', 'Risk Disclosure', 'AML Policy'],
 };
 
@@ -633,7 +633,7 @@ export default function LandingPage() {
                   style={{ background: BRAND.cyan }} />
                 <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: BRAND.cyan }} />
               </span>
-              2026 Edition — Multi-Agent AI Engine Live
+              Institutional Grade — Multi-Model Smart Money Engine Live
             </motion.div>
 
             {/* Headline */}
@@ -641,25 +641,25 @@ export default function LandingPage() {
               initial={{ opacity: 0, y: 36 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3, duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
               className="font-bold leading-[1.04] tracking-tight"
-              style={{ fontSize: 'clamp(2.6rem, 5vw, 4.2rem)' }}
+              style={{ fontSize: 'clamp(2.4rem, 5vw, 4.2rem)' }}
             >
-              AI-Powered Trading.{' '}
+              Institutional Signals.{' '}
               <span style={{
                 background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.cyan})`,
                 WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
               }}>
-                Smarter Decisions.
+                SMC Discipline.
               </span>{' '}
-              Better Results.
+              Zero Guesswork.
             </motion.h1>
 
             {/* Description */}
             <motion.p
               initial={{ opacity: 0, y: 22 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45, duration: 0.6 }}
-              className="text-slate-400 text-lg leading-relaxed max-w-xl"
+              className="text-slate-400 text-base sm:text-lg leading-relaxed max-w-xl"
             >
-              TradeMind combines quantitative intelligence, market analytics, risk management, and automated trading strategies
-              into one seamless ecosystem — built for traders who demand an edge.
+              TradeMind delivers validated institutional signals across Gold (XAU/USD), US100, and Crypto.
+              Engineered with Smart Money Concepts (SMC), automated Event Shield news protection, and strict 5-Gate risk verification.
             </motion.p>
 
             {/* CTAs */}
@@ -684,16 +684,16 @@ export default function LandingPage() {
                 <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: `${BRAND.cyan}25` }}>
                   <Play size={12} className="ml-0.5" />
                 </div>
-                Watch Demo
+                Platform Tour
               </button>
             </motion.div>
 
             {/* Trust badges */}
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.72, duration: 0.6 }}
-              className="flex flex-wrap items-center gap-4 text-xs text-slate-500"
+              className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs text-slate-400"
             >
-              {['No credit card required', 'SOC 2 Type II Certified', '256-bit AES Encryption', 'Regulated & Compliant'].map((s) => (
+              {['14-Day Free Trial', 'No Broker Custody (Use Your Broker)', '256-Bit SSL/TLS', 'Event Shield News Filter'].map((s) => (
                 <div key={s} className="flex items-center gap-1.5">
                   <CheckCircle size={12} className="text-emerald-400 flex-shrink-0" />
                   <span>{s}</span>
@@ -706,7 +706,7 @@ export default function LandingPage() {
           <motion.div
             initial={{ opacity: 0, scale: 0.75 }} animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.35, duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
-            className="relative h-[480px] lg:h-[620px]"
+            className="relative h-[440px] lg:h-[600px] pointer-events-none md:pointer-events-auto"
           >
             {mounted && (
               <Suspense fallback={
@@ -720,35 +720,36 @@ export default function LandingPage() {
 
             {/* Floating stat pills */}
             <motion.div
-              animate={{ y: [-10, 10, -10] }}
+              animate={{ y: [-8, 8, -8] }}
               transition={{ duration: 4.5, repeat: Infinity, ease: 'easeInOut' }}
-              className="absolute top-10 right-2 md:right-8 backdrop-blur-xl rounded-2xl p-4 space-y-1 border"
+              className="absolute top-10 right-2 md:right-8 backdrop-blur-xl rounded-2xl p-4 space-y-1 border shadow-xl"
               style={{ background: 'rgba(12,10,30,0.85)', borderColor: `${BRAND.purple}35` }}
             >
-              <div className="text-[9px] uppercase font-bold tracking-wider text-slate-500">BTC/USD Signal</div>
-              <div className="font-bold text-emerald-400 text-xl">BUY ↑</div>
-              <div className="text-xs text-slate-400">AI Confidence: <span className="font-bold" style={{ color: BRAND.purple }}>91%</span></div>
+              <div className="text-[9px] uppercase font-bold tracking-wider text-amber-400">MasterGold v3.2</div>
+              <div className="font-bold text-emerald-400 text-lg">SELL_LIMIT @ 3,924.09</div>
+              <div className="text-[11px] text-slate-400">Target R:R: <span className="font-bold text-amber-300">1:2.85</span> · NY Killzone</div>
             </motion.div>
 
             <motion.div
-              animate={{ y: [10, -10, 10] }}
+              animate={{ y: [8, -8, 8] }}
               transition={{ duration: 5.5, repeat: Infinity, ease: 'easeInOut', delay: 1.2 }}
-              className="absolute bottom-16 left-0 md:left-4 backdrop-blur-xl rounded-2xl p-4 space-y-1 border"
+              className="absolute bottom-12 left-0 md:left-4 backdrop-blur-xl rounded-2xl p-4 space-y-1 border shadow-xl"
               style={{ background: 'rgba(12,10,30,0.85)', borderColor: `${BRAND.green}35` }}
             >
-              <div className="text-[9px] uppercase font-bold tracking-wider text-slate-500">Portfolio P&L Today</div>
-              <div className="font-bold text-emerald-400 text-xl">+$1,284.50</div>
-              <div className="text-[10px] text-slate-400">+2.71% · 14 trades executed</div>
+              <div className="text-[9px] uppercase font-bold tracking-wider text-slate-400">Institutional Quality Gate</div>
+              <div className="font-bold text-emerald-400 text-lg">5 / 5 Gates Cleared</div>
+              <div className="text-[10px] text-slate-400">Event Shield: Active · Spread: 1.2 pips</div>
             </motion.div>
 
             <motion.div
-              animate={{ y: [-6, 8, -6] }}
+              animate={{ y: [-5, 7, -5] }}
               transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut', delay: 2 }}
-              className="absolute top-1/2 -left-2 md:-left-4 backdrop-blur-xl rounded-2xl p-3 border"
+              className="absolute top-1/2 -left-2 md:-left-4 backdrop-blur-xl rounded-2xl p-3 border shadow-xl"
               style={{ background: 'rgba(12,10,30,0.85)', borderColor: `${BRAND.cyan}35` }}
             >
-              <div className="text-[9px] uppercase font-bold tracking-wider text-slate-500 mb-1">AI Accuracy</div>
-              <div className="font-bold text-xl" style={{ color: BRAND.cyan }}>94.2%</div>
+              <div className="text-[9px] uppercase font-bold tracking-wider text-cyan-400 mb-0.5">Living Academy</div>
+              <div className="font-bold text-sm sm:text-base text-white">Daily QOTD: Solved</div>
+              <div className="text-[10px] text-slate-400">7-Day Streak Active</div>
             </motion.div>
           </motion.div>
         </div>
@@ -863,9 +864,9 @@ export default function LandingPage() {
               {/* Data stream overlay */}
               <div className="absolute bottom-4 left-4 right-4 space-y-1.5">
                 {[
-                  { label: 'Technical Pattern Detected', val: 'EMA-200 Breakout ↑', color: BRAND.green },
-                  { label: 'Sentiment Score',             val: '82% Bullish',         color: BRAND.cyan },
-                  { label: 'Signal Confidence',            val: '91% → BUY',          color: BRAND.purple },
+                  { label: 'SMC Pattern Detected',        val: 'Sweep ChOCH + Pullback', color: BRAND.green },
+                  { label: 'Stage 7 Verification',        val: '5/5 Passed (EV: +1.84R)', color: BRAND.cyan },
+                  { label: 'Execution Recommendation',    val: 'SELL_LIMIT @ Zone',       color: BRAND.amber },
                 ].map(({ label, val, color }) => (
                   <motion.div
                     key={label}
@@ -906,9 +907,9 @@ export default function LandingPage() {
 
               <div className="space-y-4">
                 {[
-                  { title: 'Processes 2M+ data points/second',   desc: 'Across price, volume, sentiment, macro, and on-chain data.' },
-                  { title: 'Self-improving learning loop',        desc: 'Models retrain daily on live market outcomes for continuous accuracy gains.' },
-                  { title: 'Explainable AI reasoning',           desc: 'Every signal comes with full technical, fundamental, and sentiment rationale.' },
+                  { title: 'Zero Synthetic Microstructure',     desc: '100% genuine live tick and order flow streaming directly from interbank market data.' },
+                  { title: 'Multi-Timeframe Confluence (1W-15m)', desc: 'Weekly macro trend and daily momentum must confirm the 15-minute entry before broadcast.' },
+                  { title: 'Transparent Stage 7 Verification',   desc: 'Every signal shows exact checklist scores, spread stress tests, and mathematical EV.' },
                 ].map(({ title, desc }, i) => (
                   <FadeIn key={title} delay={0.2 + i * 0.08}>
                     <div className="flex gap-3">
@@ -943,15 +944,15 @@ export default function LandingPage() {
           <FadeIn className="text-center mb-16 space-y-4">
             <SectionLabel icon={Globe} text="Global Market Coverage" color={BRAND.cyan} />
             <h2 className="font-bold mt-4" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)' }}>
-              Trade Every Market,{' '}
+              Target High-Liquidity{' '}
               <span style={{
                 background: `linear-gradient(135deg, ${BRAND.cyan}, ${BRAND.green})`,
                 WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-              }}>Everywhere, Always</span>
+              }}>Institutional Instruments</span>
             </h2>
-            <p className="text-slate-400 text-lg max-w-2xl mx-auto">
-              From Bitcoin to blue-chip equities, forex majors to commodities —
-              TradeMind monitors global markets and institutional flows in real time.
+            <p className="text-slate-400 text-base sm:text-lg max-w-2xl mx-auto">
+              From Gold (XAU/USD) order blocks to US100 momentum and Bitcoin microstructure —
+              TradeMind tracks where smart money operates with surgical precision.
             </p>
           </FadeIn>
 
@@ -1051,7 +1052,7 @@ export default function LandingPage() {
                 <Link href="/dashboard"
                   className="text-xs font-semibold transition-colors hover:text-white"
                   style={{ color: BRAND.purple }}>
-                  View All 10,000+ Assets →
+                  Access Institutional Terminal & Watchlist →
                 </Link>
               </div>
             </div>
@@ -1199,9 +1200,9 @@ export default function LandingPage() {
 
               <div className="space-y-4">
                 {[
-                  { stat: '+127.4%', label: 'Average user portfolio growth — YTD 2026', color: BRAND.amber },
-                  { stat: '1:2.8',   label: 'Average risk-to-reward across all signals',  color: BRAND.purple },
-                  { stat: '73%',     label: 'Live trading win rate (slippage-adjusted)',  color: BRAND.green },
+                  { stat: '1:2.8+',  label: 'Enforced institutional risk-to-reward on validated setups', color: BRAND.amber },
+                  { stat: '5-Gate',  label: 'Stage 7 mathematical & event filters before broadcast',  color: BRAND.purple },
+                  { stat: '100%',    label: 'Live interbank price feeds with zero synthetic latency', color: BRAND.green },
                 ].map(({ stat, label, color }, i) => (
                   <FadeIn key={stat} delay={0.25 + i * 0.08}>
                     <div className="flex items-center gap-4 p-4 rounded-2xl border border-white/6 hover:border-white/12 transition-all"
@@ -1280,8 +1281,8 @@ export default function LandingPage() {
           {/* Platform feature pills */}
           <FadeIn delay={0.3} className="mt-16 flex flex-wrap justify-center gap-3">
             {[
-              'Dashboard', 'Markets', 'AI Signals', 'Portfolio Analytics',
-              'Automation Center', 'AI Copilot', 'Academy', 'Wallet', 'Reports', 'Mobile App',
+              'Cockpit Dashboard', 'MasterGold v3.2', 'Am_100 Momentum', 'MrCrypto BTC/ETH',
+              'Event Shield News Lockout', 'Stage 7 Quality Gate', 'Living Academy', 'Question of the Day', 'Telegram Alerts', 'PayHero M-Pesa',
             ].map((feature) => (
               <span
                 key={feature}
@@ -1496,21 +1497,20 @@ export default function LandingPage() {
                   style={{ background: `${BRAND.purple}18`, borderColor: `${BRAND.purple}40`, color: BRAND.cyan }}
                 >
                   <Rocket size={13} />
-                  Join 50,000+ Traders Already Winning with AI
+                  Institutional Smart Money Precision
                 </motion.div>
 
                 <h2 className="font-black mb-5 leading-tight" style={{ fontSize: 'clamp(2rem, 4.5vw, 3.5rem)' }}>
-                  Ready to Let{' '}
+                  Ready to Trade with{' '}
                   <span style={{
                     background: `linear-gradient(135deg, ${BRAND.purple}, ${BRAND.cyan})`,
                     WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
                   }}>
-                    AI Trade For You?
+                    Institutional Edge?
                   </span>
                 </h2>
-                <p className="text-slate-400 text-lg mb-10 max-w-xl mx-auto">
-                  Start free today. Your first AI signal is generated within minutes of signup.
-                  No credit card required.
+                <p className="text-slate-400 text-base sm:text-lg mb-10 max-w-xl mx-auto">
+                  Start your 14-day free trial today. Receive multi-model verified signals and elevate your execution with the Living Academy.
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">

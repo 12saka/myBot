@@ -157,87 +157,87 @@ export default function MarketsPage() {
   };
 
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+    <motion.div className="space-y-4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
       <PageHeader
         title="Global Markets"
-        subtitle="Live institutional quotes across Crypto, Forex, Indices, Equities, and Commodities."
+        subtitle="Live institutional tick streams across Gold, Crypto, Forex, and Indices."
         icon={BarChart3}
       >
-        <button 
-          onClick={async () => {
-            toast.promise(
-              apiFetch('/api/v2/markets/tickers').then(data => {
-                if (Array.isArray(data) && data.length > 0) setTickers(data);
-              }),
-              { loading: 'Refreshing market prices...', success: 'Market prices updated!', error: 'Failed to refresh market prices.' }
-            );
-          }} 
-          className="btn-ghost flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs cursor-pointer"
-        >
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            Live WS Stream
+          </span>
+          <button 
+            onClick={async () => {
+              toast.promise(
+                apiFetch('/api/v2/markets/tickers').then(data => {
+                  if (Array.isArray(data) && data.length > 0) setTickers(data);
+                }),
+                { loading: 'Updating prices...', success: 'Market prices synchronized!', error: 'Failed to refresh.' }
+              );
+            }} 
+            className="btn-ghost flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs cursor-pointer"
+          >
+            <RefreshCw size={12} /> Sync
+          </button>
+        </div>
       </PageHeader>
 
-      {/* Real-Time Market Guidance Banner */}
-      <div className="glass-card rounded-2xl p-4 border border-purple-500/20 bg-purple-950/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
-            <Activity size={18} />
+      {/* Compact Market Pulse Strip */}
+      <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl border border-white/5 bg-[#0B0F19]/80 text-xs text-slate-300 overflow-x-auto no-scrollbar font-mono">
+        <div className="flex items-center gap-4 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] uppercase text-slate-500">Assets Live:</span>
+            <span className="font-bold text-white">{tickers.length}</span>
           </div>
-          <div>
-            <div className="font-bold text-white text-sm">💡 Real-Time Market Execution Guidance</div>
-            <div className="text-[11px] text-slate-400">Click any asset row below to load instant 500ms TradingView charts, volume profiles, and execute 1-click trades.</div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] uppercase text-slate-500">Market Bias:</span>
+            <span className="text-emerald-400 font-bold">{tickers.filter(t => (t.changePct24h || 0) >= 0).length} Bullish</span>
+            <span className="text-slate-600">/</span>
+            <span className="text-rose-400 font-bold">{tickers.filter(t => (t.changePct24h || 0) < 0).length} Bearish</span>
           </div>
+          {summary.totalVolume24h > 0 && (
+            <div className="hidden md:flex items-center gap-1.5">
+              <span className="text-[10px] uppercase text-slate-500">24h Vol:</span>
+              <span className="font-bold text-slate-200">${(summary.totalVolume24h / 1e9).toFixed(1)}B</span>
+            </div>
+          )}
         </div>
-        <Badge variant="purple" size="md">Sub-Second WS Active</Badge>
+        <span className="text-[10px] text-slate-500 hidden sm:inline shrink-0">
+          Click any instrument to inspect depth & chart
+        </span>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <div className="flex bg-white/5 border border-white/5 rounded-xl p-1 text-xs">
+      {/* Tabs & Search */}
+      <div className="flex flex-col sm:flex-row gap-2.5 items-start sm:items-center justify-between">
+        <div className="flex bg-white/5 border border-white/5 rounded-lg p-0.5 text-xs overflow-x-auto no-scrollbar max-w-full">
           {TABS.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
-                'px-3 py-1.5 rounded-lg font-semibold transition-all',
-                activeTab === tab ? 'bg-purple-500 text-white' : 'text-slate-400 hover:text-white'
+                'px-2.5 py-1 rounded-md font-semibold transition-all whitespace-nowrap',
+                activeTab === tab ? 'bg-amber-500/20 text-amber-200 border border-amber-500/30' : 'text-slate-400 hover:text-white'
               )}
             >
-              {tab} {tab === 'Watchlist' && <span className="ml-1 text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">{watchlist.length}</span>}
+              {tab} {tab === 'Watchlist' && <span className="ml-1 text-[9px] bg-amber-500/20 text-amber-300 px-1 py-0.2 rounded">{watchlist.length}</span>}
             </button>
           ))}
         </div>
-        <div className="relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+        <div className="relative w-full sm:w-56">
+          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
-            placeholder="Search assets..."
+            placeholder="Search symbol or name..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="input-glass pl-8 pr-4 py-2 rounded-xl text-xs w-52 md:w-64"
+            className="w-full bg-[#0E1424] border border-white/10 rounded-lg pl-7 pr-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500/50 transition-all"
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Total Market Cap', value: summary.totalMarketCap > 0 ? `$${(summary.totalMarketCap / 1e12).toFixed(2)}T` : 'Unavailable', change: summary.source === 'live' ? 'Live' : 'No live cap', positive: summary.source === 'live' },
-          { label: 'BTC Dominance',    value: summary.btcDominance != null ? `${summary.btcDominance}%` : 'Unavailable',  change: summary.btcDominance != null ? 'Live' : 'No provider', positive: summary.btcDominance != null },
-          { label: '24h Volume',        value: summary.totalVolume24h > 0 ? `$${(summary.totalVolume24h / 1e9).toFixed(1)}B` : 'Unavailable', change: summary.totalVolume24h > 0 ? 'Live' : 'No volume', positive: summary.totalVolume24h > 0 },
-          { label: 'Active Markets',    value: `${summary.activeMarkets ?? 0} Live`, change: (summary.activeMarkets || 0) > 0 ? 'Live' : 'No feed',   positive: (summary.activeMarkets || 0) > 0 },
-        ].map(({ label, value, change, positive }) => (
-          <div key={label} className="glass-card rounded-2xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-2">{label}</div>
-            <div className="font-display font-bold text-white text-xl">{value}</div>
-            <div className={cn('text-xs font-semibold mt-1 flex items-center gap-1', positive ? 'text-emerald-400' : 'text-red-400')}>
-              {positive ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-              {change}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="glass-card rounded-xl overflow-hidden border border-white/5">
         <div className="overflow-x-auto">
           <table className="w-full data-table">
             <thead>

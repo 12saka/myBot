@@ -4,32 +4,19 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Bell,
-  GraduationCap,
-  Zap,
-  Megaphone,
   CheckCircle2,
   Inbox,
   ArrowUpRight,
   Search,
   Trash2,
   RefreshCw,
-  ShieldAlert,
-  BookOpen,
-  FileText,
-  FileCheck2,
-  Video,
-  Sparkles,
   Check,
-  Filter,
 } from 'lucide-react';
-import { PageHeader } from '@/components/ui/PageHeader';
-import { Badge } from '@/components/ui/Badge';
 import { apiFetch } from '@/lib/api';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 
-type FilterType = 'All' | 'Unread' | 'Academy' | 'Signals' | 'Admin' | 'System';
+type FilterType = 'All' | 'Unread' | 'Signals' | 'Academy' | 'System';
 
 function getRelativeTime(dateString?: string) {
   if (!dateString) return 'Just now';
@@ -43,9 +30,22 @@ function getRelativeTime(dateString?: string) {
   return `${Math.floor(diffInSeconds / 86400)}d ago`;
 }
 
-function classifyNotificationCategory(notif: any): 'Academy' | 'Signals' | 'Admin' | 'System' {
+function classifyNotificationCategory(notif: any): 'Signals' | 'Academy' | 'System' {
   const t = (notif.type || '').toUpperCase();
   const title = (notif.title || '').toLowerCase();
+
+  if (
+    t === 'SIGNAL' ||
+    title.includes('signal') ||
+    title.includes('xau') ||
+    title.includes('gold engine') ||
+    title.includes('tp1') ||
+    title.includes('tp2') ||
+    title.includes('sl hit') ||
+    title.includes('order')
+  ) {
+    return 'Signals';
+  }
 
   if (
     t === 'ACADEMY' ||
@@ -56,97 +56,40 @@ function classifyNotificationCategory(notif: any): 'Academy' | 'Signals' | 'Admi
     title.includes('assignment') ||
     title.includes('quiz') ||
     title.includes('webinar') ||
-    title.includes('daily challenge')
+    title.includes('qotd') ||
+    title.includes('challenge')
   ) {
     return 'Academy';
   }
-  if (t === 'SIGNAL' || title.includes('signal') || title.includes('xau') || title.includes('gold engine')) {
-    return 'Signals';
-  }
-  if (
-    t.startsWith('ADMIN') ||
-    ['PROMOTION', 'UPDATE', 'MAINTENANCE'].includes(t) ||
-    title.includes('broadcast')
-  ) {
-    return 'Admin';
-  }
+
   return 'System';
 }
 
-function getSmartBadge(notif: any) {
-  const title = (notif.title || '').toLowerCase();
-  const cat = classifyNotificationCategory(notif);
-
-  if (title.includes('homework') || title.includes('assignment')) {
-    return {
-      label: 'Homework & Grading',
-      icon: FileCheck2,
-      pillClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-      iconBox: 'bg-amber-500/15 border-amber-500/30 text-amber-400',
-    };
+function getCategoryConfig(category: 'Signals' | 'Academy' | 'System') {
+  switch (category) {
+    case 'Signals':
+      return {
+        label: 'Signal',
+        badgeClass: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+        accentBorder: 'hover:border-amber-500/40',
+        dotClass: 'bg-amber-400',
+      };
+    case 'Academy':
+      return {
+        label: 'Academy',
+        badgeClass: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20',
+        accentBorder: 'hover:border-cyan-500/40',
+        dotClass: 'bg-cyan-400',
+      };
+    case 'System':
+    default:
+      return {
+        label: 'System',
+        badgeClass: 'bg-slate-500/10 text-slate-300 border-slate-500/20',
+        accentBorder: 'hover:border-slate-500/40',
+        dotClass: 'bg-slate-400',
+      };
   }
-  if (title.includes('study note') || title.includes('lesson') || title.includes('breakdown') || title.includes('recap')) {
-    return {
-      label: 'Study Notes',
-      icon: FileText,
-      pillClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
-      iconBox: 'bg-teal-500/15 border-teal-500/30 text-teal-400',
-    };
-  }
-  if (title.includes('course')) {
-    return {
-      label: 'Course Curriculum',
-      icon: BookOpen,
-      pillClass: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
-      iconBox: 'bg-indigo-500/15 border-indigo-500/30 text-indigo-400',
-    };
-  }
-  if (title.includes('quiz') || title.includes('assessment') || title.includes('challenge')) {
-    return {
-      label: 'Quiz & XP Challenge',
-      icon: Sparkles,
-      pillClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
-      iconBox: 'bg-purple-500/15 border-purple-500/30 text-purple-400',
-    };
-  }
-  if (title.includes('zoom') || title.includes('webinar') || title.includes('live class')) {
-    return {
-      label: 'Live Zoom Class',
-      icon: Video,
-      pillClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-      iconBox: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400',
-    };
-  }
-  if (cat === 'Academy') {
-    return {
-      label: 'Academy Hub',
-      icon: GraduationCap,
-      pillClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
-      iconBox: 'bg-teal-500/15 border-teal-500/30 text-teal-400',
-    };
-  }
-  if (cat === 'Signals') {
-    return {
-      label: 'Engine Signal',
-      icon: Zap,
-      pillClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-      iconBox: 'bg-amber-500/15 border-amber-500/30 text-amber-400',
-    };
-  }
-  if (cat === 'Admin') {
-    return {
-      label: 'Platform Broadcast',
-      icon: Megaphone,
-      pillClass: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
-      iconBox: 'bg-rose-500/15 border-rose-500/30 text-rose-400',
-    };
-  }
-  return {
-    label: notif.type === 'Security' ? 'Security Alert' : 'System Dispatch',
-    icon: notif.type === 'Security' ? ShieldAlert : Bell,
-    pillClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
-    iconBox: 'bg-purple-500/15 border-purple-500/30 text-purple-400',
-  };
 }
 
 export default function NotificationsPage() {
@@ -175,7 +118,7 @@ export default function NotificationsPage() {
       if (Array.isArray(list)) {
         setNotifications(deduplicateClientList(list));
       }
-    } catch (err) {
+    } catch {
       if (!silent) toast.error('Failed to load notifications');
     } finally {
       setLoading(false);
@@ -193,20 +136,20 @@ export default function NotificationsPage() {
     try {
       await apiFetch('/api/v2/notifications/read-all', { method: 'PATCH' });
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-      toast.success('All notifications marked as read');
-    } catch (err) {
+      toast.success('All marked as read');
+    } catch {
       toast.error('Failed to mark all as read');
     }
   };
 
   const handleClearAll = async () => {
     if (notifications.length === 0) return;
-    if (!confirm('Clear all notifications from your inbox?')) return;
+    if (!confirm('Clear all notifications from inbox?')) return;
     try {
       await apiFetch('/api/v2/notifications/clear-all', { method: 'DELETE' });
       setNotifications([]);
-      toast.success('Notification inbox cleared');
-    } catch (err) {
+      toast.success('Inbox cleared');
+    } catch {
       toast.error('Failed to clear notifications');
     }
   };
@@ -217,7 +160,7 @@ export default function NotificationsPage() {
       await apiFetch(`/api/v2/notifications/${id}`, { method: 'DELETE' });
       setNotifications((prev) => prev.filter((n) => n.id !== id));
       toast.success('Notification removed');
-    } catch (err) {
+    } catch {
       toast.error('Failed to delete notification');
     }
   };
@@ -227,7 +170,7 @@ export default function NotificationsPage() {
     try {
       await apiFetch(`/api/v2/notifications/${id}/read`, { method: 'PATCH' });
       setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
-    } catch (err) {}
+    } catch {}
   };
 
   const handleNotificationClick = async (notif: any) => {
@@ -235,27 +178,27 @@ export default function NotificationsPage() {
       try {
         await apiFetch(`/api/v2/notifications/${notif.id}/read`, { method: 'PATCH' });
         setNotifications((prev) => prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n)));
-      } catch (err) {}
+      } catch {}
     }
     if (notif.linkUrl) {
       router.push(notif.linkUrl);
     } else if (classifyNotificationCategory(notif) === 'Academy') {
       router.push('/academy');
+    } else if (classifyNotificationCategory(notif) === 'Signals') {
+      router.push('/dashboard/engines/gold');
     }
   };
 
   const counts = useMemo(() => {
     const unread = notifications.filter((n) => !n.isRead).length;
-    const academy = notifications.filter((n) => classifyNotificationCategory(n) === 'Academy').length;
     const signals = notifications.filter((n) => classifyNotificationCategory(n) === 'Signals').length;
-    const admin = notifications.filter((n) => classifyNotificationCategory(n) === 'Admin').length;
+    const academy = notifications.filter((n) => classifyNotificationCategory(n) === 'Academy').length;
     const system = notifications.filter((n) => classifyNotificationCategory(n) === 'System').length;
     return {
       total: notifications.length,
       unread,
-      academy,
       signals,
-      admin,
+      academy,
       system,
     };
   }, [notifications]);
@@ -264,9 +207,8 @@ export default function NotificationsPage() {
     return notifications.filter((n) => {
       const cat = classifyNotificationCategory(n);
       if (activeFilter === 'Unread' && n.isRead) return false;
-      if (activeFilter === 'Academy' && cat !== 'Academy') return false;
       if (activeFilter === 'Signals' && cat !== 'Signals') return false;
-      if (activeFilter === 'Admin' && cat !== 'Admin') return false;
+      if (activeFilter === 'Academy' && cat !== 'Academy') return false;
       if (activeFilter === 'System' && cat !== 'System') return false;
 
       if (searchQuery.trim()) {
@@ -281,133 +223,83 @@ export default function NotificationsPage() {
 
   return (
     <motion.div
-      className="space-y-6 pb-12"
+      className="space-y-4 pb-12 max-w-5xl mx-auto"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.35 }}
+      transition={{ duration: 0.25 }}
     >
-      <PageHeader
-        title="Institutional Notification & Dispatch Center"
-        subtitle="Real-time Academy publications (courses, study notes, homework grading, quizzes), Gold Engine v3 triggers, and platform broadcasts — automatically deduplicated."
-        icon={Bell}
-      >
-        <div className="flex flex-wrap items-center gap-2">
+      {/* --- Compact Institutional Header --- */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-b border-white/5 pb-3">
+        <div className="flex items-center gap-2.5">
+          <h1 className="text-base sm:text-lg font-bold text-white tracking-tight">Notifications</h1>
+          {counts.unread > 0 && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+              {counts.unread} unread
+            </span>
+          )}
+        </div>
+
+        {/* Action Controls */}
+        <div className="flex items-center gap-1.5 self-start sm:self-auto">
           <button
             onClick={() => fetchNotifications(true)}
-            className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            title="Refresh feed"
+            className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
           >
-            <RefreshCw size={13} className={refreshing ? 'animate-spin text-purple-400' : ''} />
-            <span>Sync</span>
+            <RefreshCw size={12} className={refreshing ? 'animate-spin text-amber-400' : ''} />
+            <span className="hidden sm:inline">Sync</span>
           </button>
-          <button
-            onClick={handleMarkAllRead}
-            disabled={counts.unread === 0}
-            className="btn-primary flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-40"
-          >
-            <CheckCircle2 size={14} />
-            <span>Mark All Read ({counts.unread})</span>
-          </button>
+
+          {counts.unread > 0 && (
+            <button
+              onClick={handleMarkAllRead}
+              className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+            >
+              <CheckCircle2 size={12} />
+              <span>Mark all read</span>
+            </button>
+          )}
+
           {notifications.length > 0 && (
             <button
               onClick={handleClearAll}
-              className="px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/25 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+              title="Clear all"
+              className="p-1.5 sm:px-2 sm:py-1.5 rounded-lg bg-white/5 hover:bg-red-500/15 text-slate-400 hover:text-red-300 border border-white/10 text-xs transition cursor-pointer"
             >
-              <Trash2 size={13} />
-              <span>Clear Inbox</span>
+              <Trash2 size={12} />
             </button>
           )}
         </div>
-      </PageHeader>
-
-      {/* --- Top 4 KPI Summary Strip --- */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div
-          onClick={() => setActiveFilter('All')}
-          className="glass-card p-4 rounded-2xl border border-white/10 hover:border-purple-500/30 transition cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span className="font-mono uppercase text-[10px]">Total Unique Dispatches</span>
-            <Bell size={15} className="text-purple-400" />
-          </div>
-          <div className="text-2xl font-black text-white font-mono mt-1.5">{counts.total}</div>
-          <div className="text-[10px] text-emerald-400 font-mono mt-1 flex items-center gap-1">
-            ✓ Auto-Deduplicated Feed
-          </div>
-        </div>
-
-        <div
-          onClick={() => setActiveFilter('Unread')}
-          className="glass-card p-4 rounded-2xl border border-purple-500/25 bg-purple-950/15 hover:border-purple-500/50 transition cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span className="font-mono uppercase text-[10px]">Unread Action Items</span>
-            <Sparkles size={15} className="text-purple-400" />
-          </div>
-          <div className="text-2xl font-black text-purple-300 font-mono mt-1.5">{counts.unread}</div>
-          <div className="text-[10px] text-slate-400 font-mono mt-1">
-            {counts.unread === 0 ? 'All caught up' : 'Click to filter unread'}
-          </div>
-        </div>
-
-        <div
-          onClick={() => setActiveFilter('Academy')}
-          className="glass-card p-4 rounded-2xl border border-teal-500/25 bg-teal-950/15 hover:border-teal-500/50 transition cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span className="font-mono uppercase text-[10px]">Academy & Instructor</span>
-            <GraduationCap size={15} className="text-teal-400" />
-          </div>
-          <div className="text-2xl font-black text-teal-300 font-mono mt-1.5">{counts.academy}</div>
-          <div className="text-[10px] text-slate-400 font-mono mt-1">
-            Notes, Courses, Homework & Zoom
-          </div>
-        </div>
-
-        <div
-          onClick={() => setActiveFilter('Signals')}
-          className="glass-card p-4 rounded-2xl border border-amber-500/25 bg-amber-950/15 hover:border-amber-500/50 transition cursor-pointer"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span className="font-mono uppercase text-[10px]">Signals & Broadcasts</span>
-            <Zap size={15} className="text-amber-400" />
-          </div>
-          <div className="text-2xl font-black text-amber-300 font-mono mt-1.5">
-            {counts.signals + counts.admin}
-          </div>
-          <div className="text-[10px] text-slate-400 font-mono mt-1">
-            Gold Engine v3 & Admin Alerts
-          </div>
-        </div>
       </div>
 
-      {/* --- Filter Pills & Search Bar --- */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5">
+      {/* --- Space-Efficient Filters & Search --- */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        {/* Horizontal Scrollable Tabs */}
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
           {(
             [
-              { id: 'All', label: 'All Dispatches', count: counts.total },
+              { id: 'All', label: 'All', count: counts.total },
               { id: 'Unread', label: 'Unread', count: counts.unread },
-              { id: 'Academy', label: 'Academy & Notes', count: counts.academy },
-              { id: 'Signals', label: 'Engine Signals', count: counts.signals },
-              { id: 'Admin', label: 'Broadcasts', count: counts.admin },
-              { id: 'System', label: 'System & Security', count: counts.system },
+              { id: 'Signals', label: 'Signals', count: counts.signals },
+              { id: 'Academy', label: 'Academy', count: counts.academy },
+              { id: 'System', label: 'System', count: counts.system },
             ] as { id: FilterType; label: string; count: number }[]
           ).map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveFilter(tab.id)}
               className={cn(
-                'px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 border',
+                'px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 border',
                 activeFilter === tab.id
-                  ? 'bg-purple-600 text-white border-purple-500 shadow-lg shadow-purple-600/20'
-                  : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                  : 'bg-white/5 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-white/10'
               )}
             >
               <span>{tab.label}</span>
               <span
                 className={cn(
-                  'px-1.5 py-0.5 rounded-full text-[10px] font-mono',
-                  activeFilter === tab.id ? 'bg-white/20 text-white' : 'bg-slate-900 text-slate-400'
+                  'text-[10px] font-mono px-1 py-0.2 rounded',
+                  activeFilter === tab.id ? 'text-amber-300 font-bold' : 'text-slate-500'
                 )}
               >
                 {tab.count}
@@ -416,153 +308,139 @@ export default function NotificationsPage() {
           ))}
         </div>
 
-        <div className="relative w-full md:w-72">
-          <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+        {/* Compact Search Field */}
+        <div className="relative w-full sm:w-56">
+          <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter alerts by title or keyword..."
-            className="w-full input-glass rounded-xl pl-9 pr-3.5 py-2 text-xs text-white"
+            placeholder="Search alerts..."
+            className="w-full bg-[#0E1424] border border-white/10 rounded-lg pl-7 pr-2.5 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500/50 transition-all"
           />
         </div>
       </div>
 
-      {/* --- Notifications Stream --- */}
-      <div className="glass-panel rounded-2xl border border-white/10 p-4 md:p-6 bg-slate-950/60">
+      {/* --- Streamlined Notifications List --- */}
+      <div className="space-y-1.5">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-500">
-            <div className="w-8 h-8 rounded-full border-2 border-purple-500 border-t-transparent animate-spin mb-4" />
-            <span className="text-sm font-mono">Synchronizing notification vault...</span>
+          <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+            <div className="w-5 h-5 rounded-full border-2 border-amber-500 border-t-transparent animate-spin mb-2" />
+            <span className="text-xs font-mono">Loading notifications...</span>
           </div>
         ) : filteredNotifications.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-500 space-y-4">
-            <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
-              <Inbox size={30} className="text-slate-500" />
+          <div className="flex flex-col items-center justify-center py-12 text-slate-500 space-y-2 border border-white/5 rounded-xl bg-white/2">
+            <Inbox size={22} className="text-slate-600" />
+            <div className="text-center">
+              <span className="text-xs font-semibold text-slate-400 block">No notifications</span>
+              <span className="text-[11px] text-slate-500">
+                {searchQuery ? 'No alerts match your search' : 'Your inbox is completely caught up'}
+              </span>
             </div>
-            <div className="text-center space-y-1">
-              <h3 className="text-slate-200 font-bold text-sm">No Notifications in "{activeFilter}"</h3>
-              <p className="text-xs text-slate-500 max-w-sm">
-                New instructor study notes, homework assignments, quizzes, and Gold Engine v3 signals will appear here automatically.
-              </p>
-            </div>
-            {activeFilter !== 'All' && (
-              <button
-                onClick={() => setActiveFilter('All')}
-                className="px-4 py-2 rounded-xl bg-purple-500/15 text-purple-300 border border-purple-500/30 text-xs font-bold cursor-pointer"
-              >
-                Show All Notifications
-              </button>
-            )}
           </div>
         ) : (
-          <div className="space-y-3">
-            <AnimatePresence initial={false}>
-              {filteredNotifications.map((notif) => {
-                const badge = getSmartBadge(notif);
-                const IconComp = badge.icon;
-                const destinationUrl =
-                  notif.linkUrl ||
-                  (classifyNotificationCategory(notif) === 'Academy' ? '/academy' : undefined);
+          <AnimatePresence initial={false}>
+            {filteredNotifications.map((notif) => {
+              const cat = classifyNotificationCategory(notif);
+              const config = getCategoryConfig(cat);
+              const hasLink = Boolean(notif.linkUrl || cat === 'Academy' || cat === 'Signals');
 
-                return (
-                  <motion.div
-                    key={notif.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.97 }}
-                    onClick={() => handleNotificationClick(notif)}
-                    className={cn(
-                      'group p-4 rounded-2xl border transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4',
-                      notif.isRead
-                        ? 'bg-slate-900/40 border-white/5 opacity-80 hover:opacity-100 hover:border-white/15'
-                        : 'bg-gradient-to-r from-purple-950/30 via-slate-900/80 to-slate-900/60 border-purple-500/30 hover:border-purple-500/50 shadow-lg shadow-purple-950/20'
-                    )}
-                  >
-                    <div className="flex items-start gap-3.5 min-w-0 flex-1">
-                      <div
-                        className={cn(
-                          'h-11 w-11 flex-shrink-0 rounded-xl flex items-center justify-center border mt-0.5',
-                          badge.iconBox
-                        )}
-                      >
-                        <IconComp size={18} />
-                      </div>
+              return (
+                <motion.div
+                  key={notif.id}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                  onClick={() => handleNotificationClick(notif)}
+                  className={cn(
+                    'group relative rounded-xl border p-2.5 sm:p-3 transition-all cursor-pointer flex items-start justify-between gap-3',
+                    notif.isRead
+                      ? 'bg-[#0B0F19]/50 border-white/5 opacity-75 hover:opacity-100 hover:border-white/15'
+                      : 'bg-[#0E1424] border-amber-500/25 shadow-sm shadow-black/40',
+                    config.accentBorder
+                  )}
+                >
+                  {/* Left Column: Category Dot, Category Tag, Title, Body, Timestamp */}
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      {/* Subtle status indicator dot */}
+                      <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', notif.isRead ? 'bg-slate-600' : config.dotClass)} />
+                      
+                      {/* Category tag */}
+                      <span className={cn('font-mono font-semibold px-1.5 py-0.2 rounded border text-[9px] uppercase tracking-wider', config.badgeClass)}>
+                        {config.label}
+                      </span>
 
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className={cn(
-                              'text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border',
-                              badge.pillClass
-                            )}
-                          >
-                            {badge.label}
-                          </span>
-                          <span className="text-[11px] font-mono text-slate-500">
-                            {getRelativeTime(notif.createdAt)}
-                          </span>
-                          {!notif.isRead && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded-full border border-purple-500/30">
-                              <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
-                              NEW
-                            </span>
-                          )}
-                        </div>
+                      {/* Relative time */}
+                      <span className="font-mono text-slate-500 text-[10px]">
+                        {getRelativeTime(notif.createdAt)}
+                      </span>
 
-                        <h4
-                          className={cn(
-                            'text-sm font-bold leading-snug',
-                            notif.isRead ? 'text-slate-200' : 'text-white'
-                          )}
-                        >
-                          {notif.title}
-                        </h4>
-
-                        <p className="text-xs text-slate-400 leading-relaxed">{notif.message}</p>
-                      </div>
+                      {/* New indicator */}
+                      {!notif.isRead && (
+                        <span className="font-mono font-bold text-amber-400 text-[9px] uppercase tracking-wider ml-0.5">
+                          • new
+                        </span>
+                      )}
                     </div>
 
-                    <div
-                      className="flex items-center gap-2 self-end sm:self-center shrink-0"
-                      onClick={(e) => e.stopPropagation()}
+                    {/* Title */}
+                    <h3
+                      className={cn(
+                        'text-xs font-semibold leading-tight tracking-tight',
+                        notif.isRead ? 'text-slate-300' : 'text-white'
+                      )}
                     >
-                      {destinationUrl && (
-                        <button
-                          type="button"
-                          onClick={() => handleNotificationClick(notif)}
-                          className="px-3 py-1.5 rounded-xl bg-teal-500/15 hover:bg-teal-500/25 text-teal-300 border border-teal-500/30 text-xs font-bold flex items-center gap-1 cursor-pointer transition"
-                        >
-                          <span>Open</span>
-                          <ArrowUpRight size={13} />
-                        </button>
-                      )}
+                      {notif.title}
+                    </h3>
 
-                      {!notif.isRead && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleMarkOneRead(notif.id, e)}
-                          title="Mark as Read"
-                          className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/20 text-slate-400 hover:text-emerald-300 border border-white/10 cursor-pointer transition"
-                        >
-                          <Check size={14} />
-                        </button>
-                      )}
+                    {/* Body text - clamped on mobile for density */}
+                    <p className="text-[11px] text-slate-400 leading-snug line-clamp-2 sm:line-clamp-3">
+                      {notif.message}
+                    </p>
+                  </div>
 
+                  {/* Right Column: Actions (compact, non-cluttering) */}
+                  <div
+                    className="flex items-center gap-1 shrink-0 pt-0.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {hasLink && (
                       <button
                         type="button"
-                        onClick={(e) => handleDeleteOne(notif.id, e)}
-                        title="Remove Notification"
-                        className="p-2 rounded-xl bg-white/5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-white/10 cursor-pointer transition"
+                        onClick={() => handleNotificationClick(notif)}
+                        title="View details"
+                        className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-[11px] font-medium flex items-center gap-0.5 transition cursor-pointer"
                       >
-                        <Trash2 size={14} />
+                        <span>View</span>
+                        <ArrowUpRight size={11} className="text-slate-400" />
                       </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
+                    )}
+
+                    {!notif.isRead && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleMarkOneRead(notif.id, e)}
+                        title="Mark read"
+                        className="p-1 rounded bg-white/5 hover:bg-emerald-500/15 text-slate-400 hover:text-emerald-300 border border-white/5 transition cursor-pointer"
+                      >
+                        <Check size={12} />
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteOne(notif.id, e)}
+                      title="Delete"
+                      className="p-1 rounded bg-white/5 hover:bg-red-500/15 text-slate-500 hover:text-red-300 border border-white/5 transition cursor-pointer"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         )}
       </div>
     </motion.div>

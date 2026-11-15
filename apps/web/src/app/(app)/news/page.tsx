@@ -102,34 +102,34 @@ export default function NewsPage() {
   const listFeed = filteredArticles.slice(1);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/5 pb-2.5">
         <PageHeader
-          title="Market News & Sentiment"
-          subtitle="Real-time macro updates, sentiment analytics, and institutional market feeds."
+          title="Market News & Macro Sentiment"
+          subtitle="Real-time economic developments and interbank market intelligence."
           icon={Newspaper}
         />
         <button
           onClick={() => fetchNews(true)}
           disabled={refreshing || loading}
-          className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/10 bg-white/5 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 transition-all cursor-pointer disabled:opacity-50"
+          className="self-start sm:self-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/5 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-white/10 transition-all cursor-pointer disabled:opacity-50"
         >
-          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-          {refreshing ? 'Syncing...' : 'Sync Feed'}
+          <RefreshCw size={11} className={refreshing ? 'animate-spin text-amber-400' : ''} />
+          <span>{refreshing ? 'Syncing...' : 'Sync Feed'}</span>
         </button>
       </div>
 
       {/* Categories Tabs */}
-      <div className="flex gap-2 border-b border-white/5 pb-3 overflow-x-auto no-scrollbar">
+      <div className="flex gap-1.5 border-b border-white/5 pb-2 overflow-x-auto no-scrollbar">
         {categories.map((cat) => (
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer shrink-0 ${
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border cursor-pointer shrink-0 ${
               activeCategory === cat
-                ? 'bg-purple-500/15 border-purple-500/30 text-purple-300 shadow-lg shadow-purple-500/5'
+                ? 'bg-amber-500/15 border-amber-500/30 text-amber-300 shadow-sm'
                 : 'bg-transparent border-transparent text-slate-400 hover:text-white'
             }`}
           >
@@ -139,52 +139,52 @@ export default function NewsPage() {
       </div>
 
       {loading ? (
-        <div className="py-24 flex flex-col items-center justify-center gap-3">
-          <RefreshCw size={32} className="text-purple-500 animate-spin" />
-          <span className="text-xs text-slate-500 font-bold">Parsing news feeds...</span>
+        <div className="py-16 flex flex-col items-center justify-center gap-2">
+          <RefreshCw size={24} className="text-amber-500 animate-spin" />
+          <span className="text-xs text-slate-500 font-mono">Streaming institutional news feeds...</span>
         </div>
       ) : articles.length === 0 ? (
-        <div className="py-24 text-center glass-panel rounded-2xl border border-white/5">
-          <BookOpen size={40} className="mx-auto text-slate-600 mb-2" />
+        <div className="py-16 text-center glass-panel rounded-xl border border-white/5">
+          <BookOpen size={32} className="mx-auto text-slate-600 mb-2" />
           <h3 className="font-bold text-slate-300 text-sm">No recent news found</h3>
           <p className="text-xs text-slate-500 max-w-xs mx-auto mt-1">We couldn't retrieve any articles matching this category at this moment.</p>
         </div>
       ) : (
         <motion.div 
-          className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+          className="grid grid-cols-1 lg:grid-cols-3 gap-4"
           variants={CONTAINER_ANIMS}
           initial="hidden"
           animate="show"
         >
           {/* Featured Article & Grid */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-4">
             {featured && (
               <motion.div 
                 variants={ITEM_ANIMS}
-                className="glass-card rounded-2xl overflow-hidden border border-white/5 hover:border-purple-500/20 transition-all duration-300 relative group"
+                className="glass-card rounded-xl overflow-hidden border border-white/10 hover:border-amber-500/30 transition-all duration-300 relative group"
               >
                 {featured.image ? (
-                  <div className="h-64 sm:h-80 w-full overflow-hidden relative">
+                  <div className="h-44 sm:h-56 w-full overflow-hidden relative">
                     <img 
                       src={featured.image} 
                       alt={featured.headline} 
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 brightness-75"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/50 to-transparent" />
                   </div>
                 ) : (
-                  <div className="h-48 w-full bg-gradient-to-br from-purple-900/10 via-indigo-900/5 to-slate-900/10 relative" />
+                  <div className="h-32 w-full bg-gradient-to-br from-amber-900/10 via-indigo-900/5 to-slate-900/10 relative" />
                 )}
 
-                <div className="p-6 space-y-4 absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950 via-slate-950/80 to-transparent pt-20">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="purple" size="sm" className="uppercase font-bold tracking-wider">
+                <div className="p-3.5 sm:p-4 space-y-2 absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent pt-10">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-wider">
                       FEATURED • {featured.related || 'MARKET'}
-                    </Badge>
+                    </span>
                     {(() => {
                       const sent = getSentiment(featured.headline, featured.summary);
                       return (
-                        <Badge variant={sent.color} size="sm" className="flex items-center gap-1">
+                        <Badge variant={sent.color} size="sm" className="flex items-center gap-1 text-[10px]">
                           <sent.icon size={10} />
                           {sent.label} Sentiment
                         </Badge>
@@ -192,17 +192,17 @@ export default function NewsPage() {
                     })()}
                   </div>
 
-                  <h2 className="font-display font-bold text-xl sm:text-2xl text-white group-hover:text-purple-300 transition-colors leading-tight">
+                  <h2 className="font-display font-bold text-base sm:text-lg text-white group-hover:text-amber-300 transition-colors leading-snug">
                     {featured.headline}
                   </h2>
 
-                  <p className="text-xs text-slate-300 leading-relaxed max-w-2xl line-clamp-3">
+                  <p className="text-[11px] text-slate-300 leading-relaxed max-w-2xl line-clamp-2">
                     {featured.summary}
                   </p>
 
-                  <div className="flex items-center justify-between border-t border-white/5 pt-4 text-[10px] text-slate-500 font-bold">
+                  <div className="flex items-center justify-between border-t border-white/5 pt-2 text-[10px] text-slate-500 font-mono">
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-400">{featured.source}</span>
+                      <span className="text-slate-400 font-semibold">{featured.source}</span>
                       <span>•</span>
                       <span>
                         {new Date(featured.datetime * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -213,9 +213,9 @@ export default function NewsPage() {
                       href={featured.url} 
                       target="_blank" 
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
+                      className="flex items-center gap-1 text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
                     >
-                      Read Full Article
+                      <span>Read article</span>
                       <ExternalLink size={10} />
                     </a>
                   </div>

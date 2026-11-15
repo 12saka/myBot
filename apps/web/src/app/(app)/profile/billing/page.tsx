@@ -125,17 +125,17 @@ export default function UserBillingPage() {
   const pctUsed = Math.min(100, Math.round((signalsUsed / signalLimit) * 100));
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-12">
+    <div className="max-w-5xl mx-auto space-y-4 pb-8">
       {/* Header */}
-      <div className="glass-card p-6 rounded-2xl border border-purple-500/20 bg-slate-900/80 space-y-2">
+      <div className="glass-card p-3.5 sm:p-4 rounded-xl border border-purple-500/20 bg-slate-900/80 space-y-1.5">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono font-bold text-purple-300 bg-purple-500/20 px-2.5 py-0.5 rounded border border-purple-500/30 flex items-center gap-1">
+          <span className="text-[10px] font-mono font-bold text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded border border-purple-500/30 flex items-center gap-1">
             <CreditCard className="w-3.5 h-3.5" />
             <span>SUBSCRIPTION & ENTITLEMENTS</span>
           </span>
 
           <span
-            className={`px-3 py-1 rounded-full text-xs font-mono font-bold border ${
+            className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border ${
               status === 'ACTIVE'
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                 : status === 'TRIALING'
@@ -147,16 +147,16 @@ export default function UserBillingPage() {
           </span>
         </div>
 
-        <h1 className="text-xl md:text-2xl font-black text-white font-outfit">My Subscription & PayHero M-Pesa Billing</h1>
+        <h1 className="text-lg sm:text-xl font-black text-white font-outfit">My Subscription & PayHero M-Pesa Billing</h1>
         <p className="text-xs text-slate-300 font-mono">
           Manage your subscription tier, weekly AI signal capacity, Academy entitlements, and PayHero M-Pesa payment history.
         </p>
       </div>
 
       {/* OVERVIEW & WEEKLY USAGE TELEMETRY */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
         {/* CURRENT PLAN CARD */}
-        <div className="glass-card p-5 rounded-2xl border border-purple-500/20 bg-slate-900/60 space-y-3 md:col-span-2">
+        <div className="glass-card p-3.5 sm:p-4 rounded-xl border border-purple-500/20 bg-slate-900/60 space-y-3 md:col-span-2">
           <div className="flex items-center justify-between">
             <div>
               <span className="text-[10px] font-mono uppercase text-slate-400 block">CURRENT SUBSCRIPTION</span>
@@ -197,7 +197,7 @@ export default function UserBillingPage() {
         </div>
 
         {/* WEEKLY SIGNAL LIMIT ENFORCEMENT WIDGET */}
-        <div className="glass-card p-5 rounded-2xl border border-purple-500/20 bg-slate-900/60 space-y-3 flex flex-col justify-between">
+        <div className="glass-card p-3.5 sm:p-4 rounded-xl border border-purple-500/20 bg-slate-900/60 space-y-3 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-mono uppercase text-purple-300 font-bold flex items-center gap-1">
@@ -306,7 +306,7 @@ export default function UserBillingPage() {
       </div>
 
       {/* BILLING HISTORY TABLE */}
-      <div className="glass-card p-6 rounded-2xl border border-purple-500/20 bg-slate-900/60 space-y-4">
+      <div className="glass-card p-3.5 sm:p-4 rounded-xl border border-purple-500/20 bg-slate-900/60 space-y-3">
         <h3 className="text-base font-bold text-white font-outfit">PayHero M-Pesa Billing History</h3>
 
         <div className="overflow-x-auto rounded-xl border border-white/5">
