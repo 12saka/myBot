@@ -2844,9 +2844,17 @@ export class SignalsController implements OnModuleInit {
       trend15m = 'BULLISH';
     }
 
-    // Detect if a verified institutional liquidity sweep + structural confirmation indicates trend exhaustion/reversal
-    const isBullishReversalContext = !!latestBullishSweep && latestBullishSweep.qualityScore >= 70 && (mss5mBuy || bos15mBuy || rsiDiv === 'BULLISH_DIVERGENCE');
-    const isBearishReversalContext = !!latestBearishSweep && latestBearishSweep.qualityScore >= 70 && (mss5mSell || bos15mSell || rsiDiv === 'BEARISH_DIVERGENCE');
+    // Detect if a verified institutional liquidity sweep, OB/FVG retest, or structural confirmation indicates valid tactical execution
+    const isBullishReversalContext =
+      (!!latestBullishSweep && latestBullishSweep.qualityScore >= 60) ||
+      mss5mBuy ||
+      bos15mBuy ||
+      rsiDiv === 'BULLISH_DIVERGENCE';
+    const isBearishReversalContext =
+      (!!latestBearishSweep && latestBearishSweep.qualityScore >= 60) ||
+      mss5mSell ||
+      bos15mSell ||
+      rsiDiv === 'BEARISH_DIVERGENCE';
 
     // 2. 4H Macro Structure (Background context — max 10 pts)
     if (trend4h === 'BULLISH') {
@@ -3011,9 +3019,9 @@ export class SignalsController implements OnModuleInit {
     if (currentPrice > sessionLevels.sessionVwap) bullEvidence += 5;
     else if (currentPrice < sessionLevels.sessionVwap) bearEvidence += 5;
 
-    // 5. Higher-Timeframe (HTF) Dominance Evaluation (Daily & 4H Macro Order Flow)
-    const isHtfBullDominant = trendDaily === 'BULLISH' || (trend4h === 'BULLISH' && trendDaily !== 'BEARISH');
-    const isHtfBearDominant = trendDaily === 'BEARISH' || (trend4h === 'BEARISH' && trendDaily !== 'BULLISH');
+    // 5. Higher-Timeframe (HTF) Dominance Evaluation (4H & 1H Primary Order Flow)
+    const isHtfBullDominant = trend4h === 'BULLISH' && htfTrend === 'BULLISH';
+    const isHtfBearDominant = trend4h === 'BEARISH' && htfTrend === 'BEARISH';
 
     const isStrongBearBreakdown = (isBearTrend || isBearContinuation) && (adx14 >= 25 || htfTrend === 'BEARISH' || trend15m === 'BEARISH') && !isBullishReversalContext;
     const isStrongBullBreakout = (isBullTrend || isBullContinuation) && (adx14 >= 25 || htfTrend === 'BULLISH' || trend15m === 'BULLISH') && !isBearishReversalContext;
@@ -3081,14 +3089,18 @@ export class SignalsController implements OnModuleInit {
 
     // 8. Intermarket Macro Alignment & Draw on Liquidity (Award points only if real live macro data exists)
     if (intermarket.hasLiveMacro) {
-      if (intermarket.macroBias === 'BULLISH' || intermarket.macroAlignment === 'BULLISH') {
+      if (intermarket.macroAlignment === 'BULLISH') {
         bullEvidence += 14;
-        bearEvidence -= 12;
-      } else if (intermarket.macroBias === 'BEARISH' || intermarket.macroAlignment === 'BEARISH') {
+        bearEvidence -= 10;
+      } else if (intermarket.macroAlignment === 'BEARISH') {
         bearEvidence += 14;
-        bullEvidence -= 12;
+        bullEvidence -= 10;
+      } else if (intermarket.macroBias === 'BULLISH') {
+        bullEvidence += 6;
+      } else if (intermarket.macroBias === 'BEARISH') {
+        bearEvidence += 6;
       } else if (intermarket.macroAlignment === 'SAFE_HAVEN_DECOUPLING') {
-        bullEvidence += 10;
+        bullEvidence += 8;
       } else {
         bullEvidence += 4;
         bearEvidence += 4;
@@ -3106,9 +3118,9 @@ export class SignalsController implements OnModuleInit {
 
     // 8.5. Top-Down Macro Context Alignment (W1 + D1 Higher Timeframe Confirmation)
     if (trendWeekly === 'BULLISH' && trendDaily === 'BULLISH') {
-      bullEvidence += 8;
+      bullEvidence += 4;
     } else if (trendWeekly === 'BEARISH' && trendDaily === 'BEARISH') {
-      bearEvidence += 8;
+      bearEvidence += 4;
     } else {
       bullEvidence += 3;
       bearEvidence += 3;
@@ -3119,58 +3131,59 @@ export class SignalsController implements OnModuleInit {
     bearEvidence = Math.max(0, Math.min(100, bearEvidence));
 
     // Symmetrical Direction Stability Filter (Quality over Frequency)
-    // Requires minimum score of 58, an evidence margin of at least 15 points, AND an active trigger
+    // Requires minimum score of 54, an evidence margin of at least 10 points, AND an active trigger
     let bias: 'BUY' | 'SELL' | 'NO_TRADE' = 'NO_TRADE';
     let counterTrendBlockedReason: string | null = null;
 
     // Stage 2: Directional Bias with Higher-Timeframe (HTF) Dominance
     const isRangeDeviationEligible =
-      (localLocationPct <= 38 && (mss5mBuy || bos15mBuy || !!latestBullishSweep)) ||
-      (localLocationPct >= 62 && (mss5mSell || bos15mSell || !!latestBearishSweep));
+      isBullObRetest ||
+      isBullFvgRetest ||
+      isBearObRetest ||
+      isBearFvgRetest ||
+      priceNearBullObOrFvg ||
+      priceNearBearObOrFvg ||
+      trend15m !== 'RANGING' ||
+      (localLocationPct <= 45 && (mss5mBuy || bos15mBuy || !!latestBullishSweep)) ||
+      (localLocationPct >= 55 && (mss5mSell || bos15mSell || !!latestBearishSweep));
     const bothRanging = htfTrend === 'RANGING' && trend4h === 'RANGING';
     const htfConflicted = (htfTrend === 'BULLISH' && trend4h === 'BEARISH') || (htfTrend === 'BEARISH' && trend4h === 'BULLISH');
 
-    if (bearEvidence >= 58 && (bearEvidence - bullEvidence) >= 15 && hasBearishTrigger) {
+    if (bearEvidence >= 54 && (bearEvidence - bullEvidence) >= 10 && hasBearishTrigger) {
       // Phase 2 Fundamental News Direction Veto
       if (newsGate.fundamentalBias === 'BULLISH') {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Dovish/Weak USD (${newsGate.fundamentalSummary || 'Actual < Forecast'}). Counter-fundamental Gold shorts strictly blocked.`;
-      } else if (intermarket.macroBias === 'BULLISH' && !isBearishReversalContext) {
+      } else if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && !isBearishReversalContext) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = `Macro Conflict Veto: Tumbling USD (${intermarket.dxyChange1h}%) and softening yields provide macro tailwind for Gold. Shorting violates institutional Macro Draw on Liquidity.`;
-      } else if (isHtfBullDominant && !isBearishReversalContext) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Counter-trend SELL blocked: Higher Timeframe (Daily/4H) order flow is BULLISH. Shorting prohibited without verified HTF liquidity sweep + CHoCH.';
-      } else if (htfTrend === 'BULLISH' && trend4h === 'BULLISH' && !isBearishReversalContext) {
+      } else if (htfTrend === 'BULLISH' && trend4h === 'BULLISH' && !isBearishReversalContext && !isBearObRetest && !isBearFvgRetest) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Counter-trend SELL blocked: 1H and 4H structure are aligned BULLISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
       } else if (bothRanging && !isRangeDeviationEligible) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
-      } else if (htfConflicted && trend4h === 'BULLISH' && !isBearishReversalContext && !(localLocationPct >= 65 && (mss5mSell || bos15mSell))) {
+      } else if (htfConflicted && trend4h === 'BULLISH' && !isBearishReversalContext && !isBearObRetest && !isBearFvgRetest && trend15m !== 'BEARISH' && !(localLocationPct >= 55 && (mss5mSell || bos15mSell))) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Conflicting Multi-Timeframe Bias: 1H Bearish vs 4H Bullish trend conflict without verified institutional reversal sweep + MSS.';
       } else {
         bias = 'SELL';
       }
-    } else if (bullEvidence >= 58 && (bullEvidence - bearEvidence) >= 15 && hasBullishTrigger) {
+    } else if (bullEvidence >= 54 && (bullEvidence - bearEvidence) >= 10 && hasBullishTrigger) {
       // Phase 2 Fundamental News Direction Veto
       if (newsGate.fundamentalBias === 'BEARISH') {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Hawkish/Strong USD (${newsGate.fundamentalSummary || 'Actual > Forecast'}). Counter-fundamental Gold longs strictly blocked.`;
-      } else if (intermarket.macroBias === 'BEARISH' && !isBullishReversalContext) {
+      } else if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && !isBullishReversalContext) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = `Macro Conflict Veto: Surging USD (+${intermarket.dxyChange1h}%) and rising yields oppose Gold longs. Setup violates institutional Macro Draw on Liquidity.`;
-      } else if (isHtfBearDominant && !isBullishReversalContext) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Counter-trend BUY blocked: Higher Timeframe (Daily/4H) order flow is BEARISH. Buying prohibited without verified HTF liquidity sweep + CHoCH.';
-      } else if (htfTrend === 'BEARISH' && trend4h === 'BEARISH' && !isBullishReversalContext) {
+      } else if (htfTrend === 'BEARISH' && trend4h === 'BEARISH' && !isBullishReversalContext && !isBullObRetest && !isBullFvgRetest) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Counter-trend BUY blocked: 1H and 4H structure are aligned BEARISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
       } else if (bothRanging && !isRangeDeviationEligible) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
-      } else if (htfConflicted && trend4h === 'BEARISH' && !isBullishReversalContext && !(localLocationPct <= 35 && (mss5mBuy || bos15mBuy))) {
+      } else if (htfConflicted && trend4h === 'BEARISH' && !isBullishReversalContext && !isBullObRetest && !isBullFvgRetest && trend15m !== 'BULLISH' && !(localLocationPct <= 45 && (mss5mBuy || bos15mBuy))) {
         bias = 'NO_TRADE';
         counterTrendBlockedReason = 'Conflicting Multi-Timeframe Bias: 1H Bullish vs 4H Bearish trend conflict without verified institutional reversal sweep + MSS.';
       } else {
@@ -3189,7 +3202,7 @@ export class SignalsController implements OnModuleInit {
 
     if (bias === 'BUY') {
       gate3Score = Math.min(96, Math.max(70, bullEvidence));
-      if ((intermarket.macroAlignment === 'BEARISH' || intermarket.macroBias === 'BEARISH') && bullEvidence < 82) {
+      if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && bullEvidence < 82) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'MACRO_TECHNICAL_CONFLICT';
@@ -3202,7 +3215,7 @@ export class SignalsController implements OnModuleInit {
       }
     } else if (bias === 'SELL') {
       gate3Score = Math.min(96, Math.max(70, bearEvidence));
-      if ((intermarket.macroAlignment === 'BULLISH' || intermarket.macroBias === 'BULLISH' || intermarket.macroAlignment === 'SAFE_HAVEN_DECOUPLING' || intermarket.safeHavenDemandScore >= 75) && bearEvidence < 82) {
+      if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && bearEvidence < 82) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'MACRO_TECHNICAL_CONFLICT';
@@ -3778,15 +3791,13 @@ export class SignalsController implements OnModuleInit {
     const r3 = parseFloat((Math.abs(tp3Price - entryPrice) / risk).toFixed(2));
 
     const compositeFactor = (gate1.score * 0.15) + (gate2.score * 0.15) + (gate3Score * 0.40) + (icz.zoneRank === 'TIER_1_PRIME' ? 25 : icz.zoneRank === 'TIER_2_STRONG' ? 18 : icz.zoneRank === 'TIER_3_MODERATE' ? 10 : 0);
-    const baseWinRate = bias === 'NO_TRADE' ? 0 : Math.max(0.42, Math.min(0.80, (compositeFactor / 100) * 0.85));
-    const pTp1 = bias === 'NO_TRADE' ? 0 : parseFloat(Math.max(0.35, Math.min(0.80, baseWinRate - (r1 - 1.4) * 0.08)).toFixed(2));
-    const pTp2 = bias === 'NO_TRADE' ? 0 : parseFloat(Math.max(0.22, Math.min(0.65, pTp1 * 0.74 - (r2 - 2.2) * 0.04)).toFixed(2));
-    const pTp3 = bias === 'NO_TRADE' ? 0 : parseFloat(Math.max(0.12, Math.min(0.45, pTp2 * 0.62 - (r3 - 3.4) * 0.03)).toFixed(2));
-    const pSl = bias === 'NO_TRADE' ? 0 : parseFloat((1.0 - pTp1).toFixed(2));
+    const baseWinRate = Math.max(0.42, Math.min(0.80, (compositeFactor / 100) * 0.85));
+    const pTp1 = parseFloat(Math.max(0.35, Math.min(0.80, baseWinRate - (r1 - 1.4) * 0.08)).toFixed(2));
+    const pTp2 = parseFloat(Math.max(0.22, Math.min(0.65, pTp1 * 0.74 - (r2 - 2.2) * 0.04)).toFixed(2));
+    const pTp3 = parseFloat(Math.max(0.12, Math.min(0.45, pTp2 * 0.62 - (r3 - 3.4) * 0.03)).toFixed(2));
+    const pSl = parseFloat((1.0 - pTp1).toFixed(2));
     const spreadCostR = risk > 0 ? (microstructure.spread / risk) : 0;
-    const ev = bias === 'NO_TRADE'
-      ? 0
-      : parseFloat(((((pTp1 * 0.5 * r1) + (pTp2 * 0.3 * r2) + (pTp3 * 0.2 * r3)) - (pSl * 1.0)) - spreadCostR).toFixed(2));
+    const ev = parseFloat(((((pTp1 * 0.5 * r1) + (pTp2 * 0.3 * r2) + (pTp3 * 0.2 * r3)) - (pSl * 1.0)) - spreadCostR).toFixed(2));
 
     // Stage 3 Check: Entry Missed & Runaway Protection
     let entryMissed = false;
