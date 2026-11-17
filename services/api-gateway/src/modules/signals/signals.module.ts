@@ -535,9 +535,9 @@ export class SignalsController implements OnModuleInit {
   private lastScanned1hBar: number = 0;
   private triggeredNewsBlackoutKeys: Set<string> = new Set();
   private lastActiveBlackoutEvent: string | null = null;
-  private scanLockPromise: Promise<any> | null = null;
+  private static scanLockPromise: Promise<any> | null = null;
   get isGeneratingSignal(): boolean {
-    return this.scanLockPromise !== null;
+    return SignalsController.scanLockPromise !== null;
   }
   set isGeneratingSignal(_val: boolean) {
     // backward compatibility
@@ -2807,6 +2807,31 @@ export class SignalsController implements OnModuleInit {
     const activeBullishFvgs = fvgs15.filter(f => f.type === 'BULLISH' && !f.mitigated).slice(-2);
     const activeBearishFvgs = fvgs15.filter(f => f.type === 'BEARISH' && !f.mitigated).slice(-2);
 
+    // 5M Tactical SMC Confluence Detection for Sniper Precision
+    const obs5m = completed5m && completed5m.length >= 10 ? this.detectOrderBlocks(completed5m, volMetrics.atr15m) : [];
+    const fvgs5m = completed5m && completed5m.length >= 10 ? this.detectFairValueGaps(completed5m, volMetrics.atr15m) : [];
+    const activeBullishObs5m = obs5m.filter(o => o.type === 'BULLISH' && !o.mitigated).slice(-2);
+    const activeBearishObs5m = obs5m.filter(o => o.type === 'BEARISH' && !o.mitigated).slice(-2);
+    const activeBullishFvgs5m = fvgs5m.filter(f => f.type === 'BULLISH' && !f.mitigated).slice(-2);
+    const activeBearishFvgs5m = fvgs5m.filter(f => f.type === 'BEARISH' && !f.mitigated).slice(-2);
+
+    // Sniper Entry 5M Candle Velocity & Momentum Guard:
+    // Prevents entering/shorting into unmitigated freight train momentum candles.
+    const last5mCandle = completed5m && completed5m.length > 0 ? completed5m[completed5m.length - 1] : null;
+    let is5mBullFreightTrain = false;
+    let is5mBearFreightTrain = false;
+    if (last5mCandle) {
+      const range5m = Math.max(0.1, last5mCandle.high - last5mCandle.low);
+      const body5m = Math.abs(last5mCandle.close - last5mCandle.open);
+      const isLargeBody = (body5m / range5m) >= 0.65 && body5m >= 0.35 * volMetrics.atr15m;
+      if (last5mCandle.close > last5mCandle.open && isLargeBody && (last5mCandle.high - last5mCandle.close) <= 0.20 * range5m) {
+        is5mBullFreightTrain = true;
+      }
+      if (last5mCandle.close < last5mCandle.open && isLargeBody && (last5mCandle.close - last5mCandle.low) <= 0.20 * range5m) {
+        is5mBearFreightTrain = true;
+      }
+    }
+
     // Symmetrical Institutional Evidence Engine (0 - 100)
     // Anchor all structural scoring & candidate discovery strictly to the last COMPLETED 15M candle close
     // so that structural levels (Entry, SL, TP1, TP2) remain 100% deterministic for the entire 15M bar.
@@ -2976,48 +3001,53 @@ export class SignalsController implements OnModuleInit {
       (priceNearBearObOrFvg && trend15m !== 'BULLISH') ||
       rsiDiv === 'BEARISH_DIVERGENCE';
 
-    if (isPostNewsBullish) bullEvidence += 20;
-    if (isPostNewsBearish) bearEvidence += 20;
-    if (isBullPullback) bullEvidence += 12;
-    if (isBearPullback) bearEvidence += 12;
+    if (isPostNewsBullish) bullEvidence += 18;
+    if (isPostNewsBearish) bearEvidence += 18;
     if (bos15mBuy) bullEvidence += 10;
     if (bos15mSell) bearEvidence += 10;
-    if (isBullFvgRetest) bullEvidence += 16;
-    if (isBearFvgRetest) bearEvidence += 16;
+
+    // Deduplicated SMC Order Block & FVG Defense (Max 16 pts, no overlapping multi-counting)
     if (isBullObRetest) bullEvidence += 16;
+    else if (isBullFvgRetest) bullEvidence += 14;
+    else if (priceNearBullObOrFvg) bullEvidence += 8;
+    else if (activeBullishObs.length > 0 || activeBullishObs5m.length > 0) bullEvidence += 4;
+
     if (isBearObRetest) bearEvidence += 16;
-    if (isBullContinuation) bullEvidence += 14;
-    if (isBearContinuation) bearEvidence += 14;
-    if (isLongMacroContinuation) bullEvidence += 18;
-    if (isShortMacroContinuation) bearEvidence += 18;
+    else if (isBearFvgRetest) bearEvidence += 14;
+    else if (priceNearBearObOrFvg) bearEvidence += 8;
+    else if (activeBearishObs.length > 0 || activeBearishObs5m.length > 0) bearEvidence += 4;
+
+    // Deduplicated Trend Continuation Evidence (Max 16 pts)
+    if (isLongMacroContinuation) bullEvidence += 16;
+    else if (isBullContinuation) bullEvidence += 12;
+    else if (isBullPullback) bullEvidence += 8;
+
+    if (isShortMacroContinuation) bearEvidence += 16;
+    else if (isBearContinuation) bearEvidence += 12;
+    else if (isBearPullback) bearEvidence += 8;
 
     // Compare recency of Bullish vs Bearish Liquidity Sweeps so an older sweep never cancels a newer opposite sweep
     const bullSweepIdx = latestBullishSweep ? latestBullishSweep.candleIndex : -1;
     const bearSweepIdx = latestBearishSweep ? latestBearishSweep.candleIndex : -1;
 
     if (latestBullishSweep && bullSweepIdx >= bearSweepIdx) {
-      const sweepPts = Math.min(26, Math.round(latestBullishSweep.qualityScore * 0.28));
+      const sweepPts = Math.min(22, Math.round(latestBullishSweep.qualityScore * 0.24));
       bullEvidence += sweepPts;
-      if (mss5mBuy) bullEvidence += 14;
+      if (mss5mBuy) bullEvidence += 12;
     } else if (latestBullishSweep) {
-      bullEvidence += 8;
+      bullEvidence += 6;
     }
 
     if (latestBearishSweep && bearSweepIdx >= bullSweepIdx) {
-      const sweepPts = Math.min(26, Math.round(latestBearishSweep.qualityScore * 0.28));
+      const sweepPts = Math.min(22, Math.round(latestBearishSweep.qualityScore * 0.24));
       bearEvidence += sweepPts;
-      if (mss5mSell) bearEvidence += 14;
+      if (mss5mSell) bearEvidence += 12;
     } else if (latestBearishSweep) {
-      bearEvidence += 8;
+      bearEvidence += 6;
     }
 
-    if (activeBullishObs.length > 0) bullEvidence += priceNearBullObOrFvg ? 12 : 6;
-    if (activeBearishObs.length > 0) bearEvidence += priceNearBearObOrFvg ? 12 : 6;
-    if (activeBullishFvgs.length > 0) bullEvidence += priceNearBullObOrFvg ? 8 : 4;
-    if (activeBearishFvgs.length > 0) bearEvidence += priceNearBearObOrFvg ? 8 : 4;
-
-    if (currentPrice > sessionLevels.sessionVwap) bullEvidence += 5;
-    else if (currentPrice < sessionLevels.sessionVwap) bearEvidence += 5;
+    if (currentPrice > sessionLevels.sessionVwap) bullEvidence += 4;
+    else if (currentPrice < sessionLevels.sessionVwap) bearEvidence += 4;
 
     // 5. Higher-Timeframe (HTF) Dominance Evaluation (4H & 1H Primary Order Flow)
     const isHtfBullDominant = trend4h === 'BULLISH' && htfTrend === 'BULLISH';
@@ -3026,18 +3056,21 @@ export class SignalsController implements OnModuleInit {
     const isStrongBearBreakdown = (isBearTrend || isBearContinuation) && (adx14 >= 25 || htfTrend === 'BEARISH' || trend15m === 'BEARISH') && !isBullishReversalContext;
     const isStrongBullBreakout = (isBullTrend || isBullContinuation) && (adx14 >= 25 || htfTrend === 'BULLISH' || trend15m === 'BULLISH') && !isBearishReversalContext;
 
-    // Value Area / Location Edge:
-    // In an uptrend or HTF Bull Dominance, price residing in the upper half of range is BULLISH EXPANSION, NEVER a short penalty!
-    // Symmetrically in a downtrend, price residing in discount is BEARISH EXPANSION, NEVER a long penalty!
+    // Location in Dealing Range (Discount vs Premium)
+    // Symmetrical and aware of trend: In an established uptrend, high location is bullish expansion, NOT a reason to short!
+    // In an established downtrend, low location is bearish expansion, NOT a reason to buy!
+    const isUptrendStructure = isBullTrend || trend15m === 'BULLISH' || htfTrend === 'BULLISH';
+    const isDowntrendStructure = isBearTrend || trend15m === 'BEARISH' || htfTrend === 'BEARISH';
+
     if (localLocationPct <= 35 && !isStrongBearBreakdown && !isHtfBearDominant) {
-      bullEvidence += 12;
-      if (!isBearTrend || isBullishReversalContext) {
-        bearEvidence -= 12;
+      bullEvidence += 10;
+      if (!isDowntrendStructure || isBullishReversalContext) {
+        bearEvidence -= 8;
       }
     } else if (localLocationPct >= 65 && !isStrongBullBreakout && !isHtfBullDominant) {
-      bearEvidence += 12;
-      if (!isBullTrend || isBearishReversalContext) {
-        bullEvidence -= 12;
+      bearEvidence += 10;
+      if (!isUptrendStructure || isBearishReversalContext) {
+        bullEvidence -= 8;
       }
     }
 
@@ -3149,48 +3182,65 @@ export class SignalsController implements OnModuleInit {
     const bothRanging = htfTrend === 'RANGING' && trend4h === 'RANGING';
     const htfConflicted = (htfTrend === 'BULLISH' && trend4h === 'BEARISH') || (htfTrend === 'BEARISH' && trend4h === 'BULLISH');
 
-    if (bearEvidence >= 54 && (bearEvidence - bullEvidence) >= 10 && hasBearishTrigger) {
-      // Phase 2 Fundamental News Direction Veto
-      if (newsGate.fundamentalBias === 'BULLISH') {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Dovish/Weak USD (${newsGate.fundamentalSummary || 'Actual < Forecast'}). Counter-fundamental Gold shorts strictly blocked.`;
-      } else if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && !isBearishReversalContext) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = `Macro Conflict Veto: Tumbling USD (${intermarket.dxyChange1h}%) and softening yields provide macro tailwind for Gold. Shorting violates institutional Macro Draw on Liquidity.`;
-      } else if (htfTrend === 'BULLISH' && trend4h === 'BULLISH' && !isBearishReversalContext && !isBearObRetest && !isBearFvgRetest) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Counter-trend SELL blocked: 1H and 4H structure are aligned BULLISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
-      } else if (bothRanging && !isRangeDeviationEligible) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
-      } else if (htfConflicted && trend4h === 'BULLISH' && !isBearishReversalContext && !isBearObRetest && !isBearFvgRetest && trend15m !== 'BEARISH' && !(localLocationPct >= 55 && (mss5mSell || bos15mSell))) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Conflicting Multi-Timeframe Bias: 1H Bearish vs 4H Bullish trend conflict without verified institutional reversal sweep + MSS.';
-      } else {
-        bias = 'SELL';
-      }
-    } else if (bullEvidence >= 54 && (bullEvidence - bearEvidence) >= 10 && hasBullishTrigger) {
-      // Phase 2 Fundamental News Direction Veto
-      if (newsGate.fundamentalBias === 'BEARISH') {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Hawkish/Strong USD (${newsGate.fundamentalSummary || 'Actual > Forecast'}). Counter-fundamental Gold longs strictly blocked.`;
-      } else if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && !isBullishReversalContext) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = `Macro Conflict Veto: Surging USD (+${intermarket.dxyChange1h}%) and rising yields oppose Gold longs. Setup violates institutional Macro Draw on Liquidity.`;
-      } else if (htfTrend === 'BEARISH' && trend4h === 'BEARISH' && !isBullishReversalContext && !isBullObRetest && !isBullFvgRetest) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Counter-trend BUY blocked: 1H and 4H structure are aligned BEARISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
-      } else if (bothRanging && !isRangeDeviationEligible) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
-      } else if (htfConflicted && trend4h === 'BEARISH' && !isBullishReversalContext && !isBullObRetest && !isBullFvgRetest && trend15m !== 'BULLISH' && !(localLocationPct <= 45 && (mss5mBuy || bos15mBuy))) {
-        bias = 'NO_TRADE';
-        counterTrendBlockedReason = 'Conflicting Multi-Timeframe Bias: 1H Bullish vs 4H Bearish trend conflict without verified institutional reversal sweep + MSS.';
-      } else {
+    // Independent, Symmetric Institutional Evaluation for BUY and SELL
+    // Guarantees BUY and SELL evaluate independently and never block one another
+    const isBullViable = bullEvidence >= 48 && hasBullishTrigger;
+    const isBearViable = bearEvidence >= 48 && hasBearishTrigger;
+
+    // Check BUY vetoes independently
+    let bullVeto: string | null = null;
+    if (newsGate.fundamentalBias === 'BEARISH') {
+      bullVeto = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Hawkish/Strong USD (${newsGate.fundamentalSummary || 'Actual > Forecast'}). Counter-fundamental Gold longs strictly blocked.`;
+    } else if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && !isBullishReversalContext) {
+      bullVeto = `Macro Conflict Veto: Surging USD (+${intermarket.dxyChange1h}%) and rising yields oppose Gold longs. Setup violates institutional Macro Draw on Liquidity.`;
+    } else if (htfTrend === 'BEARISH' && trend4h === 'BEARISH' && !isBullishReversalContext && !isBullObRetest && !isBullFvgRetest) {
+      bullVeto = 'Counter-trend BUY blocked: 1H and 4H structure are aligned BEARISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
+    } else if (bothRanging && !isRangeDeviationEligible) {
+      bullVeto = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
+    } else if (htfConflicted && trend4h === 'BEARISH' && !isBullishReversalContext && !isBullObRetest && !isBullFvgRetest && trend15m !== 'BULLISH' && !(localLocationPct <= 45 && (mss5mBuy || bos15mBuy))) {
+      bullVeto = 'Conflicting Multi-Timeframe Bias: 1H Bullish vs 4H Bearish trend conflict without verified institutional reversal sweep + MSS.';
+    } else if (is5mBearFreightTrain) {
+      bullVeto = 'Sniper Entry Hold: Active 5M institutional selling impulse without lower rejection wick. Awaiting candle exhaustion / rejection.';
+    }
+
+    // Check SELL vetoes independently
+    let bearVeto: string | null = null;
+    if (newsGate.fundamentalBias === 'BULLISH') {
+      bearVeto = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Dovish/Weak USD (${newsGate.fundamentalSummary || 'Actual < Forecast'}). Counter-fundamental Gold shorts strictly blocked.`;
+    } else if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && !isBearishReversalContext) {
+      bearVeto = `Macro Conflict Veto: Tumbling USD (${intermarket.dxyChange1h}%) and softening yields provide macro tailwind for Gold. Shorting violates institutional Macro Draw on Liquidity.`;
+    } else if (htfTrend === 'BULLISH' && trend4h === 'BULLISH' && !isBearishReversalContext && !isBearObRetest && !isBearFvgRetest) {
+      bearVeto = 'Counter-trend SELL blocked: 1H and 4H structure are aligned BULLISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
+    } else if (bothRanging && !isRangeDeviationEligible) {
+      bearVeto = 'Directional Bias Neutral: 4H and 1H are in equilibrium range-bound chop without an active range-deviation or sweep reclaim.';
+    } else if (htfConflicted && trend4h === 'BULLISH' && !isBearishReversalContext && !isBearObRetest && !isBearFvgRetest && trend15m !== 'BEARISH' && !(localLocationPct >= 55 && (mss5mSell || bos15mSell))) {
+      bearVeto = 'Conflicting Multi-Timeframe Bias: 1H Bearish vs 4H Bullish trend conflict without verified institutional reversal sweep + MSS.';
+    } else if (is5mBullFreightTrain) {
+      bearVeto = 'Sniper Entry Hold: Active 5M institutional buying impulse without upper rejection wick. Awaiting candle exhaustion / rejection.';
+    }
+
+    const bullQualified = isBullViable && !bullVeto;
+    const bearQualified = isBearViable && !bearVeto;
+
+    if (bullQualified && !bearQualified) {
+      bias = 'BUY';
+    } else if (bearQualified && !bullQualified) {
+      bias = 'SELL';
+    } else if (bullQualified && bearQualified) {
+      if (bullEvidence > bearEvidence + 4) {
         bias = 'BUY';
+      } else if (bearEvidence > bullEvidence + 4) {
+        bias = 'SELL';
+      } else {
+        bias = trend4h === 'BULLISH' || htfTrend === 'BULLISH' ? 'BUY' : 'SELL';
       }
     } else {
       bias = 'NO_TRADE';
+      counterTrendBlockedReason = bullVeto || bearVeto || (
+        bullEvidence >= 48 ? 'BUY setup pending trigger confirmation' :
+        bearEvidence >= 48 ? 'SELL setup pending trigger confirmation' :
+        'Directional bias is neutral. Insufficient institutional edge to commit capital.'
+      );
     }
 
     const structuralDirection: 'BUY' | 'SELL' = bias !== 'NO_TRADE' ? bias : (bearEvidence > bullEvidence ? 'SELL' : 'BUY');
@@ -3201,7 +3251,7 @@ export class SignalsController implements OnModuleInit {
     let gate3Reason = 'Statistical setup matches market regime with directional edge.';
 
     if (bias === 'BUY') {
-      gate3Score = Math.min(96, Math.max(70, bullEvidence));
+      gate3Score = Math.min(86, Math.max(70, bullEvidence));
       if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && bullEvidence < 82) {
         gate3Passed = false;
         gate3Score = 30;
@@ -3214,7 +3264,7 @@ export class SignalsController implements OnModuleInit {
         gate3Reason = `Technical long vetoed by Fundamental News: ${newsGate.fundamentalSummary || 'Hawkish USD release'}`;
       }
     } else if (bias === 'SELL') {
-      gate3Score = Math.min(96, Math.max(70, bearEvidence));
+      gate3Score = Math.min(86, Math.max(70, bearEvidence));
       if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && bearEvidence < 82) {
         gate3Passed = false;
         gate3Score = 30;
@@ -3297,6 +3347,16 @@ export class SignalsController implements OnModuleInit {
             candidates.push({ source: 'Fair Value Gap (FVG) Upper Edge', price: fvg.top, weight: 2 });
           }
         });
+      activeBullishObs5m
+        .filter(ob => ob.midpoint <= maxBuyLevel && ob.midpoint >= minBuyLevel)
+        .forEach(ob => {
+          candidates.push({ source: '5M Tactical Bullish OB Midpoint', price: ob.midpoint, weight: 3 });
+        });
+      activeBullishFvgs5m
+        .filter(fvg => fvg.midpoint <= maxBuyLevel && fvg.midpoint >= minBuyLevel)
+        .forEach(fvg => {
+          candidates.push({ source: '5M Tactical Bullish FVG', price: fvg.midpoint, weight: 3 });
+        });
       if (sessionLevels.sessionVwap <= maxBuyLevel && sessionLevels.sessionVwap >= minBuyLevel) {
         candidates.push({ source: 'Session VWAP Support', price: sessionLevels.sessionVwap, weight: 3 });
       }
@@ -3367,6 +3427,16 @@ export class SignalsController implements OnModuleInit {
           if (fvg.bottom >= minSellLevel) {
             candidates.push({ source: 'Fair Value Gap (FVG) Lower Edge', price: fvg.bottom, weight: 2 });
           }
+        });
+      activeBearishObs5m
+        .filter(ob => ob.midpoint >= minSellLevel && ob.midpoint <= maxSellLevel)
+        .forEach(ob => {
+          candidates.push({ source: '5M Tactical Bearish OB Midpoint', price: ob.midpoint, weight: 3 });
+        });
+      activeBearishFvgs5m
+        .filter(fvg => fvg.midpoint >= minSellLevel && fvg.midpoint <= maxSellLevel)
+        .forEach(fvg => {
+          candidates.push({ source: '5M Tactical Bearish FVG', price: fvg.midpoint, weight: 3 });
         });
       if (sessionLevels.sessionVwap >= minSellLevel && sessionLevels.sessionVwap <= maxSellLevel) {
         candidates.push({ source: 'Session VWAP Resistance', price: sessionLevels.sessionVwap, weight: 3 });
@@ -3509,28 +3579,28 @@ export class SignalsController implements OnModuleInit {
       }
     }
 
-    // Strict Structural Invalidation (SL) Calculation with Anti-Wick-Hunt Protection:
-    // NEVER clamp Stop Loss tighter than the structural invalidation level + adaptiveBuffer!
+    // Precision Structural Invalidation (SL) Calculation (Small-Account Friendly & Order-Block Anchored):
+    // Anchors Stop Loss tightly behind the immediate Order Block / ICZ edge (25 to 65 pips / $2.50 to $6.50)
     // Incorporates spread cushion for SELL orders to prevent Ask-side stop runs
-    const spreadCushion = parseFloat(Math.max(0.35, microstructure.spread).toFixed(2));
-    const baseBuffer = parseFloat(Math.max(1.85, volMetrics.atr15m * 0.45).toFixed(2));
+    const spreadCushion = parseFloat(Math.max(0.25, microstructure.spread).toFixed(2));
+    const baseBuffer = parseFloat(Math.min(1.10, Math.max(0.55, volMetrics.atr15m * 0.18)).toFixed(2));
     const adaptiveBuffer = structuralDirection === 'SELL'
       ? parseFloat((baseBuffer + spreadCushion).toFixed(2))
       : baseBuffer;
-    const minStopDist = Math.max(3.50, parseFloat((1.15 * volMetrics.atr15m).toFixed(2)));
-    const maxStructuralRisk = Math.max(10.0, parseFloat((2.60 * volMetrics.atr15m).toFixed(2)));
+    const minStopDist = parseFloat(Math.min(4.20, Math.max(2.50, 0.50 * volMetrics.atr15m)).toFixed(2));
+    const maxStructuralRisk = parseFloat(Math.min(6.50, Math.max(4.50, 0.95 * volMetrics.atr15m)).toFixed(2));
     let exactStopLoss = 0;
     let structuralInvalidationLevel = 0;
 
     if (structuralDirection === 'BUY') {
       const nearestSwingLowBelow = swings15
-        .filter(s => s.type === 'LOW' && s.price < entryPrice && s.price >= entryPrice - 2.20 * volMetrics.atr15m)
+        .filter(s => s.type === 'LOW' && s.price < entryPrice && s.price >= entryPrice - 0.75 * volMetrics.atr15m)
         .map(s => s.price)
         .slice(-1)[0];
 
       const structuralLowsBelow: number[] = [];
       if (nearestSwingLowBelow !== undefined) structuralLowsBelow.push(nearestSwingLowBelow);
-      if (latestBullishSweep && latestBullishSweep.wickExtreme < entryPrice && latestBullishSweep.wickExtreme >= entryPrice - 2.20 * volMetrics.atr15m) {
+      if (latestBullishSweep && latestBullishSweep.wickExtreme < entryPrice && latestBullishSweep.wickExtreme >= entryPrice - 0.75 * volMetrics.atr15m) {
         structuralLowsBelow.push(latestBullishSweep.wickExtreme);
       }
       if (icz.zoneLow <= entryPrice) {
@@ -3539,20 +3609,20 @@ export class SignalsController implements OnModuleInit {
 
       structuralInvalidationLevel = structuralLowsBelow.length > 0
         ? Math.min(...structuralLowsBelow)
-        : parseFloat((Math.min(entryPrice, icz.zoneLow) - 0.85 * volMetrics.atr15m).toFixed(2));
+        : parseFloat((Math.min(entryPrice, icz.zoneLow) - 0.45 * volMetrics.atr15m).toFixed(2));
 
       const rawSl = Math.min(structuralInvalidationLevel, icz.zoneLow) - adaptiveBuffer;
-      const unClampedDist = Math.max(minStopDist, entryPrice - rawSl);
-      exactStopLoss = parseFloat((entryPrice - unClampedDist).toFixed(2));
+      const clampedDist = Math.min(maxStructuralRisk, Math.max(minStopDist, entryPrice - rawSl));
+      exactStopLoss = parseFloat((entryPrice - clampedDist).toFixed(2));
     } else {
       const nearestSwingHighAbove = swings15
-        .filter(s => s.type === 'HIGH' && s.price > entryPrice && s.price <= entryPrice + 2.20 * volMetrics.atr15m)
+        .filter(s => s.type === 'HIGH' && s.price > entryPrice && s.price <= entryPrice + 0.75 * volMetrics.atr15m)
         .map(s => s.price)
         .slice(-1)[0];
 
       const structuralHighsAbove: number[] = [];
       if (nearestSwingHighAbove !== undefined) structuralHighsAbove.push(nearestSwingHighAbove);
-      if (latestBearishSweep && latestBearishSweep.wickExtreme > entryPrice && latestBearishSweep.wickExtreme <= entryPrice + 2.20 * volMetrics.atr15m) {
+      if (latestBearishSweep && latestBearishSweep.wickExtreme > entryPrice && latestBearishSweep.wickExtreme <= entryPrice + 0.75 * volMetrics.atr15m) {
         structuralHighsAbove.push(latestBearishSweep.wickExtreme);
       }
       if (icz.zoneHigh >= entryPrice) {
@@ -3561,19 +3631,19 @@ export class SignalsController implements OnModuleInit {
 
       structuralInvalidationLevel = structuralHighsAbove.length > 0
         ? Math.max(...structuralHighsAbove)
-        : parseFloat((Math.max(entryPrice, icz.zoneHigh) + 0.85 * volMetrics.atr15m).toFixed(2));
+        : parseFloat((Math.max(entryPrice, icz.zoneHigh) + 0.45 * volMetrics.atr15m).toFixed(2));
 
       const rawSl = Math.max(structuralInvalidationLevel, icz.zoneHigh) + adaptiveBuffer;
-      const unClampedDist = Math.max(minStopDist, rawSl - entryPrice);
-      exactStopLoss = parseFloat((entryPrice + unClampedDist).toFixed(2));
+      const clampedDist = Math.min(maxStructuralRisk, Math.max(minStopDist, rawSl - entryPrice));
+      exactStopLoss = parseFloat((entryPrice + clampedDist).toFixed(2));
     }
 
     const directionalRisk = structuralDirection === 'BUY'
       ? parseFloat((entryPrice - exactStopLoss).toFixed(2))
       : parseFloat((exactStopLoss - entryPrice).toFixed(2));
 
-    const isGeometryValid = directionalRisk >= Math.max(2.0, 0.6 * volMetrics.atr15m);
-    const risk = isGeometryValid ? directionalRisk : Math.max(3.5, volMetrics.atr15m);
+    const isGeometryValid = directionalRisk >= Math.max(1.80, Math.min(3.50, 0.40 * volMetrics.atr15m));
+    const risk = isGeometryValid ? directionalRisk : Math.max(2.80, 0.55 * volMetrics.atr15m);
 
     // Multi-Timeframe Named Liquidity-Anchored Take Profit Targets (15M, 1H, 4H) with Front-Running Buffer
     let tp1Price = 0;
@@ -4015,7 +4085,13 @@ export class SignalsController implements OnModuleInit {
     if (!targetsRealistic && opposingObstacleReason) checklistReasons.push(opposingObstacleReason);
 
     const rrAcceptable = r1 >= 2.0 && r2 >= 3.0 && ev >= 0.25;
-    if (!rrAcceptable) checklistReasons.push(`R:R (TP1: 1:${r1}, TP2: 1:${r2}) below 1:2.0 / 1:3.0 institutional minimums or EV (+${ev}R) < +0.25R.`);
+    if (!rrAcceptable) {
+      if (r1 < 2.0 || r2 < 3.0) {
+        checklistReasons.push(`R:R (TP1: 1:${r1}, TP2: 1:${r2}) below institutional minimums (1:2.0 / 1:3.0).`);
+      } else {
+        checklistReasons.push(`Expected Value (+${ev}R) below institutional edge threshold (+0.25R).`);
+      }
+    }
 
     const newsRiskAcceptable = !newsGate.isBlackout && marketRegime !== 'NEWS_SHOCK';
     if (!newsRiskAcceptable) checklistReasons.push('Active economic news blackout or post-news shock.');
@@ -4027,7 +4103,7 @@ export class SignalsController implements OnModuleInit {
     if (!notDuplicate && duplicateReason) checklistReasons.push(duplicateReason);
 
     const orderTypeSupported = ['BUY_LIMIT', 'SELL_LIMIT', 'MARKET_BUY', 'MARKET_SELL'].includes(orderType);
-    if (!orderTypeSupported) checklistReasons.push(`Order type ${orderType} is non-executable.`);
+    if (!orderTypeSupported) checklistReasons.push('Order type is WAIT: Engine is actively monitoring for institutional confirmation.');
 
     const finalValidationAllPassed =
       dataIsFresh &&
@@ -4097,6 +4173,8 @@ export class SignalsController implements OnModuleInit {
     let finalDirection: 'BUY' | 'SELL' | 'WAIT' = 'WAIT';
     let grade: 'A+' | 'A' | 'B+' | 'WAIT' = 'WAIT';
     let compositeScore = Math.round((gate1.score * 0.20) + (gate2.score * 0.20) + (gate3.score * 0.20) + (gate4.score * 0.25) + (gate5.score * 0.15));
+    // Calibrate realistic institutional confidence (68% to 85% baseline; no unrealistic 96% fantasies)
+    compositeScore = Math.min(85, Math.max(68, compositeScore));
 
     const now = new Date();
     const sessionOpeningPlay = this.classifySessionOpeningPlay(
@@ -4113,21 +4191,21 @@ export class SignalsController implements OnModuleInit {
     if (allPassed && orderType !== 'WAIT' && bias !== 'NO_TRADE') {
       finalDirection = bias;
       if (sessionOpeningPlay.confidenceBoost > 0) {
-        compositeScore = Math.min(98, compositeScore + sessionOpeningPlay.confidenceBoost);
+        compositeScore = Math.min(88, compositeScore + sessionOpeningPlay.confidenceBoost);
       }
-      if (compositeScore >= 85 && ev >= 0.70) grade = 'A+';
-      else if (compositeScore >= 75 && ev >= 0.45) grade = 'A';
+      if (compositeScore >= 82 && ev >= 0.65) grade = 'A+';
+      else if (compositeScore >= 74 && ev >= 0.40) grade = 'A';
       else grade = 'B+';
     } else {
       orderType = 'WAIT';
     }
 
-    // Position Sizing
-    const baseRiskUsd = 1000;
+    // Position Sizing (Small-Account Friendly Default: $10 base risk budget / 0.01 - 0.03 lots)
+    const baseRiskUsd = 10;
     const confidenceMultiplier = grade === 'A+' ? 1.0 : grade === 'A' ? 0.85 : 0.65;
-    const finalRiskUsd = baseRiskUsd * volMetrics.riskMultiplier * confidenceMultiplier;
-    const recommendedUnitsOz = parseFloat((finalRiskUsd / risk).toFixed(1));
-    const recommendedLots = parseFloat((recommendedUnitsOz / 100).toFixed(2));
+    const finalRiskUsd = Math.max(3.5, baseRiskUsd * volMetrics.riskMultiplier * confidenceMultiplier);
+    const recommendedUnitsOz = parseFloat(Math.max(1.0, finalRiskUsd / risk).toFixed(1));
+    const recommendedLots = parseFloat(Math.max(0.01, recommendedUnitsOz / 100).toFixed(2));
 
     const tradePath: TradePathModel = {
       tp1Price,
@@ -4792,22 +4870,22 @@ Respond strictly with valid JSON:
       return updated;
     }
 
-    // 4. Database Safety Barrier: 15-minute idempotency check for twin signals
+    // 4. Database Safety Barrier: 30-minute idempotency check for twin signals
     const recentSignals = await this.prisma.signal.findMany({
       where: {
         symbol: 'GOLD',
         direction: setup.direction,
-        createdAt: { gte: new Date(now.getTime() - 15 * 60 * 1000) }
+        createdAt: { gte: new Date(now.getTime() - 30 * 60 * 1000) }
       },
       orderBy: { createdAt: 'desc' },
-      take: 5
+      take: 10
     });
     const atr15m = Math.max(1, setup.volatilityMetrics?.atr15m || 5);
     for (const recent of recentSignals) {
       const entryDiff = Math.abs(Number(recent.entryPrice) - setup.entryPrice);
       const slDiff = Math.abs(Number(recent.stopLoss) - setup.stopLoss);
-      if (entryDiff <= 0.5 * atr15m || slDiff <= 0.5 * atr15m) {
-        this.logger.log(`[PUBLISHER] Suppression: Twin record already created within 15m (${recent.id}, diff: $${entryDiff.toFixed(2)}). Skipping duplicate insert.`);
+      if (entryDiff <= 0.85 * atr15m || slDiff <= 0.85 * atr15m) {
+        this.logger.log(`[PUBLISHER] Suppression: Twin record already created within 30m (${recent.id}, diff: $${entryDiff.toFixed(2)}). Skipping duplicate insert.`);
         return recent;
       }
     }
@@ -4990,27 +5068,27 @@ Respond strictly with valid JSON:
 
   // Atomic Single-Flight Execution Mutex for Gold Scanning & Publishing
   async runAtomicGoldScan(options?: { forceFresh?: boolean }): Promise<any> {
-    if (this.scanLockPromise) {
+    if (SignalsController.scanLockPromise) {
       if (options?.forceFresh) {
         this.logger.log('[runAtomicGoldScan] forceFresh requested while scan in-flight. Waiting for current scan to complete before fresh execution.');
         try {
-          await this.scanLockPromise;
+          await SignalsController.scanLockPromise;
         } catch (_) {}
       } else {
         this.logger.log('[runAtomicGoldScan] Concurrent scan coalesced into in-flight execution.');
-        return this.scanLockPromise;
+        return SignalsController.scanLockPromise;
       }
     }
 
-    this.scanLockPromise = (async () => {
+    SignalsController.scanLockPromise = (async () => {
       try {
         return await this.executeGoldScan(options);
       } finally {
-        this.scanLockPromise = null;
+        SignalsController.scanLockPromise = null;
       }
     })();
 
-    return this.scanLockPromise;
+    return SignalsController.scanLockPromise;
   }
 
   // Internal execution of gold scan & evaluation
@@ -7028,7 +7106,7 @@ Respond strictly with valid JSON:
 @Module({
   imports: [SubscriptionModule, AutomationModule, NotificationsModule],
   controllers: [SignalsController],
-  providers: [SignalsController],
-  exports: [SignalsController],
+  providers: [],
+  exports: [],
 })
 export class SignalsModule {}
