@@ -57,6 +57,10 @@ export interface AISignal {
   centralBankBuying?: Record<string, any>;
   geopoliticalRisk?: Record<string, any>;
   signalGrade?: string;
+  confluenceScore?: number;
+  winProbability?: number;
+  orderType?: 'BUY_LIMIT' | 'SELL_LIMIT' | 'MARKET_BUY' | 'MARKET_SELL' | 'WAIT';
+  lifecycleState?: string;
   evidence?: Record<string, any>;
 }
 

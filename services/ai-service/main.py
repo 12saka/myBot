@@ -167,6 +167,60 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     portfolioContext: Optional[PortfolioContext] = None
 
+class EntryOptionPayload(BaseModel):
+    method: str
+    entry_price: float
+    stop_loss: float
+    take_profit_1: float
+    take_profit_2: float
+    risk_distance: float = 0.0
+    rr_ratio: float = 0.0
+
+class SmcFeatureContext(BaseModel):
+    symbol: str = "XAUUSD"
+    direction: str = "WAIT"
+    ob_grade: str = "GRADE_B"
+    caused_bos: bool = True
+    created_fvg: bool = True
+    prior_sweep_confirmed: bool = True
+    mitigation_pct: float = 0.0
+    ltf_sweep_confirmed: bool = False
+    ltf_fvg_created: bool = False
+    atr_15m: float = 3.5
+    spread: float = 0.20
+    market_regime: Optional[str] = "NORMAL"
+    dxy_change_1h: Optional[float] = 0.0
+    us10y_change_1h: Optional[float] = 0.0
+
+class SmcProbabilityRequest(BaseModel):
+    context: SmcFeatureContext
+    candidate_options: List[EntryOptionPayload]
+
+class EvaluatedEntryOption(BaseModel):
+    method: str
+    entry_price: float
+    stop_loss: float
+    take_profit_1: float
+    take_profit_2: float
+    sl_pips: float
+    rr_ratio: float
+    p_zone_holds: float
+    p_tp1_before_sl: float
+    expected_mfe_r: float
+    expected_mae_r: float
+    expected_holding_minutes: int
+    net_ev_r: float
+    recommendation_score: float
+
+class SmcProbabilityResponse(BaseModel):
+    symbol: str
+    direction: str
+    selected_method: str
+    selected_entry: Optional[EvaluatedEntryOption] = None
+    all_options: List[EvaluatedEntryOption] = []
+    ai_decision_rationale: str
+    timestamp: str
+
 # --- Endpoints ---
 
 @app.get("/")
@@ -482,6 +536,169 @@ Be concise, mathematically sound, professional, and directly address the user's 
         "reply": reply,
         "timestamp": datetime.utcnow().isoformat()
     }
+
+@app.post("/ai/smc/entry-probability", response_model=SmcProbabilityResponse)
+async def evaluate_smc_entry_probabilities(
+    req: SmcProbabilityRequest,
+    api_key: str = Depends(verify_api_key),
+):
+    ctx = req.context
+    symbol = ctx.symbol.upper()
+    direction = ctx.direction.upper()
+
+    if direction not in ("BUY", "SELL") or not req.candidate_options:
+        return SmcProbabilityResponse(
+            symbol=symbol,
+            direction="WAIT",
+            selected_method="NONE",
+            selected_entry=None,
+            all_options=[],
+            ai_decision_rationale="No valid direction or candidate entry options provided.",
+            timestamp=datetime.utcnow().isoformat()
+        )
+
+    # 1. Base probability of zone holding based on institutional causal structure
+    base_prob = 0.58
+    if ctx.ob_grade == "GRADE_A_PLUS":
+        base_prob = 0.74
+    elif ctx.ob_grade == "GRADE_A":
+        base_prob = 0.67
+    elif ctx.ob_grade == "GRADE_B":
+        base_prob = 0.58
+
+    if ctx.prior_sweep_confirmed:
+        base_prob += 0.04
+    if ctx.caused_bos:
+        base_prob += 0.03
+    if ctx.created_fvg:
+        base_prob += 0.03
+    if ctx.mitigation_pct <= 0.10:
+        base_prob += 0.03
+    elif ctx.mitigation_pct > 0.50:
+        base_prob -= 0.06
+
+    # Macro & Yields alignment impact
+    dxy_chg = ctx.dxy_change_1h or 0.0
+    us10y_chg = ctx.us10y_change_1h or 0.0
+    if direction == "BUY":
+        if dxy_chg < -0.05 and us10y_chg < -0.05:
+            base_prob += 0.04
+        elif dxy_chg > 0.10 or us10y_chg > 0.10:
+            base_prob -= 0.06
+    elif direction == "SELL":
+        if dxy_chg > 0.05 and us10y_chg > 0.05:
+            base_prob += 0.04
+        elif dxy_chg < -0.10 or us10y_chg < -0.10:
+            base_prob -= 0.06
+
+    p_zone_holds = round(max(0.42, min(0.82, base_prob)), 3)
+
+    evaluated_options: List[EvaluatedEntryOption] = []
+
+    for opt in req.candidate_options:
+        risk = abs(opt.entry_price - opt.stop_loss)
+        sl_pips = round(risk * 10, 1)
+        reward1 = abs(opt.take_profit_1 - opt.entry_price)
+        rr_ratio = round(reward1 / risk, 2) if risk > 0 else 0.0
+
+        # Structural direction sanity check
+        is_geom_valid = False
+        if direction == "BUY" and opt.entry_price > opt.stop_loss and opt.take_profit_1 > opt.entry_price:
+            is_geom_valid = True
+        elif direction == "SELL" and opt.entry_price < opt.stop_loss and opt.take_profit_1 < opt.entry_price:
+            is_geom_valid = True
+
+        if not is_geom_valid:
+            continue
+
+        method = opt.method.upper()
+        if method == "LTF_SNIPER_FVG":
+            if ctx.ltf_sweep_confirmed and ctx.ltf_fvg_created:
+                p_win = round(min(0.79, p_zone_holds * 1.07), 3)
+                expected_mae_r = -0.32
+                expected_mfe_r = round(max(2.4, rr_ratio * 0.95), 2)
+                expected_holding = 65
+            else:
+                p_win = round(p_zone_holds * 0.88, 3)
+                expected_mae_r = -0.52
+                expected_mfe_r = round(max(2.0, rr_ratio * 0.88), 2)
+                expected_holding = 90
+        elif method == "FVG_CE_50":
+            p_win = round(p_zone_holds * 0.96, 3)
+            expected_mae_r = -0.48
+            expected_mfe_r = round(max(2.0, rr_ratio * 0.90), 2)
+            expected_holding = 135
+        elif method == "OB_PROXIMAL":
+            p_win = round(p_zone_holds * 0.90, 3)
+            expected_mae_r = -0.72
+            expected_mfe_r = round(max(1.8, rr_ratio * 0.85), 2)
+            expected_holding = 180
+        else:
+            p_win = round(p_zone_holds * 0.85, 3)
+            expected_mae_r = -0.65
+            expected_mfe_r = round(max(1.5, rr_ratio * 0.80), 2)
+            expected_holding = 120
+
+        # Mathematical Net Expected Value: EV = P(win) * R - (1 - P(win)) * 1.0
+        net_ev = (p_win * rr_ratio) - ((1.0 - p_win) * 1.0)
+
+        # Small account protection calibration: penalize wide SL (> 65 pips), reward sniper SL (<= 45 pips)
+        if sl_pips > 65.0:
+            net_ev -= 0.35
+        elif sl_pips <= 45.0:
+            net_ev += 0.15
+
+        rec_score = round(max(0.0, min(100.0, (net_ev + 1.2) * 35.0)), 1)
+
+        evaluated_options.append(EvaluatedEntryOption(
+            method=method,
+            entry_price=opt.entry_price,
+            stop_loss=opt.stop_loss,
+            take_profit_1=opt.take_profit_1,
+            take_profit_2=opt.take_profit_2,
+            sl_pips=sl_pips,
+            rr_ratio=rr_ratio,
+            p_zone_holds=p_zone_holds,
+            p_tp1_before_sl=p_win,
+            expected_mfe_r=expected_mfe_r,
+            expected_mae_r=expected_mae_r,
+            expected_holding_minutes=expected_holding,
+            net_ev_r=round(net_ev, 3),
+            recommendation_score=rec_score
+        ))
+
+    if not evaluated_options:
+        return SmcProbabilityResponse(
+            symbol=symbol,
+            direction="WAIT",
+            selected_method="NONE",
+            selected_entry=None,
+            all_options=[],
+            ai_decision_rationale="No geometrically valid entry options survived institutional risk inspection.",
+            timestamp=datetime.utcnow().isoformat()
+        )
+
+    # Sort options by Net Expected Value descending
+    evaluated_options.sort(key=lambda o: o.net_ev_r, reverse=True)
+    best_opt = evaluated_options[0]
+
+    # Institutional narrative synthesis
+    rationale = (
+        f"Selected {best_opt.method} ({direction} @ ${best_opt.entry_price:.2f}) with net EV of +{best_opt.net_ev_r:.2f}R. "
+        f"Zone hold probability: {int(best_opt.p_zone_holds*100)}%, P(TP1): {int(best_opt.p_tp1_before_sl*100)}%, "
+        f"tight small-account SL of {best_opt.sl_pips:.1f} pips (${best_opt.stop_loss:.2f}) vs TP1 ${best_opt.take_profit_1:.2f} (R:R 1:{best_opt.rr_ratio:.1f}). "
+        f"Expected MAE: {best_opt.expected_mae_r:.2f}R, Expected MFE: +{best_opt.expected_mfe_r:.2f}R."
+    )
+
+    return SmcProbabilityResponse(
+        symbol=symbol,
+        direction=direction,
+        selected_method=best_opt.method,
+        selected_entry=best_opt,
+        all_options=evaluated_options,
+        ai_decision_rationale=rationale,
+        timestamp=datetime.utcnow().isoformat()
+    )
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))

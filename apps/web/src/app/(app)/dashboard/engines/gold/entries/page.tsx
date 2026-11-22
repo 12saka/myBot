@@ -22,7 +22,12 @@ import type { GoldEntryIntelligence, GoldGateAudit, FinalValidationChecklist } f
 interface EntriesResponse {
   symbol: string;
   currentPrice: number;
-  entryPlan: GoldEntryIntelligence;
+  entryPlan: GoldEntryIntelligence & {
+    selectedEntryMethod?: string;
+    evaluatedSmcOptions?: any[];
+  };
+  evaluatedSmcOptions?: any[];
+  selectedEntryMethod?: string;
   gateAudit: GoldGateAudit[];
   marketRegime: string;
   finalValidationChecklist?: FinalValidationChecklist;
@@ -91,8 +96,28 @@ export default function GoldEntriesPage() {
       </div>
 
       {/* Strategy Selector Status */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Strategy 1: Sweep + CHoCH Reversal */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Strategy 1: LTF Sniper FVG */}
+        <div className={cn(
+          "p-5 rounded-2xl border shadow-xl transition-all",
+          ((plan?.selectedStrategy as string) === 'LTF_SNIPER_FVG' || data?.selectedEntryMethod === 'LTF_SNIPER_FVG')
+            ? "bg-amber-500/10 border-amber-500/40 text-amber-200"
+            : "bg-[#0B0F17] border-white/5 text-slate-400"
+        )}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold uppercase">LTF Sniper FVG (M15→M5→M1)</span>
+            {((plan?.selectedStrategy as string) === 'LTF_SNIPER_FVG' || data?.selectedEntryMethod === 'LTF_SNIPER_FVG') && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                ACTIVE
+              </span>
+            )}
+          </div>
+          <p className="text-xs leading-relaxed opacity-80">
+            Waits for price inside M15 zone, requires M5 rejection sweep + M1 CHoCH displacement & FVG with 25–50 pip sniper SL.
+          </p>
+        </div>
+
+        {/* Strategy 2: Sweep + CHoCH Reversal */}
         <div className={cn(
           "p-5 rounded-2xl border shadow-xl transition-all",
           plan?.selectedStrategy === 'SWEEP_CHOCH_REVERSAL'
@@ -112,7 +137,7 @@ export default function GoldEntriesPage() {
           </p>
         </div>
 
-        {/* Strategy 2: BOS Pullback Continuation */}
+        {/* Strategy 3: BOS Pullback Continuation */}
         <div className={cn(
           "p-5 rounded-2xl border shadow-xl transition-all",
           plan?.selectedStrategy === 'BOS_PULLBACK_CONTINUATION'
@@ -128,11 +153,11 @@ export default function GoldEntriesPage() {
             )}
           </div>
           <p className="text-xs leading-relaxed opacity-80">
-            Enters retests of unmitigated 15M Order Blocks following confirmed 1H structural breaks.
+            Enters retests of unmitigated 15M Order Blocks & FVG 50% CE following confirmed 1H structural breaks.
           </p>
         </div>
 
-        {/* Strategy 3: Range Deviation / Reclaim */}
+        {/* Strategy 4: Range Deviation / Reclaim */}
         <div className={cn(
           "p-5 rounded-2xl border shadow-xl transition-all",
           plan?.selectedStrategy === 'RANGE_DEVIATION_RECLAIM'
@@ -152,6 +177,65 @@ export default function GoldEntriesPage() {
           </p>
         </div>
       </div>
+
+      {/* Phase 4: Modular SMC Entry Probability & EV Matrix */}
+      {((data?.evaluatedSmcOptions && data.evaluatedSmcOptions.length > 0) || (plan?.evaluatedSmcOptions && plan.evaluatedSmcOptions.length > 0)) && (
+        <div className="rounded-2xl bg-[#0B0F17] border border-amber-500/25 p-6 shadow-2xl space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-3">
+            <div>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                <Layers size={18} className="text-amber-400" />
+                <span>Modular SMC Entry Methodology Evaluation (Net Risk-Adjusted EV)</span>
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Live quantitative evaluation comparing LTF Sniper FVG, FVG 50% Consequent Encroachment, and Order Block Proximal Boundary.
+              </p>
+            </div>
+            <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-[11px] font-mono font-bold text-amber-300">
+              Selected: {data?.selectedEntryMethod || plan?.selectedEntryMethod || 'FVG_CE_50'}
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-black/40 text-[10px] font-bold text-slate-400 uppercase border-b border-white/5">
+                <tr>
+                  <th className="py-2.5 px-3">Method</th>
+                  <th className="py-2.5 px-3">Entry</th>
+                  <th className="py-2.5 px-3">Stop Loss (Pips)</th>
+                  <th className="py-2.5 px-3">R:R (TP1)</th>
+                  <th className="py-2.5 px-3">P(Zone Holds)</th>
+                  <th className="py-2.5 px-3">P(TP1)</th>
+                  <th className="py-2.5 px-3">Exp. MFE / MAE</th>
+                  <th className="py-2.5 px-3 text-right">Net EV</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 font-mono">
+                {(data?.evaluatedSmcOptions || plan?.evaluatedSmcOptions || []).map((opt: any, i: number) => {
+                  const isSel = opt.method === (data?.selectedEntryMethod || plan?.selectedEntryMethod);
+                  return (
+                    <tr key={i} className={cn("transition-colors", isSel ? "bg-amber-500/10" : "hover:bg-white/5")}>
+                      <td className="py-3 px-3 font-bold text-white flex items-center gap-2">
+                        <span>{opt.method}</span>
+                        {isSel && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">OPTIMAL</span>}
+                      </td>
+                      <td className="py-3 px-3 text-slate-200">${Number(opt.entryPrice || 0).toFixed(2)}</td>
+                      <td className="py-3 px-3 text-rose-300">${Number(opt.stopLoss || 0).toFixed(2)} ({opt.slPips}p)</td>
+                      <td className="py-3 px-3 text-amber-300">1:{opt.rrRatio}</td>
+                      <td className="py-3 px-3 text-slate-300">{Math.round((opt.pZoneHolds || 0) * 100)}%</td>
+                      <td className="py-3 px-3 text-emerald-400 font-bold">{Math.round((opt.pTp1BeforeSl || 0) * 100)}%</td>
+                      <td className="py-3 px-3 text-slate-300">+{opt.expectedMfeR}R / {opt.expectedMaeR}R</td>
+                      <td className="py-3 px-3 text-right font-black text-emerald-400">
+                        {opt.netEvR >= 0 ? `+${opt.netEvR}R` : `${opt.netEvR}R`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Primary Entry Zone & Orders Setup */}
       <div className="rounded-2xl bg-[#0B0F17] border border-amber-500/25 p-6 shadow-2xl">

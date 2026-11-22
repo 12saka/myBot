@@ -145,7 +145,7 @@ export default function DashboardPage() {
     }
 
     try {
-      const rawSignals = await apiFetch<any[]>('/api/v2/signals?forceFresh=true');
+      const rawSignals = await apiFetch<any[]>('/api/v2/signals');
       if (Array.isArray(rawSignals)) {
         setSignals(rawSignals.map(mapSignal));
       }
@@ -193,6 +193,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboardData();
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 25000);
+    return () => clearInterval(interval);
   }, []);
 
   const killzone = getLiveKillzoneStatus();
@@ -470,7 +474,7 @@ export default function DashboardPage() {
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="font-display font-black text-white text-base tracking-tight">{sig.symbol}</span>
                         <span
                           className={cn(
@@ -482,8 +486,18 @@ export default function DashboardPage() {
                               : 'bg-slate-800 text-slate-300 border-slate-700'
                           )}
                         >
-                          {sig.direction === 'BUY' ? 'BULLISH' : sig.direction === 'SELL' ? 'BEARISH' : 'WAIT'}
+                          {sig.orderType ? sig.orderType.replace(/_/g, ' ') : (sig.direction === 'BUY' ? 'BULLISH' : 'BEARISH')}
                         </span>
+                        {sig.lifecycleState && (
+                          <span className={cn(
+                            "text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase",
+                            sig.lifecycleState === 'POSITION_OPEN' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
+                            sig.lifecycleState === 'WAITING_FOR_ENTRY' ? "bg-amber-500/10 text-amber-300 border-amber-500/20" :
+                            "bg-slate-800 text-slate-400 border-slate-700"
+                          )}>
+                            {sig.lifecycleState.replace(/_/g, ' ')}
+                          </span>
+                        )}
                       </div>
                       <span className="text-[11px] font-mono text-slate-400">{sig.strategy || 'SMC_INSTITUTIONAL'}</span>
                     </div>

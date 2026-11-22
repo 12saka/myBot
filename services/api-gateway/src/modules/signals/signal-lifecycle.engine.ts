@@ -71,6 +71,8 @@ export interface LifecycleInput {
   /** fraction of distance to TP1 that retires an unfilled limit order */
   runawayFraction?: number;
   tp1PartialFraction?: number;
+  runningMfeR?: number;
+  runningMaeR?: number;
 }
 
 export interface LifecycleResult {
@@ -88,6 +90,10 @@ export interface LifecycleResult {
   realizedR: number | null;
   /** open time of the next bar that still needs processing */
   nextProcessFromTime: number;
+  mfeR: number | null;
+  maeR: number | null;
+  holdingDurationMinutes: number;
+  zoneHeld: boolean;
 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
@@ -107,6 +113,8 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
   let currentStop = input.currentStopLoss;
   let bankedR = input.bankedR || 0;
   let remaining = input.remainingFraction > 0 ? input.remainingFraction : 1;
+  let runningMfeR = input.runningMfeR ?? 0;
+  let runningMaeR = input.runningMaeR ?? 0;
   const events: LifecycleEngineEvent[] = [];
   let nextFrom = input.processFromTime;
 
@@ -124,6 +132,8 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
     realizedR: number | null
   ): LifecycleResult => {
     events.push({ type, time, price: round2(price) });
+    const holdingDurationMinutes = filledAt ? Math.max(0, Math.round((time - filledAt) / 60000)) : 0;
+    const zoneHeld = outcome === 'TP2_HIT' || outcome === 'BREAKEVEN' || (outcome === 'TIME_EXIT' && (realizedR ?? 0) > 0);
     return {
       state: 'CLOSED',
       events,
@@ -137,7 +147,11 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
       closeReason,
       exitPrice: round2(price),
       realizedR: realizedR === null ? null : round2(realizedR),
-      nextProcessFromTime: time + input.barMs
+      nextProcessFromTime: time + input.barMs,
+      mfeR: round2(Math.max(0, runningMfeR)),
+      maeR: round2(Math.min(0, runningMaeR)),
+      holdingDurationMinutes,
+      zoneHeld
     };
   };
 
@@ -193,6 +207,16 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
 
     // ---------------- Open position ----------------
     if (state === 'POSITION_OPEN' || state === 'PARTIALLY_FILLED') {
+      // Bar-by-bar MFE and MAE excursion tracking against planned risk
+      if (filledPrice && plannedRisk > 0) {
+        const favDist = dir === 1 ? (bar.high - filledPrice) : (filledPrice - askLow);
+        const advDist = dir === 1 ? (bar.low - filledPrice) : (filledPrice - askHigh);
+        const barMfeR = favDist / plannedRisk;
+        const barMaeR = advDist / plannedRisk;
+        runningMfeR = Math.max(runningMfeR, barMfeR);
+        runningMaeR = Math.min(runningMaeR, barMaeR);
+      }
+
       if (filledAt && input.maxHoldMs > 0 && bar.time >= filledAt + input.maxHoldMs && !filledThisBar) {
         const exit = dir === 1 ? bar.open : askOpen;
         return finish('TIME_EXIT', bar.time, exit, 'TIME_EXIT', 'MAX_HOLD_TIME_EXIT', bankedR + remaining * rOf(exit));
@@ -249,6 +273,9 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
     }
   }
 
+  const holdingDurationMinutes = filledAt ? Math.max(0, Math.round(((sorted[sorted.length - 1]?.time ?? Date.now()) - filledAt) / 60000)) : 0;
+  const zoneHeld = runningMaeR > -1.0;
+
   return {
     state,
     events,
@@ -262,7 +289,11 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
     closeReason: null,
     exitPrice: null,
     realizedR: null,
-    nextProcessFromTime: nextFrom
+    nextProcessFromTime: nextFrom,
+    mfeR: round2(Math.max(0, runningMfeR)),
+    maeR: round2(Math.min(0, runningMaeR)),
+    holdingDurationMinutes,
+    zoneHeld
   };
 }
 

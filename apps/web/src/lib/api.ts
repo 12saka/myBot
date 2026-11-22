@@ -142,52 +142,62 @@ export function mapSignal(item: any): AISignal {
   const indicators = Array.isArray(reasoning.indicators) ? reasoning.indicators : [];
   const direction = item.direction || 'WAIT';
   const status = reasoning.status || item.status || (direction === 'WAIT' ? 'WAIT' : 'ACTIVE');
+  const confluenceScore = Number(item.confluenceScore ?? reasoning.confluenceScore ?? reasoning.opportunityScore ?? 0);
+  const winProbability = Number(item.winProbability ?? reasoning.winProbability ?? 0);
+  const primaryScore = confluenceScore > 0 ? confluenceScore : (winProbability > 0 ? winProbability : Number(item.confidence ?? 0));
   const confidence = direction === 'WAIT'
     ? 0
-    : Math.min(95, Math.max(1, Number(item.winProbability ?? item.confidence ?? 0)));
+    : Math.min(95, Math.max(1, primaryScore));
 
   const rawExplanation = reasoning.explanation || reasoning.analysis || reasoning.idea || item.reasoning || '';
   const isBuy = direction === 'BUY';
   const sym = normalizeMarketSymbol(item.symbol || 'BTC/USD');
 
-  const defaultMacro = isBuy
-    ? `DXY index softening below 104.20 key pivot; Federal Reserve dovish liquidity bias & institutional real yield vector supporting long positioning in ${sym}.`
-    : `DXY momentum surging above 104.80 resistance; Federal Reserve hawkish rate duration risk and treasury yield pressure weighing on ${sym}.`;
+  const intermarket = reasoning.intermarket || {};
+  const liveMacroSummary = intermarket.rationale
+    ? `${intermarket.rationale}${intermarket.dxy ? ` | DXY: ${Number(intermarket.dxy).toFixed(2)} (${intermarket.dxyChange1h >= 0 ? '+' : ''}${intermarket.dxyChange1h ?? 0}%)` : ''}${intermarket.us10y ? ` | US10Y: ${Number(intermarket.us10y).toFixed(2)}%` : ''}`
+    : (reasoning.fiveGates?.gate2_market?.reason || 'Live intermarket telemetry active');
 
-  const defaultStructure = isBuy
-    ? `Asian session liquidity sweep completed below previous daily low. 15m bullish Order Block & Fair Value Gap (FVG) retest validated with institutional volume expansion.`
-    : `London session buy-side liquidity swept above previous daily high. 15m bearish Order Block & Imbalance FVG fill confirmed with high-volume rejection.`;
-
-  const defaultTvIdea = isBuy
-    ? `PRO Institutional Setup: 7-Step Confluence BUY on ${sym}. Entry inside 15m Bullish FVG & Discount OTE Zone. Target 1 at 1.5x ATR, Target 2 at Liquidity Pool.`
-    : `PRO Institutional Setup: 7-Step Confluence SELL on ${sym}. Entry inside 15m Bearish FVG & Premium OTE Zone. Target 1 at 1.5x ATR, Target 2 at Sell-Side Liquidity.`;
-
-  const macroContext = reasoning.macro_context || reasoning.macroContext || defaultMacro;
-  const marketStructure = reasoning.market_structure_analysis || reasoning.marketStructureAnalysis || defaultStructure;
-  const indicatorVerdicts = reasoning.indicator_verdicts || reasoning.indicatorVerdicts || {
-    EMA_20_50: isBuy ? 'BULLISH ALIGNED' : 'BEARISH ALIGNED',
-    RSI_14: isBuy ? 'BULLISH DIVERGENCE (42.5)' : 'BEARISH DIVERGENCE (68.1)',
-    MACD: isBuy ? 'BULLISH CROSSOVER' : 'BEARISH CROSSOVER',
-    VWAP: isBuy ? 'ABOVE INSTITUTIONAL VWAP' : 'BELOW INSTITUTIONAL VWAP',
-    LIQUIDITY_SWEEP: 'CONFIRMED'
-  };
-  const tradingviewIdea = reasoning.tradingview_idea || reasoning.tradingviewIdea || defaultTvIdea;
-  const categoryScores = reasoning.category_scores || reasoning.categoryScores || {
-    market_structure: reasoning.marketBiasScore || confidence || 70,
-    order_flow: reasoning.entryQualityScore || confidence || 70,
-    volume_profile: reasoning.volumeProfile?.poc ? 80 : (confidence || 70),
-    macro_backdrop: reasoning.fiveGates?.gate2_market?.score || 75,
-    sentiment: reasoning.opportunityScore || confidence || 70
-  };
-
-  const strategyName = getAssetStrategyName(item.symbol || 'BTC/USD', item.strategyKey || reasoning.strategy_key);
-  const explanation = rawExplanation || `${direction} signal on ${sym} triggered by institutional ${strategyName} model. Confluence score ${confidence}%.`;
+  const liveStructureSummary =
+    reasoning.fiveGates?.gate3_setup?.reason ||
+    rawExplanation ||
+    (indicators.length > 0 ? indicators.join(' • ') : 'Multi-timeframe SMC institutional zone evaluation');
 
   const entry = Number(item.entryPrice ?? item.entry ?? 0);
   const stopLoss = Number(item.stopLoss ?? item.stop_loss ?? 0);
   const tp1 = Number(item.takeProfit1 ?? item.tp1 ?? item.take_profit_1 ?? 0);
   const tp2 = Number(item.takeProfit2 ?? item.tp2 ?? item.take_profit_2 ?? 0);
-  const tp3 = Number(item.takeProfit3 ?? item.tp3 ?? reasoning.take_profit_3 ?? 0);
+  const tp3 = Number(item.takeProfit3 ?? item.tp3 ?? reasoning.takeProfit3 ?? reasoning.take_profit_3 ?? reasoning.tradePath?.tp3Price ?? 0);
+
+  const liveTvIdea = rawExplanation || (
+    direction === 'WAIT'
+      ? 'Engine monitoring Institutional Confluence Zone for lower-timeframe confirmation.'
+      : `Institutional ${direction} (${reasoning.entryMethod || reasoning.strategy || 'SMC'}) @ $${entry.toFixed(2)} | SL: $${stopLoss.toFixed(2)} | TP1: $${tp1.toFixed(2)} | TP2: $${tp2.toFixed(2)}`
+  );
+
+  const macroContext = reasoning.macro_context || reasoning.macroContext || liveMacroSummary;
+  const marketStructure = reasoning.market_structure_analysis || reasoning.marketStructureAnalysis || liveStructureSummary;
+  const indicatorVerdicts = reasoning.indicator_verdicts || reasoning.indicatorVerdicts || {
+    MARKET_REGIME: reasoning.marketRegime || 'NORMAL',
+    ENTRY_METHOD: reasoning.entryMethod || reasoning.strategy || 'SMC_ICZ',
+    OB_GRADE: reasoning.obGrade || reasoning.signalGrade || 'INSTITUTIONAL',
+    MACRO_FLOW: intermarket.macroAlignment || 'NEUTRAL',
+    SWEEP_STATUS: reasoning.priorSweepConfirmed ? 'CONFIRMED' : 'MONITORED'
+  };
+  const tradingviewIdea = reasoning.tradingview_idea || reasoning.tradingviewIdea || liveTvIdea;
+  const categoryScores = reasoning.category_scores || reasoning.categoryScores || {
+    market_structure: reasoning.marketBiasScore || confidence || 0,
+    order_flow: reasoning.entryQualityScore || confidence || 0,
+    volume_profile: reasoning.volumeProfile?.poc ? (reasoning.entryQualityScore || confidence) : (confidence || 0),
+    macro_backdrop: reasoning.fiveGates?.gate2_market?.score || confidence || 0,
+    sentiment: reasoning.opportunityScore || confidence || 0
+  };
+
+  const explicitStrategy = reasoning.strategy || reasoning.entryMethod || item.strategyKey || reasoning.strategy_key;
+  const strategyName = explicitStrategy && !['commodity-gold-yields', 'NONE'].includes(explicitStrategy)
+    ? explicitStrategy
+    : getAssetStrategyName(item.symbol || 'GOLD', explicitStrategy);
+  const explanation = rawExplanation || liveStructureSummary;
 
   const rrRatio = (direction === 'WAIT' || stopLoss === 0 || tp1 === 0) 
     ? 'N/A' 
@@ -206,20 +216,20 @@ export function mapSignal(item: any): AISignal {
     type: getSignalType(item.symbol || 'BTC/USD'),
     direction,
     confidence,
+    confluenceScore: confluenceScore || confidence,
+    winProbability: winProbability || confidence,
+    orderType: reasoning.orderType || (direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT'),
+    lifecycleState: reasoning.lifecycleState || status,
     entry,
     stopLoss,
     tp1,
     tp2,
     tp3: tp3 > 0 ? tp3 : undefined,
     riskReward: rrRatio,
-    probability: direction === 'WAIT' ? 'Market Neutral' : `${confidence}%`,
+    probability: direction === 'WAIT' ? 'Market Neutral' : `${winProbability > 0 ? winProbability : confidence}%`,
     duration: item.durationEstimate || '2-8 hours (All-Round Day Trade)',
     strategy: strategyName,
-    technicals: indicators.length ? indicators : [
-      `EMA 20/50/200 Trend Alignment: ${isBuy ? 'Bullish Momentum' : 'Bearish Continuation'}`,
-      `RSI(14) Momentum: ${isBuy ? 'Bullish Pullback Support' : 'Bearish Supply Rejection'}`,
-      `VWAP Vector: Price trading ${isBuy ? 'above' : 'below'} session VWAP`
-    ],
+    technicals: indicators.length ? indicators : [liveStructureSummary],
     fundamentals: [macroContext],
     sentiment: [marketStructure],
     createdAt: item.createdAt || new Date().toISOString(),
@@ -230,14 +240,12 @@ export function mapSignal(item: any): AISignal {
     aiReasoning: {
       ...reasoning,
       timeframe: reasoning.timeframe || item.timeframe || '15m',
-      reasons_for: reasoning.reasons_for || [
-        isBuy ? 'Bullish Order Block & FVG Imbalance Retest' : 'Bearish Order Block & FVG Imbalance Retest',
-        isBuy ? 'Liquidity Sweep of Session Low' : 'Liquidity Sweep of Session High',
-        'Multi-timeframe Trend & VWAP Confluence'
-      ],
-      reasons_against: reasoning.reasons_against || [
-        'Monitor upcoming high-impact economic news release'
-      ]
+      reasons_for: reasoning.reasons_for || (indicators.length > 0 ? indicators : [liveStructureSummary]),
+      reasons_against: reasoning.reasons_against || (
+        Array.isArray(reasoning.invalidationAndExpiry?.preFillCancelTriggers)
+          ? reasoning.invalidationAndExpiry.preFillCancelTriggers
+          : [reasoning.invalidationAndExpiry?.invalidationThesis || 'Monitor structural invalidation and upcoming USD macro releases']
+      )
     },
     reasoning: explanation,
     indicatorVerdicts,

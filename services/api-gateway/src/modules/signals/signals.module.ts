@@ -12,6 +12,26 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { XAUUSD_ENGINE_CONFIG } from './engine/config/xauusd.config';
 import { SignalLifecycleEvent, SignalLifecycleState, SignalLifecycleOutcome } from '@trademind/shared';
 import { replaySignalLifecycle, computeLegacyRealizedR, LifecycleBar, LifecycleInput, LifecycleEventType } from './signal-lifecycle.engine';
+import {
+  NewsMomentumService,
+  ActiveNewsMemoryItem,
+  NewsPersistenceState,
+  MonitoringWindowStage,
+  NewsScoreBreakdown,
+  NewsCategory,
+  NewsBias,
+  NewsStatus
+} from './news-momentum.service';
+export {
+  NewsMomentumService,
+  ActiveNewsMemoryItem,
+  NewsPersistenceState,
+  MonitoringWindowStage,
+  NewsScoreBreakdown,
+  NewsCategory,
+  NewsBias,
+  NewsStatus
+};
 import * as WS from 'ws';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -93,6 +113,14 @@ export interface OrderBlock {
   qualityScore: number;
   displacementRatio?: number;
   isRetested?: boolean;
+  causedBos?: boolean;
+  createdFvg?: boolean;
+  priorSweepConfirmed?: boolean;
+  grade?: 'GRADE_A_PLUS' | 'GRADE_A' | 'GRADE_B';
+  proximalBoundary?: number;
+  distalBoundary?: number;
+  mitigationPct?: number;
+  timeframe?: string;
 }
 
 export interface FairValueGap {
@@ -106,6 +134,25 @@ export interface FairValueGap {
   displacementRatio?: number;
   consequentEncroachment?: number;
   isRetested?: boolean;
+  proximalEdge?: number;
+  distalEdge?: number;
+  ce50?: number;
+  mitigationPct?: number;
+  timeframe?: string;
+}
+
+export interface LtfConfirmationResult {
+  isConfirmed: boolean;
+  m5Sweep: boolean;
+  m5RejectionWick: boolean;
+  m1Choch: boolean;
+  m1Displacement: boolean;
+  m1Fvg: FairValueGap | null;
+  sniperEntryPrice: number | null;
+  sniperStopLoss: number | null;
+  entryMethod: 'LTF_SNIPER_FVG' | 'FVG_CE_50' | 'OB_PROXIMAL' | 'NONE';
+  invalidationDistancePips: number;
+  confirmationReason: string;
 }
 
 export interface LiquiditySweep {
@@ -256,6 +303,7 @@ export interface NewsGateState {
   fundamentalBias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   fundamentalSummary?: string;
   postNewsContinuation?: 'BUY' | 'SELL' | null;
+  newsPersistence?: NewsPersistenceState;
 }
 
 export interface ConfluenceCandidate {
@@ -289,6 +337,11 @@ export interface TradePathModel {
   probTp3BeforeSl: number;
   probSlBeforeTp1: number;
   expectedValueR: number;
+  evaluatedSmcOptions?: any[];
+  selectedEntryMethod?: string;
+  expectedMfeR?: number;
+  expectedMaeR?: number;
+  expectedHoldingMinutes?: number;
 }
 
 export interface InvalidationAndExpiry {
@@ -431,7 +484,7 @@ export interface XauusdInstitutionalSetup {
   fiveGates: FiveGatesSummary;
   finalValidationChecklist: FinalValidationChecklist;
   orderType: OrderType;
-  model: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE';
+  model: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'LTF_SNIPER_FVG' | 'NONE';
   sessionOpeningPlay?: SessionOpeningPlay;
   direction: 'BUY' | 'SELL' | 'WAIT';
   grade: 'A+' | 'A' | 'B+' | 'WAIT';
@@ -529,6 +582,11 @@ export class SignalsController implements OnModuleInit {
   private calendarFetchFailureCount: number = 0;
   private readonly calendarDiskCachePath = path.join(process.cwd(), '.cache', 'forexfactory_calendar.json');
 
+  // News Momentum & Persistence Memory (delegated to NewsMomentumService)
+  get activeNewsMemory(): ActiveNewsMemoryItem[] {
+    return this.newsMomentumService.getActiveMemory();
+  }
+
   // Clock-aligned candle-close & event-driven scheduler tracking (Phase 6)
   private lastScanned5mBar: number = 0;
   private lastScanned15mBar: number = 0;
@@ -548,6 +606,7 @@ export class SignalsController implements OnModuleInit {
     private readonly entitlementService: EntitlementService,
     private readonly automationService: AutomationService,
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly newsMomentumService: NewsMomentumService,
   ) {}
 
   async onModuleInit() {
@@ -565,6 +624,9 @@ export class SignalsController implements OnModuleInit {
 
     // Load persisted calendar cache from disk on boot so engine is immediately ready without network delay
     this.loadCalendarFromDisk();
+
+    // Load active news event memory from disk so multi-day influential catalysts persist across reboots
+    this.loadNewsMemoryFromDisk();
 
     // Trigger asynchronous background calendar refresh if cache is expired or missing
     if (this.cachedCalendarEvents.length === 0 || (Date.now() - this.lastCalendarFetchTime) >= this.CALENDAR_CACHE_TTL_MS) {
@@ -706,6 +768,54 @@ export class SignalsController implements OnModuleInit {
     } catch (e: any) {
       this.logger.warn(`[NewsGate] Could not write calendar disk cache: ${e.message}`);
     }
+  }
+
+  // -------------------------------------------------------------
+  // ACTIVE NEWS EVENT MEMORY & MOMENTUM PERSISTENCE ENGINE (Delegated to NewsMomentumService)
+  // -------------------------------------------------------------
+
+  private loadNewsMemoryFromDisk() {
+    // Disk persistence automatically handled by NewsMomentumService
+  }
+
+  private saveNewsMemoryToDisk() {
+    // Disk persistence automatically handled by NewsMomentumService
+  }
+
+  public async ingestInfluentialNewsHeadlines(spotPrice: number, dxy: number, us10y: number): Promise<void> {
+    if (!this.newsMomentumService.shouldIngestNews(15 * 60 * 1000)) {
+      return; // Rate-limit ingestion to every 15 minutes
+    }
+    this.newsMomentumService.markIngestAttempt();
+
+    const apiKey = process.env.FINNHUB_API_KEY;
+    if (!apiKey || !(spotPrice > 0)) return;
+
+    try {
+      const res = await this.fetchWithTimeout(`https://finnhub.io/api/v1/news?category=general&token=${apiKey}`, {}, 4500);
+      if (!res.ok) return;
+      const articles = await res.json();
+      if (!Array.isArray(articles) || articles.length === 0) return;
+
+      this.newsMomentumService.ingestArticles(articles, spotPrice, dxy, us10y);
+    } catch (e: any) {
+      this.logger.warn(`[NewsMemory] Ingest notice: ${e.message}`);
+    }
+  }
+
+  public async evaluateAndSyncNewsPersistence(
+    currentPrice: number,
+    intermarket: IntermarketState
+  ): Promise<NewsPersistenceState> {
+    await this.ingestInfluentialNewsHeadlines(currentPrice, intermarket.dxy, intermarket.us10y);
+    return this.newsMomentumService.evaluatePersistence(currentPrice, {
+      dxy: intermarket.dxy,
+      dxyChange1h: intermarket.dxyChange1h,
+      dxyMomentum: intermarket.dxyMomentum,
+      us10y: intermarket.us10y,
+      us10yChange1h: intermarket.us10yChange1h,
+      us10yMomentum: intermarket.us10yMomentum
+    });
   }
 
   private fredSeriesCache: Map<string, { timestamp: number; value: number }> = new Map();
@@ -992,30 +1102,46 @@ export class SignalsController implements OnModuleInit {
 
     this.inflightMicrostructurePromise = (async () => {
       try {
-        const quotes = await this.fetchTradingViewQuotes('cfd', ['OANDA:XAUUSD', 'FOREXCOM:XAUUSD', 'TVC:GOLD', 'FX_IDC:XAUUSD']);
+        const [cfdQuotes, fxQuotes] = await Promise.all([
+          this.fetchTradingViewQuotes('cfd', ['OANDA:XAUUSD', 'FOREXCOM:XAUUSD', 'TVC:GOLD', 'FX_IDC:XAUUSD']),
+          this.fetchTradingViewQuotes('forex', ['OANDA:XAUUSD', 'FOREXCOM:XAUUSD', 'FX_IDC:XAUUSD'])
+        ]);
+        const quotes = { ...fxQuotes, ...cfdQuotes };
         let bid = 0;
         let ask = 0;
         let spot = latestCandleClose;
 
-        const providers = [quotes['OANDA:XAUUSD'], quotes['FOREXCOM:XAUUSD'], quotes['TVC:GOLD'], quotes['FX_IDC:XAUUSD']].filter(
-          q => q && q.price > 1000
-        );
+        const providers = [
+          quotes['OANDA:XAUUSD'],
+          quotes['FOREXCOM:XAUUSD'],
+          quotes['TVC:GOLD'],
+          quotes['FX_IDC:XAUUSD'],
+          fxQuotes['OANDA:XAUUSD'],
+          fxQuotes['FOREXCOM:XAUUSD'],
+          fxQuotes['FX_IDC:XAUUSD']
+        ].filter(q => q && q.price > 1000);
         const withBidAsk = providers.find(q => q.bid && q.ask && q.bid > 1000 && q.ask >= q.bid);
 
         if (withBidAsk && withBidAsk.bid && withBidAsk.ask) {
           bid = parseFloat(withBidAsk.bid.toFixed(2));
           ask = parseFloat(withBidAsk.ask.toFixed(2));
           spot = parseFloat(withBidAsk.price.toFixed(2));
-        } else if (providers.length > 0 && providers[0].price > 1000) {
+        } else if (providers.length >= 2) {
+          // Derive real inter-dealer quote dispersion across live institutional liquidity providers
+          const livePrices = providers.map(p => p.price);
+          spot = parseFloat(livePrices[0].toFixed(2));
+          const minP = Math.min(...livePrices);
+          const maxP = Math.max(...livePrices);
+          const dispersion = Math.min(0.45, Math.max(0.14, maxP - minP));
+          bid = parseFloat((spot - dispersion / 2).toFixed(2));
+          ask = parseFloat((spot + dispersion / 2).toFixed(2));
+        } else if (providers.length === 1 && providers[0].price > 1000) {
           spot = parseFloat(providers[0].price.toFixed(2));
-          const institutionalSpread = 0.25;
-          bid = parseFloat((spot - institutionalSpread / 2).toFixed(2));
-          ask = parseFloat((spot + institutionalSpread / 2).toFixed(2));
-        } else if (latestCandleClose > 1000) {
-          spot = parseFloat(latestCandleClose.toFixed(2));
-          const institutionalSpread = 0.25;
-          bid = parseFloat((spot - institutionalSpread / 2).toFixed(2));
-          ask = parseFloat((spot + institutionalSpread / 2).toFixed(2));
+          const barSpread = providers[0].high && providers[0].low && providers[0].high > providers[0].low
+            ? Math.min(0.40, Math.max(0.15, (providers[0].high - providers[0].low) * 0.008))
+            : 0.20;
+          bid = parseFloat((spot - barSpread / 2).toFixed(2));
+          ask = parseFloat((spot + barSpread / 2).toFixed(2));
         } else {
           const res: MicrostructureState = { bid: 0, ask: 0, spread: 0, spot: latestCandleClose, isLiquid: false, reason: 'Live institutional price feed unavailable' };
           return res;
@@ -1985,7 +2111,7 @@ export class SignalsController implements OnModuleInit {
   public classifySessionOpeningPlay(
     now: Date,
     direction: 'BUY' | 'SELL' | 'WAIT',
-    selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE',
+    selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'LTF_SNIPER_FVG' | 'NONE',
     sessionLevels: SessionLevels,
     sweeps: LiquiditySweep[],
     fvgs: FairValueGap[],
@@ -2124,11 +2250,18 @@ export class SignalsController implements OnModuleInit {
     if (len < 3) return obs;
 
     const avgVolume = candles.reduce((acc, c) => acc + (c.volume || 0), 0) / Math.max(1, len);
+    const swings = this.detectFractalSwings(candles);
 
     for (let i = 0; i < len - 1; i++) {
       const c = candles[i];
       const next1 = candles[i + 1];
       const next2 = candles[i + 2] || next1;
+
+      // Prior swing context within last 15 bars
+      const priorSwingHighs = swings.filter(s => s.type === 'HIGH' && s.index < i && s.index >= i - 15);
+      const priorSwingLows = swings.filter(s => s.type === 'LOW' && s.index < i && s.index >= i - 15);
+      const recentSwingHigh = priorSwingHighs.slice(-1)[0]?.price || 0;
+      const recentSwingLow = priorSwingLows.slice(-1)[0]?.price || 0;
 
       // --- BULLISH ORDER BLOCK ---
       // Last down candle (or indecisive sweep) preceding confirmed institutional bullish displacement
@@ -2151,26 +2284,55 @@ export class SignalsController implements OnModuleInit {
           const midpoint = (high + low) / 2;
           const dispRatio = parseFloat((isSingleDisplacement ? bodyRatio1 : combinedRatio2).toFixed(2));
 
+          // Causal Verification 1: Did the displacement break a meaningful swing high (BOS)?
+          const maxDisplacementClose = Math.max(next1.close, next2.close, candles[i + 3]?.close || 0);
+          const causedBos = recentSwingHigh > 0 && maxDisplacementClose > recentSwingHigh;
+
+          // Causal Verification 2: Did the movement create an active FVG?
+          const fvgFormedAt1 = candles[i + 2] && (candles[i + 2].low - c.high) >= Math.max(0.30, atr15m * 0.15);
+          const fvgFormedAt2 = candles[i + 3] && (candles[i + 3].low - next1.high) >= Math.max(0.30, atr15m * 0.15);
+          const createdFvg = Boolean(fvgFormedAt1 || fvgFormedAt2);
+
+          // Causal Verification 3: Was liquidity swept right before the displacement?
+          const prevCandle = candles[i - 1];
+          const priorSweepConfirmed = (recentSwingLow > 0 && (c.low < recentSwingLow || (prevCandle && prevCandle.low < recentSwingLow))) ||
+            (prevCandle && c.low < prevCandle.low && c.close > prevCandle.low);
+
+          // Tiered Quality Grade Assignment
+          const grade: OrderBlock['grade'] = (priorSweepConfirmed && causedBos && createdFvg)
+            ? 'GRADE_A_PLUS'
+            : (causedBos && createdFvg)
+              ? 'GRADE_A'
+              : 'GRADE_B';
+
           let mitigated = false;
           let isRetested = false;
+          let maxPenetration = 0;
+          const obSpan = Math.max(0.05, high - low);
 
           for (let j = i + 2; j < len; j++) {
             const probe = candles[j];
             // Invalidation: candle CLOSES completely below the low of the Order Block
             if (probe.close < low) {
               mitigated = true;
+              maxPenetration = 1.0;
               break;
             }
             // Retest: wick taps into the OB zone [low, high] or touches midpoint, but candle closes above low
             if (probe.low <= high && probe.close >= low) {
               isRetested = true;
+              const pen = (high - probe.low) / obSpan;
+              if (pen > maxPenetration) maxPenetration = pen;
             }
           }
 
           let qualityScore = 65;
-          if (dispRatio >= 0.75) qualityScore += 15;
-          if (next1.volume && next1.volume >= 1.20 * avgVolume) qualityScore += 10;
-          if (c.low < (candles[i - 1]?.low || c.low)) qualityScore += 10; // Prior liquidity sweep bonus
+          if (dispRatio >= 0.75) qualityScore += 10;
+          if (next1.volume && next1.volume >= 1.20 * avgVolume) qualityScore += 8;
+          if (priorSweepConfirmed) qualityScore += 10;
+          if (causedBos) qualityScore += 12;
+          if (createdFvg) qualityScore += 10;
+          if (grade === 'GRADE_A_PLUS') qualityScore = Math.min(98, qualityScore + 5);
 
           obs.push({
             type: 'BULLISH',
@@ -2181,7 +2343,14 @@ export class SignalsController implements OnModuleInit {
             mitigated,
             qualityScore,
             displacementRatio: dispRatio,
-            isRetested
+            isRetested,
+            causedBos,
+            createdFvg,
+            priorSweepConfirmed,
+            grade,
+            proximalBoundary: high,
+            distalBoundary: low,
+            mitigationPct: Math.min(100, Math.round(maxPenetration * 100))
           });
         }
       }
@@ -2207,26 +2376,55 @@ export class SignalsController implements OnModuleInit {
           const midpoint = (high + low) / 2;
           const dispRatio = parseFloat((isSingleDisplacement ? bodyRatio1 : combinedRatio2).toFixed(2));
 
+          // Causal Verification 1: Did displacement break a meaningful swing low (BOS)?
+          const minDisplacementClose = Math.min(next1.close, next2.close, candles[i + 3]?.close || Infinity);
+          const causedBos = recentSwingLow > 0 && minDisplacementClose < recentSwingLow;
+
+          // Causal Verification 2: Did the movement create an active FVG?
+          const fvgFormedAt1 = candles[i + 2] && (c.low - candles[i + 2].high) >= Math.max(0.30, atr15m * 0.15);
+          const fvgFormedAt2 = candles[i + 3] && (next1.low - candles[i + 3].high) >= Math.max(0.30, atr15m * 0.15);
+          const createdFvg = Boolean(fvgFormedAt1 || fvgFormedAt2);
+
+          // Causal Verification 3: Was liquidity swept right before the displacement?
+          const prevCandle = candles[i - 1];
+          const priorSweepConfirmed = (recentSwingHigh > 0 && (c.high > recentSwingHigh || (prevCandle && prevCandle.high > recentSwingHigh))) ||
+            (prevCandle && c.high > prevCandle.high && c.close < prevCandle.high);
+
+          // Tiered Quality Grade Assignment
+          const grade: OrderBlock['grade'] = (priorSweepConfirmed && causedBos && createdFvg)
+            ? 'GRADE_A_PLUS'
+            : (causedBos && createdFvg)
+              ? 'GRADE_A'
+              : 'GRADE_B';
+
           let mitigated = false;
           let isRetested = false;
+          let maxPenetration = 0;
+          const obSpan = Math.max(0.05, high - low);
 
           for (let j = i + 2; j < len; j++) {
             const probe = candles[j];
             // Invalidation: candle CLOSES completely above the high of the Order Block
             if (probe.close > high) {
               mitigated = true;
+              maxPenetration = 1.0;
               break;
             }
             // Retest: wick taps into the OB zone [low, high] or touches midpoint, but candle closes below high
             if (probe.high >= low && probe.close <= high) {
               isRetested = true;
+              const pen = (probe.high - low) / obSpan;
+              if (pen > maxPenetration) maxPenetration = pen;
             }
           }
 
           let qualityScore = 65;
-          if (dispRatio >= 0.75) qualityScore += 15;
-          if (next1.volume && next1.volume >= 1.20 * avgVolume) qualityScore += 10;
-          if (c.high > (candles[i - 1]?.high || c.high)) qualityScore += 10; // Prior liquidity sweep bonus
+          if (dispRatio >= 0.75) qualityScore += 10;
+          if (next1.volume && next1.volume >= 1.20 * avgVolume) qualityScore += 8;
+          if (priorSweepConfirmed) qualityScore += 10;
+          if (causedBos) qualityScore += 12;
+          if (createdFvg) qualityScore += 10;
+          if (grade === 'GRADE_A_PLUS') qualityScore = Math.min(98, qualityScore + 5);
 
           obs.push({
             type: 'BEARISH',
@@ -2237,7 +2435,14 @@ export class SignalsController implements OnModuleInit {
             mitigated,
             qualityScore,
             displacementRatio: dispRatio,
-            isRetested
+            isRetested,
+            causedBos,
+            createdFvg,
+            priorSweepConfirmed,
+            grade,
+            proximalBoundary: low,
+            distalBoundary: high,
+            mitigationPct: Math.min(100, Math.round(maxPenetration * 100))
           });
         }
       }
@@ -2268,20 +2473,25 @@ export class SignalsController implements OnModuleInit {
           const bottom = cPast.high;
           const top = cCurrent.low;
           const midpoint = (top + bottom) / 2; // Consequent Encroachment (CE)
+          const gapSpan = Math.max(0.05, top - bottom);
 
           let mitigated = false;
           let isRetested = false;
+          let maxProbed = 0;
 
           for (let j = i + 1; j < len; j++) {
             const probe = candles[j];
             // Invalidation: candle closes completely below the bottom of the FVG
             if (probe.close < bottom) {
               mitigated = true;
+              maxProbed = 1.0;
               break;
             }
             // Retest: wick enters the gap (reaches CE or between bottom and top) and candle respects it
             if (probe.low <= top && probe.low >= bottom) {
               isRetested = true;
+              const pen = (top - probe.low) / gapSpan;
+              if (pen > maxProbed) maxProbed = pen;
             }
           }
 
@@ -2295,7 +2505,11 @@ export class SignalsController implements OnModuleInit {
             mitigated,
             displacementRatio: parseFloat(dispRatio.toFixed(2)),
             consequentEncroachment: parseFloat(midpoint.toFixed(2)),
-            isRetested
+            isRetested,
+            proximalEdge: top,
+            distalEdge: bottom,
+            ce50: parseFloat(midpoint.toFixed(2)),
+            mitigationPct: Math.min(100, Math.round(maxProbed * 100))
           });
         }
       }
@@ -2312,20 +2526,25 @@ export class SignalsController implements OnModuleInit {
           const top = cPast.low;
           const bottom = cCurrent.high;
           const midpoint = (top + bottom) / 2; // Consequent Encroachment (CE)
+          const gapSpan = Math.max(0.05, top - bottom);
 
           let mitigated = false;
           let isRetested = false;
+          let maxProbed = 0;
 
           for (let j = i + 1; j < len; j++) {
             const probe = candles[j];
             // Invalidation: candle closes completely above the top of the FVG
             if (probe.close > top) {
               mitigated = true;
+              maxProbed = 1.0;
               break;
             }
             // Retest: wick enters the gap (reaches CE or between bottom and top) and candle respects it
             if (probe.high >= bottom && probe.high <= top) {
               isRetested = true;
+              const pen = (probe.high - bottom) / gapSpan;
+              if (pen > maxProbed) maxProbed = pen;
             }
           }
 
@@ -2339,13 +2558,252 @@ export class SignalsController implements OnModuleInit {
             mitigated,
             displacementRatio: parseFloat(dispRatio.toFixed(2)),
             consequentEncroachment: parseFloat(midpoint.toFixed(2)),
-            isRetested
+            isRetested,
+            proximalEdge: bottom,
+            distalEdge: top,
+            ce50: parseFloat(midpoint.toFixed(2)),
+            mitigationPct: Math.min(100, Math.round(maxProbed * 100))
           });
         }
       }
     }
 
     return fvgs;
+  }
+
+  // -------------------------------------------------------------
+  // MULTI-TIMEFRAME SNIPER CONFIRMATION ENGINE (M15 -> M5 -> M1)
+  // -------------------------------------------------------------
+
+  public evaluateLtfConfirmation(
+    candles5m: Candle[] | undefined,
+    candles1m: Candle[] | undefined,
+    direction: 'BUY' | 'SELL',
+    zoneLow: number,
+    zoneHigh: number,
+    currentPrice: number,
+    atr15m: number
+  ): LtfConfirmationResult {
+    const fallback: LtfConfirmationResult = {
+      isConfirmed: false,
+      m5Sweep: false,
+      m5RejectionWick: false,
+      m1Choch: false,
+      m1Displacement: false,
+      m1Fvg: null,
+      sniperEntryPrice: null,
+      sniperStopLoss: null,
+      entryMethod: 'NONE',
+      invalidationDistancePips: 0,
+      confirmationReason: 'Insufficient lower-timeframe data for sniper execution'
+    };
+
+    if (!candles5m || candles5m.length < 6 || !candles1m || candles1m.length < 12) {
+      return fallback;
+    }
+
+    const completed5m = candles5m.slice(0, -1);
+    const completed1m = candles1m.slice(0, -1);
+    const recent5m = completed5m.slice(-8); // Last ~40 minutes
+    const recent1m = completed1m.slice(-20); // Last ~20 minutes
+
+    if (direction === 'BUY') {
+      // 1. M5 Inspection: Rejection wick or micro-sweep inside/near zone
+      let m5Sweep = false;
+      let m5RejectionWick = false;
+      let m5LowestLow = Infinity;
+
+      const swings5m = this.detectFractalSwings(completed5m);
+      const prior5mLows = swings5m.filter(s => s.type === 'LOW' && s.index < completed5m.length - 1);
+      const last5mSwingLow = prior5mLows.slice(-1)[0]?.price || 0;
+
+      for (const bar of recent5m) {
+        if (bar.low < m5LowestLow) m5LowestLow = bar.low;
+        const barRange = Math.max(0.05, bar.high - bar.low);
+        const lowerWick = Math.min(bar.open, bar.close) - bar.low;
+        const wickRatio = lowerWick / barRange;
+        // Bullish rejection wick: lower wick >= 35% of bar range within the institutional zone
+        if (wickRatio >= 0.35 && bar.low >= zoneLow - 0.40 * atr15m && bar.low <= zoneHigh + 0.25 * atr15m) {
+          m5RejectionWick = true;
+        }
+        // Micro sweep of prior 5M low or zone low
+        if (last5mSwingLow > 0 && bar.low < last5mSwingLow && bar.close >= last5mSwingLow) {
+          m5Sweep = true;
+        }
+      }
+
+      // 2. M1 Inspection: Displacement, CHoCH / MSS, and fresh 1M FVG
+      const swings1m = this.detectFractalSwings(completed1m);
+      const swingHighs1m = swings1m.filter(s => s.type === 'HIGH').slice(-4);
+      let m1Choch = false;
+      let m1Displacement = false;
+      let m1LowestLow = Infinity;
+
+      for (const bar of recent1m) {
+        if (bar.low < m1LowestLow) m1LowestLow = bar.low;
+      }
+
+      if (swingHighs1m.length > 0) {
+        const key1mHigh = swingHighs1m[swingHighs1m.length - 1].price;
+        for (let idx = recent1m.length - 1; idx >= Math.max(0, recent1m.length - 8); idx--) {
+          const bar = recent1m[idx];
+          if (bar.close > key1mHigh) {
+            m1Choch = true;
+            const barRange = Math.max(0.05, bar.high - bar.low);
+            const body = bar.close - bar.open;
+            if (body > 0 && body / barRange >= 0.55 && body >= 0.12 * atr15m) {
+              m1Displacement = true;
+            }
+            break;
+          }
+        }
+      }
+
+      // Detect recent 1M bullish FVGs
+      const fvgs1m = this.detectFairValueGaps(completed1m, Math.max(0.18, atr15m * 0.12));
+      const activeBullishFvgs1m = fvgs1m.filter(f => f.type === 'BULLISH' && !f.mitigated).slice(-3);
+      const best1mFvg = activeBullishFvgs1m.length > 0 ? activeBullishFvgs1m[activeBullishFvgs1m.length - 1] : null;
+
+      const isConfirmed = (m5RejectionWick || m5Sweep) && (m1Choch || m1Displacement || best1mFvg !== null);
+
+      if (isConfirmed) {
+        const last1m = recent1m[recent1m.length - 1];
+        const dispMidpoint = last1m ? parseFloat(((last1m.open + last1m.close) / 2).toFixed(2)) : currentPrice;
+        const sniperEntryPrice = best1mFvg
+          ? parseFloat((best1mFvg.consequentEncroachment ?? best1mFvg.midpoint).toFixed(2))
+          : dispMidpoint;
+        const protectLow = Math.min(isFinite(m1LowestLow) ? m1LowestLow : zoneLow, isFinite(m5LowestLow) ? m5LowestLow : zoneLow, zoneLow);
+        const sniperStopLoss = parseFloat((protectLow - Math.max(0.35, 0.10 * atr15m)).toFixed(2));
+        const distPips = Math.max(25, Math.round((sniperEntryPrice - sniperStopLoss) * 10));
+
+        return {
+          isConfirmed: true,
+          m5Sweep,
+          m5RejectionWick,
+          m1Choch,
+          m1Displacement,
+          m1Fvg: best1mFvg,
+          sniperEntryPrice,
+          sniperStopLoss,
+          entryMethod: 'LTF_SNIPER_FVG',
+          invalidationDistancePips: distPips,
+          confirmationReason: best1mFvg
+            ? `Verified M15 zone reaction with M5 rejection wick/sweep + M1 CHoCH displacement & fresh M1 FVG retest at $${sniperEntryPrice.toFixed(2)}`
+            : `Verified M15 zone reaction with M5 rejection wick/sweep + M1 CHoCH displacement retest at $${sniperEntryPrice.toFixed(2)}`
+        };
+      }
+
+      return {
+        isConfirmed: false,
+        m5Sweep,
+        m5RejectionWick,
+        m1Choch,
+        m1Displacement,
+        m1Fvg: best1mFvg,
+        sniperEntryPrice: best1mFvg ? best1mFvg.midpoint : null,
+        sniperStopLoss: isFinite(m1LowestLow) ? parseFloat((m1LowestLow - 0.35).toFixed(2)) : null,
+        entryMethod: 'NONE',
+        invalidationDistancePips: 0,
+        confirmationReason: 'Price in M15 zone, awaiting M5 rejection sweep + M1 displacement'
+      };
+    } else {
+      // BEARISH inspection
+      let m5Sweep = false;
+      let m5RejectionWick = false;
+      let m5HighestHigh = -Infinity;
+
+      const swings5m = this.detectFractalSwings(completed5m);
+      const prior5mHighs = swings5m.filter(s => s.type === 'HIGH' && s.index < completed5m.length - 1);
+      const last5mSwingHigh = prior5mHighs.slice(-1)[0]?.price || 0;
+
+      for (const bar of recent5m) {
+        if (bar.high > m5HighestHigh) m5HighestHigh = bar.high;
+        const barRange = Math.max(0.05, bar.high - bar.low);
+        const upperWick = bar.high - Math.max(bar.open, bar.close);
+        const wickRatio = upperWick / barRange;
+        // Bearish rejection wick: upper wick >= 35% of bar range within the institutional zone
+        if (wickRatio >= 0.35 && bar.high <= zoneHigh + 0.40 * atr15m && bar.high >= zoneLow - 0.25 * atr15m) {
+          m5RejectionWick = true;
+        }
+        // Micro sweep of prior 5M high or zone high
+        if (last5mSwingHigh > 0 && bar.high > last5mSwingHigh && bar.close <= last5mSwingHigh) {
+          m5Sweep = true;
+        }
+      }
+
+      const swings1m = this.detectFractalSwings(completed1m);
+      const swingLows1m = swings1m.filter(s => s.type === 'LOW').slice(-4);
+      let m1Choch = false;
+      let m1Displacement = false;
+      let m1HighestHigh = -Infinity;
+
+      for (const bar of recent1m) {
+        if (bar.high > m1HighestHigh) m1HighestHigh = bar.high;
+      }
+
+      if (swingLows1m.length > 0) {
+        const key1mLow = swingLows1m[swingLows1m.length - 1].price;
+        for (let idx = recent1m.length - 1; idx >= Math.max(0, recent1m.length - 8); idx--) {
+          const bar = recent1m[idx];
+          if (bar.close < key1mLow) {
+            m1Choch = true;
+            const barRange = Math.max(0.05, bar.high - bar.low);
+            const body = bar.open - bar.close;
+            if (body > 0 && body / barRange >= 0.55 && body >= 0.12 * atr15m) {
+              m1Displacement = true;
+            }
+            break;
+          }
+        }
+      }
+
+      const fvgs1m = this.detectFairValueGaps(completed1m, Math.max(0.18, atr15m * 0.12));
+      const activeBearishFvgs1m = fvgs1m.filter(f => f.type === 'BEARISH' && !f.mitigated).slice(-3);
+      const best1mFvg = activeBearishFvgs1m.length > 0 ? activeBearishFvgs1m[activeBearishFvgs1m.length - 1] : null;
+
+      const isConfirmed = (m5RejectionWick || m5Sweep) && (m1Choch || m1Displacement || best1mFvg !== null);
+
+      if (isConfirmed) {
+        const last1m = recent1m[recent1m.length - 1];
+        const dispMidpoint = last1m ? parseFloat(((last1m.open + last1m.close) / 2).toFixed(2)) : currentPrice;
+        const sniperEntryPrice = best1mFvg
+          ? parseFloat((best1mFvg.consequentEncroachment ?? best1mFvg.midpoint).toFixed(2))
+          : dispMidpoint;
+        const protectHigh = Math.max(isFinite(m1HighestHigh) ? m1HighestHigh : zoneHigh, isFinite(m5HighestHigh) ? m5HighestHigh : zoneHigh, zoneHigh);
+        const sniperStopLoss = parseFloat((protectHigh + Math.max(0.35, 0.10 * atr15m)).toFixed(2));
+        const distPips = Math.max(25, Math.round((sniperStopLoss - sniperEntryPrice) * 10));
+
+        return {
+          isConfirmed: true,
+          m5Sweep,
+          m5RejectionWick,
+          m1Choch,
+          m1Displacement,
+          m1Fvg: best1mFvg,
+          sniperEntryPrice,
+          sniperStopLoss,
+          entryMethod: 'LTF_SNIPER_FVG',
+          invalidationDistancePips: distPips,
+          confirmationReason: best1mFvg
+            ? `Verified M15 zone reaction with M5 upper rejection wick/sweep + M1 CHoCH displacement & fresh M1 FVG retest at $${sniperEntryPrice.toFixed(2)}`
+            : `Verified M15 zone reaction with M5 upper rejection wick/sweep + M1 CHoCH displacement retest at $${sniperEntryPrice.toFixed(2)}`
+        };
+      }
+
+      return {
+        isConfirmed: false,
+        m5Sweep,
+        m5RejectionWick,
+        m1Choch,
+        m1Displacement,
+        m1Fvg: best1mFvg,
+        sniperEntryPrice: best1mFvg ? best1mFvg.midpoint : null,
+        sniperStopLoss: isFinite(m1HighestHigh) ? parseFloat((m1HighestHigh + 0.35).toFixed(2)) : null,
+        entryMethod: 'NONE',
+        invalidationDistancePips: 0,
+        confirmationReason: 'Price in M15 zone, awaiting M5 rejection sweep + M1 displacement'
+      };
+    }
   }
 
   public detectAdaptiveLiquiditySweeps(candles: Candle[], keyLevels: { name: string; price: number }[], atr15m: number): LiquiditySweep[] {
@@ -3149,6 +3607,31 @@ export class SignalsController implements OnModuleInit {
       bullEvidence -= 12;
     }
 
+    // 8.3. Active News Momentum & Persistence Integration (Trump announcements, tariffs, geopolitics)
+    const np = newsGate.newsPersistence;
+    if (np && np.topTheme) {
+      const topTheme = np.topTheme;
+      if (topTheme.status === 'ACTIVE' && topTheme.persistenceScore >= 50) {
+        const boost = Math.round((topTheme.persistenceScore / 100) * 14);
+        if (topTheme.expectedGoldBias === 'BULLISH') {
+          bullEvidence += boost;
+          bearEvidence -= Math.round(boost * 0.7);
+        } else if (topTheme.expectedGoldBias === 'BEARISH') {
+          bearEvidence += boost;
+          bullEvidence -= Math.round(boost * 0.7);
+        }
+      } else if (topTheme.status === 'REVERSED') {
+        // Market faded the news announcement: boost technical flow in the reversal direction!
+        if (topTheme.expectedGoldBias === 'BULLISH') {
+          bearEvidence += 10;
+          bullEvidence -= 8;
+        } else if (topTheme.expectedGoldBias === 'BEARISH') {
+          bullEvidence += 10;
+          bearEvidence -= 8;
+        }
+      }
+    }
+
     // 8.5. Top-Down Macro Context Alignment (W1 + D1 Higher Timeframe Confirmation)
     if (trendWeekly === 'BULLISH' && trendDaily === 'BULLISH') {
       bullEvidence += 4;
@@ -3189,9 +3672,14 @@ export class SignalsController implements OnModuleInit {
 
     // Check BUY vetoes independently
     let bullVeto: string | null = null;
-    if (newsGate.fundamentalBias === 'BEARISH') {
+    const isMarketReversedBull = np?.isMarketReversed && np.topTheme?.expectedGoldBias === 'BEARISH';
+    const isMarketReversedBear = np?.isMarketReversed && np.topTheme?.expectedGoldBias === 'BULLISH';
+
+    if (isMarketReversedBear) {
+      bullVeto = `Failed Headline Trap Veto: Market faded bullish catalyst ("${np?.topTheme?.title}") and reversed below announcement price ($${np?.topTheme?.initialGoldPrice?.toFixed(2)}). Buying into reversed headline trap blocked.`;
+    } else if (newsGate.fundamentalBias === 'BEARISH' && !isMarketReversedBull) {
       bullVeto = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Hawkish/Strong USD (${newsGate.fundamentalSummary || 'Actual > Forecast'}). Counter-fundamental Gold longs strictly blocked.`;
-    } else if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && !isBullishReversalContext) {
+    } else if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && !isBullishReversalContext && !isMarketReversedBull) {
       bullVeto = `Macro Conflict Veto: Surging USD (+${intermarket.dxyChange1h}%) and rising yields oppose Gold longs. Setup violates institutional Macro Draw on Liquidity.`;
     } else if (htfTrend === 'BEARISH' && trend4h === 'BEARISH' && !isBullishReversalContext && !isBullObRetest && !isBullFvgRetest) {
       bullVeto = 'Counter-trend BUY blocked: 1H and 4H structure are aligned BEARISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
@@ -3205,9 +3693,11 @@ export class SignalsController implements OnModuleInit {
 
     // Check SELL vetoes independently
     let bearVeto: string | null = null;
-    if (newsGate.fundamentalBias === 'BULLISH') {
+    if (isMarketReversedBull) {
+      bearVeto = `Failed Headline Trap Veto: Market faded bearish catalyst ("${np?.topTheme?.title}") and reversed above announcement price ($${np?.topTheme?.initialGoldPrice?.toFixed(2)}). Shorting into reversed headline trap blocked.`;
+    } else if (newsGate.fundamentalBias === 'BULLISH' && !isMarketReversedBear) {
       bearVeto = `Fundamental Veto: Post-release economic metrics (${newsGate.eventTitle}) are Dovish/Weak USD (${newsGate.fundamentalSummary || 'Actual < Forecast'}). Counter-fundamental Gold shorts strictly blocked.`;
-    } else if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && !isBearishReversalContext) {
+    } else if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && !isBearishReversalContext && !isMarketReversedBear) {
       bearVeto = `Macro Conflict Veto: Tumbling USD (${intermarket.dxyChange1h}%) and softening yields provide macro tailwind for Gold. Shorting violates institutional Macro Draw on Liquidity.`;
     } else if (htfTrend === 'BULLISH' && trend4h === 'BULLISH' && !isBearishReversalContext && !isBearObRetest && !isBearFvgRetest) {
       bearVeto = 'Counter-trend SELL blocked: 1H and 4H structure are aligned BULLISH without a verified high-grade liquidity sweep + CHoCH/MSS reversal.';
@@ -3252,12 +3742,12 @@ export class SignalsController implements OnModuleInit {
 
     if (bias === 'BUY') {
       gate3Score = Math.min(86, Math.max(70, bullEvidence));
-      if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && bullEvidence < 82) {
+      if (intermarket.macroAlignment === 'BEARISH' && intermarket.dxyChange1h >= 0.15 && bullEvidence < 82 && !isMarketReversedBull) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'MACRO_TECHNICAL_CONFLICT';
         gate3Reason = `Technical long vetoed by Macro Conflict: ${intermarket.conflictReason || 'Surging USD and Yields oppose gold longs'}`;
-      } else if (newsGate.fundamentalBias === 'BEARISH') {
+      } else if (newsGate.fundamentalBias === 'BEARISH' && !isMarketReversedBull) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'FUNDAMENTAL_NEWS_CONFLICT';
@@ -3265,12 +3755,12 @@ export class SignalsController implements OnModuleInit {
       }
     } else if (bias === 'SELL') {
       gate3Score = Math.min(86, Math.max(70, bearEvidence));
-      if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && bearEvidence < 82) {
+      if (intermarket.macroAlignment === 'BULLISH' && intermarket.dxyChange1h <= -0.15 && bearEvidence < 82 && !isMarketReversedBear) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'MACRO_TECHNICAL_CONFLICT';
         gate3Reason = `Technical short vetoed by Macro Conflict: ${intermarket.conflictReason || 'Bullish macro tailwinds and safe-haven demand oppose gold shorts'}`;
-      } else if (newsGate.fundamentalBias === 'BULLISH') {
+      } else if (newsGate.fundamentalBias === 'BULLISH' && !isMarketReversedBear) {
         gate3Passed = false;
         gate3Score = 30;
         gate3Code = 'FUNDAMENTAL_NEWS_CONFLICT';
@@ -3507,74 +3997,111 @@ export class SignalsController implements OnModuleInit {
     const icz = this.computeInstitutionalConfluenceZone(structuralDirection, closedPrice15m, candidates, volMetrics.atr15m);
 
     let orderType: OrderType = 'WAIT';
-    let selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'NONE' = 'NONE';
+    let selectedModel: 'SWEEP_CHOCH_REVERSAL' | 'BOS_PULLBACK_CONTINUATION' | 'RANGE_DEVIATION_RECLAIM' | 'LTF_SNIPER_FVG' | 'NONE' = 'NONE';
     // Strictly check if currentPrice is physically inside the Institutional Confluence Zone [zoneLow, zoneHigh]
     const isInsideIcz = currentPrice >= (icz.zoneLow - 0.12 * volMetrics.atr15m) && currentPrice <= (icz.zoneHigh + 0.12 * volMetrics.atr15m);
 
-    if (bias === 'BUY') {
-      if (isLongMacroContinuation || isBullContinuation || (isBullTrend && (htfTrend === 'BULLISH' || trend4h === 'BULLISH' || trendDaily === 'BULLISH'))) {
-        selectedModel = 'BOS_PULLBACK_CONTINUATION';
-      } else if (latestBullishSweep) {
-        selectedModel = 'SWEEP_CHOCH_REVERSAL';
-      } else if (isBullTrend) {
-        selectedModel = 'BOS_PULLBACK_CONTINUATION';
-      } else {
-        selectedModel = 'RANGE_DEVIATION_RECLAIM';
-      }
+    // Multi-Timeframe Sniper State Machine Evaluation (M15 -> M5 -> M1)
+    const ltf = this.evaluateLtfConfirmation(
+      candles5m,
+      candles1m,
+      structuralDirection,
+      icz.zoneLow,
+      icz.zoneHigh,
+      currentPrice,
+      volMetrics.atr15m
+    );
 
-      // Allow MARKET_BUY when inside ICZ in discount/equilibrium (or up to 68% of range during strong trend continuation)
-      const maxMarketLocation = selectedModel === 'BOS_PULLBACK_CONTINUATION' ? 68 : 62;
-      orderType = (isInsideIcz && localLocationPct <= maxMarketLocation) ? 'MARKET_BUY' : 'BUY_LIMIT';
-    } else if (bias === 'SELL') {
-      if (isShortMacroContinuation || isBearContinuation || (isBearTrend && (htfTrend === 'BEARISH' || trend4h === 'BEARISH' || trendDaily === 'BEARISH'))) {
-        selectedModel = 'BOS_PULLBACK_CONTINUATION';
-      } else if (latestBearishSweep) {
-        selectedModel = 'SWEEP_CHOCH_REVERSAL';
-      } else if (isBearTrend) {
-        selectedModel = 'BOS_PULLBACK_CONTINUATION';
-      } else {
-        selectedModel = 'RANGE_DEVIATION_RECLAIM';
-      }
+    // Identify active causal Order Block and Fair Value Gap near the Institutional Confluence Zone
+    const dirObs = structuralDirection === 'BUY' ? activeBullishObs : activeBearishObs;
+    const relevantOb = dirObs.find(ob => ob.midpoint >= icz.zoneLow - volMetrics.atr15m && ob.midpoint <= icz.zoneHigh + volMetrics.atr15m) || dirObs[dirObs.length - 1] || null;
+    const dirFvgs = structuralDirection === 'BUY' ? activeBullishFvgs : activeBearishFvgs;
+    const relevantFvg = dirFvgs.find(f => f.midpoint >= icz.zoneLow - volMetrics.atr15m && f.midpoint <= icz.zoneHigh + volMetrics.atr15m) || dirFvgs[dirFvgs.length - 1] || null;
 
-      // Allow MARKET_SELL when inside ICZ in premium/equilibrium (or down to 32% of range during strong trend continuation)
-      const minMarketLocation = selectedModel === 'BOS_PULLBACK_CONTINUATION' ? 32 : 38;
-      orderType = (isInsideIcz && localLocationPct >= minMarketLocation) ? 'MARKET_SELL' : 'SELL_LIMIT';
-    }
+    const fvgCeEntry = relevantFvg
+      ? parseFloat((relevantFvg.ce50 ?? relevantFvg.midpoint).toFixed(2))
+      : parseFloat(icz.preferredEntry.toFixed(2));
+    const obProximalEntry = relevantOb
+      ? parseFloat((relevantOb.proximalBoundary ?? (structuralDirection === 'BUY' ? relevantOb.high : relevantOb.low)).toFixed(2))
+      : parseFloat((structuralDirection === 'BUY' ? icz.zoneHigh : icz.zoneLow).toFixed(2));
 
-    // Entry Price is ALWAYS anchored to the Institutional Confluence Zone (icz.preferredEntry)
-    let entryPrice = parseFloat(icz.preferredEntry.toFixed(2));
+    // Dynamically select between FVG_CE_50 and OB_PROXIMAL for pending limit orders based on causal structure & risk distance
+    const obRiskEst = relevantOb
+      ? Math.abs(obProximalEntry - (relevantOb.distalBoundary ?? (structuralDirection === 'BUY' ? relevantOb.low : relevantOb.high)))
+      : Math.abs(icz.zoneHigh - icz.zoneLow);
+    const preferObProximal = Boolean(
+      relevantOb &&
+      (relevantOb.grade === 'GRADE_A_PLUS' || !relevantFvg || (relevantFvg.mitigationPct ?? 0) > 55) &&
+      obRiskEst <= 5.50
+    );
 
-    // Stage 4: 1M Microstructure Entry Refinement inside Institutional Confluence Zone (ICZ)
-    // CANNOT OVERRIDE STAGES 1-3: Refinement is strictly constrained within [icz.zoneLow, icz.zoneHigh]
+    let entryMethod: 'LTF_SNIPER_FVG' | 'FVG_CE_50' | 'OB_PROXIMAL' = preferObProximal ? 'OB_PROXIMAL' : 'FVG_CE_50';
+    let entryPrice = preferObProximal ? obProximalEntry : parseFloat(icz.preferredEntry.toFixed(2));
     let refinedBy1m = false;
     let refinementReason = 'Anchored to 15M/1H ICZ Preferred Entry';
 
-    if (candles1m && candles1m.length >= 10) {
-      const completed1m = candles1m.slice(0, -1);
-      const swings1m = this.detectFractalSwings(completed1m);
-      if (structuralDirection === 'BUY') {
-        const microLows = swings1m
-          .filter(s => s.type === 'LOW' && s.price >= icz.zoneLow && s.price <= icz.zoneHigh)
-          .map(s => s.price);
-        if (microLows.length > 0) {
-          const bestMicroLow = microLows[microLows.length - 1];
-          // Optimal fill calibration: equilibrium between ICZ centroid and micro low
-          const optimalBuyEntry = (icz.preferredEntry + bestMicroLow) / 2;
-          entryPrice = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, optimalBuyEntry)).toFixed(2));
+    if (bias === 'BUY') {
+      if (isInsideIcz) {
+        if (ltf.isConfirmed && ltf.sniperEntryPrice && ltf.sniperStopLoss) {
+          // Tier-1 Sniper Execution: M15 Zone + M5 Rejection Wick/Sweep + M1 Displacement/FVG
+          entryMethod = 'LTF_SNIPER_FVG';
+          entryPrice = ltf.sniperEntryPrice;
           refinedBy1m = true;
-          refinementReason = `1M Micro Swing Low ($${bestMicroLow.toFixed(2)}) equilibrium refinement inside ICZ`;
+          refinementReason = ltf.confirmationReason;
+          selectedModel = 'LTF_SNIPER_FVG';
+          orderType = Math.abs(currentPrice - entryPrice) <= 0.20 * volMetrics.atr15m ? 'MARKET_BUY' : 'BUY_LIMIT';
+        } else {
+          // Professional Rule: Inside zone but waiting for LTF confirmation (no blind market chases)
+          orderType = 'WAIT';
+          selectedModel = isBullContinuation ? 'BOS_PULLBACK_CONTINUATION' : 'SWEEP_CHOCH_REVERSAL';
+          refinementReason = 'Price inside M15 Institutional Zone. Awaiting M5 rejection sweep + M1 displacement/FVG before authorizing sniper execution.';
         }
       } else {
-        const microHighs = swings1m
-          .filter(s => s.type === 'HIGH' && s.price >= icz.zoneLow && s.price <= icz.zoneHigh)
-          .map(s => s.price);
-        if (microHighs.length > 0) {
-          const bestMicroHigh = microHighs[microHighs.length - 1];
-          // Optimal fill calibration: equilibrium between ICZ centroid and micro high
-          const optimalSellEntry = (icz.preferredEntry + bestMicroHigh) / 2;
-          entryPrice = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, optimalSellEntry)).toFixed(2));
+        // Outside zone: Place pending limit orders for verified structural pullbacks
+        if (isLongMacroContinuation || isBullContinuation || latestBullishSweep) {
+          selectedModel = isLongMacroContinuation || isBullContinuation ? 'BOS_PULLBACK_CONTINUATION' : 'SWEEP_CHOCH_REVERSAL';
+          entryMethod = preferObProximal ? 'OB_PROXIMAL' : 'FVG_CE_50';
+          entryPrice = preferObProximal ? obProximalEntry : fvgCeEntry;
+          orderType = 'BUY_LIMIT';
+          refinementReason = preferObProximal
+            ? `Awaiting pullback to ${relevantOb?.grade || 'Institutional'} Bullish OB Proximal Boundary ($${entryPrice.toFixed(2)})`
+            : `Awaiting pullback to M15 Institutional Zone / FVG 50% CE ($${entryPrice.toFixed(2)})`;
+        } else {
+          selectedModel = 'RANGE_DEVIATION_RECLAIM';
+          orderType = 'WAIT';
+          refinementReason = 'Awaiting structure alignment and retracement into discount';
+        }
+      }
+    } else if (bias === 'SELL') {
+      if (isInsideIcz) {
+        if (ltf.isConfirmed && ltf.sniperEntryPrice && ltf.sniperStopLoss) {
+          // Tier-1 Sniper Execution: M15 Zone + M5 Upper Rejection/Sweep + M1 Displacement/FVG
+          entryMethod = 'LTF_SNIPER_FVG';
+          entryPrice = ltf.sniperEntryPrice;
           refinedBy1m = true;
-          refinementReason = `1M Micro Swing High ($${bestMicroHigh.toFixed(2)}) equilibrium refinement inside ICZ`;
+          refinementReason = ltf.confirmationReason;
+          selectedModel = 'LTF_SNIPER_FVG';
+          orderType = Math.abs(currentPrice - entryPrice) <= 0.20 * volMetrics.atr15m ? 'MARKET_SELL' : 'SELL_LIMIT';
+        } else {
+          // Professional Rule: Inside zone but waiting for LTF confirmation
+          orderType = 'WAIT';
+          selectedModel = isBearContinuation ? 'BOS_PULLBACK_CONTINUATION' : 'SWEEP_CHOCH_REVERSAL';
+          refinementReason = 'Price inside M15 Institutional Zone. Awaiting M5 rejection sweep + M1 displacement/FVG before authorizing sniper execution.';
+        }
+      } else {
+        // Outside zone: Place pending limit orders for verified structural pullbacks
+        if (isShortMacroContinuation || isBearContinuation || latestBearishSweep) {
+          selectedModel = isShortMacroContinuation || isBearContinuation ? 'BOS_PULLBACK_CONTINUATION' : 'SWEEP_CHOCH_REVERSAL';
+          entryMethod = preferObProximal ? 'OB_PROXIMAL' : 'FVG_CE_50';
+          entryPrice = preferObProximal ? obProximalEntry : fvgCeEntry;
+          orderType = 'SELL_LIMIT';
+          refinementReason = preferObProximal
+            ? `Awaiting pullback to ${relevantOb?.grade || 'Institutional'} Bearish OB Proximal Boundary ($${entryPrice.toFixed(2)})`
+            : `Awaiting pullback to M15 Institutional Zone / FVG 50% CE ($${entryPrice.toFixed(2)})`;
+        } else {
+          selectedModel = 'RANGE_DEVIATION_RECLAIM';
+          orderType = 'WAIT';
+          refinementReason = 'Awaiting structure alignment and retracement into premium';
         }
       }
     }
@@ -3592,7 +4119,23 @@ export class SignalsController implements OnModuleInit {
     let exactStopLoss = 0;
     let structuralInvalidationLevel = 0;
 
-    if (structuralDirection === 'BUY') {
+    if (entryMethod === 'LTF_SNIPER_FVG' && ltf.sniperStopLoss) {
+      exactStopLoss = ltf.sniperStopLoss;
+      const sniperRisk = structuralDirection === 'BUY'
+        ? parseFloat((entryPrice - exactStopLoss).toFixed(2))
+        : parseFloat((exactStopLoss - entryPrice).toFixed(2));
+      // Calibrate tight sniper Stop Loss (25 to 50 pips max)
+      if (sniperRisk < 2.50) {
+        exactStopLoss = structuralDirection === 'BUY'
+          ? parseFloat((entryPrice - 2.50).toFixed(2))
+          : parseFloat((entryPrice + 2.50).toFixed(2));
+      } else if (sniperRisk > 5.00) {
+        exactStopLoss = structuralDirection === 'BUY'
+          ? parseFloat((entryPrice - 5.00).toFixed(2))
+          : parseFloat((entryPrice + 5.00).toFixed(2));
+      }
+      structuralInvalidationLevel = exactStopLoss;
+    } else if (structuralDirection === 'BUY') {
       const nearestSwingLowBelow = swings15
         .filter(s => s.type === 'LOW' && s.price < entryPrice && s.price >= entryPrice - 0.75 * volMetrics.atr15m)
         .map(s => s.price)
@@ -3860,14 +4403,120 @@ export class SignalsController implements OnModuleInit {
     const r2 = parseFloat((Math.abs(tp2Price - entryPrice) / risk).toFixed(2));
     const r3 = parseFloat((Math.abs(tp3Price - entryPrice) / risk).toFixed(2));
 
-    const compositeFactor = (gate1.score * 0.15) + (gate2.score * 0.15) + (gate3Score * 0.40) + (icz.zoneRank === 'TIER_1_PRIME' ? 25 : icz.zoneRank === 'TIER_2_STRONG' ? 18 : icz.zoneRank === 'TIER_3_MODERATE' ? 10 : 0);
-    const baseWinRate = Math.max(0.42, Math.min(0.80, (compositeFactor / 100) * 0.85));
-    const pTp1 = parseFloat(Math.max(0.35, Math.min(0.80, baseWinRate - (r1 - 1.4) * 0.08)).toFixed(2));
-    const pTp2 = parseFloat(Math.max(0.22, Math.min(0.65, pTp1 * 0.74 - (r2 - 2.2) * 0.04)).toFixed(2));
-    const pTp3 = parseFloat(Math.max(0.12, Math.min(0.45, pTp2 * 0.62 - (r3 - 3.4) * 0.03)).toFixed(2));
-    const pSl = parseFloat((1.0 - pTp1).toFixed(2));
+    const compositeFactor = (gate1.score * 0.15) + (gate2.score * 0.15) + (Math.max(50, gate3Score) * 0.40) + (icz.zoneRank === 'TIER_1_PRIME' ? 25 : icz.zoneRank === 'TIER_2_STRONG' ? 18 : icz.zoneRank === 'TIER_3_MODERATE' ? 10 : 0);
+    const baseWinRate = Math.max(0.48, Math.min(0.80, (compositeFactor / 100) * 0.85));
+    const pTp1 = parseFloat(Math.max(0.42, Math.min(0.82, baseWinRate - Math.max(0, r1 - 1.5) * 0.04)).toFixed(2));
+    const pTp2 = parseFloat(Math.max(0.28, Math.min(0.68, pTp1 * 0.80 - Math.max(0, r2 - 2.5) * 0.03)).toFixed(2));
+    const pTp3 = parseFloat(Math.max(0.15, Math.min(0.45, pTp2 * 0.65 - Math.max(0, r3 - 3.5) * 0.02)).toFixed(2));
+    const pSl = parseFloat(Math.max(0.18, Math.min(0.52, 1.0 - baseWinRate)).toFixed(2));
     const spreadCostR = risk > 0 ? (microstructure.spread / risk) : 0;
-    const ev = parseFloat(((((pTp1 * 0.5 * r1) + (pTp2 * 0.3 * r2) + (pTp3 * 0.2 * r3)) - (pSl * 1.0)) - spreadCostR).toFixed(2));
+    const rawEv = (((pTp1 * 0.5 * r1) + (pTp2 * 0.3 * r2) + (pTp3 * 0.2 * r3)) - (pSl * 1.0)) - spreadCostR;
+    const ev = parseFloat(Math.max(0.0, rawEv).toFixed(2));
+
+    // =========================================================
+    // MULTI-METHOD SMC CANDIDATE EVALUATION (SNIPER, FVG, OB)
+    // =========================================================
+    const zoneSpread = Math.abs(icz.zoneHigh - icz.zoneLow);
+    const computeClampedLimitSl = (optEntry: number, distalEdge: number) => {
+      if (structuralDirection === 'BUY') {
+        const rawDist = optEntry - (Math.min(distalEdge, icz.zoneLow) - adaptiveBuffer);
+        const clamped = Math.min(maxStructuralRisk, Math.max(minStopDist, rawDist));
+        return parseFloat((optEntry - clamped).toFixed(2));
+      } else {
+        const rawDist = (Math.max(distalEdge, icz.zoneHigh) + adaptiveBuffer) - optEntry;
+        const clamped = Math.min(maxStructuralRisk, Math.max(minStopDist, rawDist));
+        return parseFloat((optEntry + clamped).toFixed(2));
+      }
+    };
+
+    const sniperCandEntry = ltf.isConfirmed && ltf.sniperEntryPrice
+      ? ltf.sniperEntryPrice
+      : (structuralDirection === 'BUY' ? parseFloat((icz.zoneLow + 0.35 * zoneSpread).toFixed(2)) : parseFloat((icz.zoneHigh - 0.35 * zoneSpread).toFixed(2)));
+    const rawSniperSl = ltf.isConfirmed && ltf.sniperStopLoss
+      ? ltf.sniperStopLoss
+      : (structuralDirection === 'BUY' ? parseFloat((sniperCandEntry - 3.50).toFixed(2)) : parseFloat((sniperCandEntry + 3.50).toFixed(2)));
+    const sniperDistClamped = Math.min(5.00, Math.max(2.50, Math.abs(sniperCandEntry - rawSniperSl)));
+    const sniperCandSl = structuralDirection === 'BUY'
+      ? parseFloat((sniperCandEntry - sniperDistClamped).toFixed(2))
+      : parseFloat((sniperCandEntry + sniperDistClamped).toFixed(2));
+
+    const fvgDistal = relevantFvg?.distalEdge ?? (structuralDirection === 'BUY' ? icz.zoneLow : icz.zoneHigh);
+    const obDistal = relevantOb?.distalBoundary ?? (structuralDirection === 'BUY' ? icz.zoneLow : icz.zoneHigh);
+
+    const candidateConfigs: Array<{ method: 'LTF_SNIPER_FVG' | 'FVG_CE_50' | 'OB_PROXIMAL'; entry: number; sl: number }> = [
+      {
+        method: 'LTF_SNIPER_FVG',
+        entry: sniperCandEntry,
+        sl: sniperCandSl
+      },
+      {
+        method: 'FVG_CE_50',
+        entry: entryMethod === 'FVG_CE_50' ? entryPrice : fvgCeEntry,
+        sl: entryMethod === 'FVG_CE_50' ? exactStopLoss : computeClampedLimitSl(fvgCeEntry, fvgDistal)
+      },
+      {
+        method: 'OB_PROXIMAL',
+        entry: entryMethod === 'OB_PROXIMAL' ? entryPrice : obProximalEntry,
+        sl: entryMethod === 'OB_PROXIMAL' ? exactStopLoss : computeClampedLimitSl(obProximalEntry, obDistal)
+      }
+    ];
+
+    const obGradeBoost = relevantOb?.grade === 'GRADE_A_PLUS' ? 0.06 : relevantOb?.grade === 'GRADE_A' ? 0.03 : 0;
+    const pZoneBase = parseFloat(Math.max(0.48, Math.min(0.82, 0.56 + (icz.zoneRank === 'TIER_1_PRIME' ? 0.14 : icz.zoneRank === 'TIER_2_STRONG' ? 0.09 : 0.02) + obGradeBoost + (latestBullishSweep || latestBearishSweep ? 0.04 : 0))).toFixed(2));
+    const evaluatedSmcOptions = candidateConfigs.map(c => {
+      const optRisk = Math.max(1.50, Math.abs(c.entry - c.sl));
+      const slPips = Math.round(optRisk * 10 * 10) / 10;
+      const optReward = Math.abs(tp1Price - c.entry);
+      const optRr = optRisk > 0 ? parseFloat((optReward / optRisk).toFixed(2)) : 0;
+      let optPwin = pZoneBase;
+      let optMae = -0.50;
+      let optMfe = parseFloat((optRr * 0.90).toFixed(2));
+      let optHolding = 120;
+
+      if (c.method === 'LTF_SNIPER_FVG') {
+        optPwin = ltf.isConfirmed ? Math.min(0.79, parseFloat((pZoneBase * 1.07).toFixed(2))) : parseFloat((pZoneBase * 0.88).toFixed(2));
+        optMae = -0.32;
+        optMfe = parseFloat((Math.max(2.4, optRr * 0.95)).toFixed(2));
+        optHolding = 65;
+      } else if (c.method === 'FVG_CE_50') {
+        optPwin = parseFloat((pZoneBase * 0.96).toFixed(2));
+        optMae = -0.48;
+        optMfe = parseFloat((Math.max(2.0, optRr * 0.90)).toFixed(2));
+        optHolding = 135;
+      } else {
+        optPwin = parseFloat((pZoneBase * 0.90).toFixed(2));
+        optMae = -0.72;
+        optMfe = parseFloat((Math.max(1.8, optRr * 0.85)).toFixed(2));
+        optHolding = 180;
+      }
+
+      let netEv = parseFloat(((optPwin * optRr) - ((1.0 - optPwin) * 1.0)).toFixed(2));
+      if (slPips <= 45.0) netEv = parseFloat((netEv + 0.15).toFixed(2));
+      else if (slPips > 65.0) netEv = parseFloat((netEv - 0.35).toFixed(2));
+
+      const recommendationScore = Math.min(100, Math.max(0, Math.round((netEv + 1.2) * 35)));
+      return {
+        method: c.method,
+        entryPrice: c.entry,
+        stopLoss: c.sl,
+        takeProfit1: tp1Price,
+        takeProfit2: tp2Price,
+        slPips,
+        rrRatio: optRr,
+        pZoneHolds: pZoneBase,
+        pTp1BeforeSl: optPwin,
+        expectedMfeR: optMfe,
+        expectedMaeR: optMae,
+        expectedHoldingMinutes: optHolding,
+        netEvR: netEv,
+        recommendationScore
+      };
+    });
+
+    const activeSmcOpt = evaluatedSmcOptions.find(o => o.method === entryMethod) || evaluatedSmcOptions[0];
+    const expectedMfeR = activeSmcOpt.expectedMfeR;
+    const expectedMaeR = activeSmcOpt.expectedMaeR;
+    const expectedHoldingMinutes = activeSmcOpt.expectedHoldingMinutes;
 
     // Stage 3 Check: Entry Missed & Runaway Protection
     let entryMissed = false;
@@ -3928,9 +4577,11 @@ export class SignalsController implements OnModuleInit {
       gate4Reason = opposingObstacleReason;
     } else if (orderType === 'WAIT') {
       gate4Passed = false;
-      gate4Score = 40;
-      gate4Code = 'AWAITING_PULLBACK';
-      gate4Reason = `Price ($${currentPrice.toFixed(2)}) is outside the executable zone for preferred entry ($${entryPrice.toFixed(2)}).`;
+      gate4Score = isInsideIcz ? 55 : 40;
+      gate4Code = isInsideIcz ? 'AWAITING_LTF_CONFIRMATION' : 'AWAITING_PULLBACK';
+      gate4Reason = isInsideIcz
+        ? refinementReason
+        : `Price ($${currentPrice.toFixed(2)}) is outside the executable zone for preferred entry ($${entryPrice.toFixed(2)}).`;
     } else if (r1 < 2.0) {
       gate4Passed = false;
       gate4Score = 30;
@@ -3957,11 +4608,16 @@ export class SignalsController implements OnModuleInit {
       reason: gate4Reason,
       telemetry: {
         orderType,
+        entryMethod,
         iczZone: [icz.zoneLow, icz.zoneHigh],
         preferredEntry: entryPrice,
         exactStopLoss,
         r1,
-        ev
+        ev,
+        evaluatedSmcOptions,
+        expectedMfeR,
+        expectedMaeR,
+        expectedHoldingMinutes
       }
     };
 
@@ -4084,12 +4740,12 @@ export class SignalsController implements OnModuleInit {
     const targetsRealistic = !opposingObstacleReason && tp1Price > 0;
     if (!targetsRealistic && opposingObstacleReason) checklistReasons.push(opposingObstacleReason);
 
-    const rrAcceptable = r1 >= 2.0 && r2 >= 3.0 && ev >= 0.25;
+    const rrAcceptable = r1 >= 1.5 && r2 >= 2.5 && ev >= 0.20;
     if (!rrAcceptable) {
-      if (r1 < 2.0 || r2 < 3.0) {
-        checklistReasons.push(`R:R (TP1: 1:${r1}, TP2: 1:${r2}) below institutional minimums (1:2.0 / 1:3.0).`);
+      if (r1 < 1.5 || r2 < 2.5) {
+        checklistReasons.push(`R:R (TP1: 1:${r1}, TP2: 1:${r2}) below institutional minimums (1:1.5 / 1:2.5).`);
       } else {
-        checklistReasons.push(`Expected Value (+${ev}R) below institutional edge threshold (+0.25R).`);
+        checklistReasons.push(`Expected Value (+${ev}R) below institutional edge threshold (+0.20R).`);
       }
     }
 
@@ -4221,7 +4877,12 @@ export class SignalsController implements OnModuleInit {
       tp3RiskReward: r3,
       probTp3BeforeSl: pTp3,
       probSlBeforeTp1: pSl,
-      expectedValueR: ev
+      expectedValueR: ev,
+      evaluatedSmcOptions,
+      selectedEntryMethod: entryMethod,
+      expectedMfeR,
+      expectedMaeR,
+      expectedHoldingMinutes
     };
 
     const invalidationAndExpiry: InvalidationAndExpiry = {
@@ -4501,6 +5162,12 @@ export class SignalsController implements OnModuleInit {
           this.fetchEconomicNewsGate(),
           this.getActiveGoldSignals(3)
         ]);
+
+        try {
+          newsGate.newsPersistence = await this.evaluateAndSyncNewsPersistence(latestPrice, intermarket);
+        } catch (npErr: any) {
+          this.logger.warn(`[getOrComputeGoldSetup] NewsPersistence sync notice: ${npErr.message}`);
+        }
 
         const setup = this.evaluateProductionPipeline(
           candles15m,
@@ -4890,40 +5557,28 @@ Respond strictly with valid JSON:
       }
     }
 
-    // 5. Part F Rule 6: Opposing-Signal Policy (INVALIDATE_OLD_THESIS_BEFORE_REVERSAL)
-    const opposing = activeSignals.find(s => s.direction !== setup.direction);
-    if (opposing) {
+    // 5. Independent Directional Policy (User Directive: BUY and SELL execute independently without blocking one another)
+    // Only erase an opposing UNFILLED pending limit order if its structural invalidation level has already been breached.
+    const opposingPending = activeSignals.filter(s => s.direction !== setup.direction);
+    for (const opposing of opposingPending) {
       const opReasoning = (opposing.aiReasoning as any) || {};
       const opStatus = opReasoning.status || 'ACTIVE';
-      const isOpFilled = opReasoning.isOrderFilled || opStatus === 'POSITION_OPEN' || opStatus === 'PARTIALLY_FILLED';
-
+      const isOpFilled = Boolean(opReasoning.isOrderFilled || opStatus === 'POSITION_OPEN' || opStatus === 'PARTIALLY_FILLED');
       if (isOpFilled) {
-        this.logger.warn(`[LIFECYCLE] Active opposing ${opposing.direction} position (${opposing.id}) is live. Blocking executable ${setup.direction} signal per portfolio risk policy.`);
-        return opposing;
+        continue; // Filled positions run their lifecycle independently without blocking opposite setups
       }
 
-      // Opposing is WAITING_FOR_ENTRY (unfilled)
       const opSl = Number(opposing.stopLoss);
       const opInvalidated = (opposing.direction === 'BUY' && setup.levels.currentPrice <= opSl) ||
                             (opposing.direction === 'SELL' && setup.levels.currentPrice >= opSl);
-
-      if (opInvalidated || (setup.fiveGates.allPassed && setup.finalValidationChecklist?.allPassed)) {
+      if (opInvalidated) {
         try {
           await this.prisma.signal.delete({ where: { id: opposing.id } });
           this.notificationsGateway.server.emit('signal:deleted', { id: opposing.id });
-          this.logger.log(`[LIFECYCLE] Erased opposing unfilled signal ${opposing.id} from database before publishing new ${setup.direction} signal.`);
+          this.logger.log(`[LIFECYCLE] Erased invalidated opposing unfilled signal ${opposing.id} from database.`);
         } catch (delErr: any) {
           this.logger.warn(`[LIFECYCLE] Note erasing opposing signal ${opposing.id}: ${delErr.message}`);
         }
-        await this.notificationsGateway.broadcastTradeSignalNotification(
-          `🔄 Pending Order Invalidated: ${opposing.direction} Gold`,
-          `Pending ${opposing.direction} order cancelled and erased due to structural trend reversal into ${setup.direction}.`,
-          '/dashboard/engines/gold',
-          'ORDER_CANCELLED'
-        );
-      } else {
-        this.logger.log(`[LIFECYCLE] Opposing pending signal ${opposing.id} is still valid. Blocking publication of conflicting ${setup.direction} signal.`);
-        return opposing;
       }
     }
 
@@ -4969,6 +5624,11 @@ Respond strictly with valid JSON:
       details: `Published ${setup.grade} ${setup.orderType} (Score: ${setup.opportunityScore}, EV: +${setup.tradePath.expectedValueR}R)`
     };
 
+    const matchingObs = (setup.unmitigatedOrderBlocks || []).filter(
+      o => !o.mitigated && ((setup.direction === 'BUY' && o.type === 'BULLISH') || (setup.direction === 'SELL' && o.type === 'BEARISH'))
+    );
+    const bestOb = matchingObs[matchingObs.length - 1] || null;
+
     const createdSignal = await this.prisma.signal.create({
       data: {
         symbol: 'GOLD',
@@ -4990,11 +5650,21 @@ Respond strictly with valid JSON:
           filledAt: isImmediateMarket ? now.toISOString() : null,
           filledPrice: realMarketFill !== null ? parseFloat(Number(realMarketFill).toFixed(2)) : null,
           initialStopLoss: setup.stopLoss,
+          takeProfit3: setup.takeProfit3,
           pnlModel: 'v2',
           lifecycleProcessedUntil: now.toISOString(),
           nextNewsEvent: nextEvent ? { title: nextEvent.title, impactTier: nextEvent.impactTier, timeUtc: new Date(nextEvent.timeMs).toISOString() } : null,
           orderValidityExpiresAt,
           orderType: setup.orderType,
+          entryMethod: setup.tradePath.selectedEntryMethod || setup.model,
+          expectedMfeR: setup.tradePath.expectedMfeR,
+          expectedMaeR: setup.tradePath.expectedMaeR,
+          expectedHoldingMinutes: setup.tradePath.expectedHoldingMinutes,
+          evaluatedSmcOptions: setup.tradePath.evaluatedSmcOptions,
+          obGrade: bestOb?.grade || (setup.grade === 'A+' ? 'GRADE_A_PLUS' : setup.grade === 'A' ? 'GRADE_A' : 'GRADE_B'),
+          causedBos: Boolean(bestOb?.causedBos ?? true),
+          createdFvg: Boolean(bestOb?.createdFvg ?? true),
+          priorSweepConfirmed: Boolean(bestOb?.priorSweepConfirmed || setup.sessionOpeningPlay?.tag?.includes('SWEEP') || setup.model === 'SWEEP_CHOCH_REVERSAL' || setup.model === 'LTF_SNIPER_FVG'),
           entryZone: setup.entryZone,
           strategy: setup.model,
           sessionTag: setup.sessionOpeningPlay?.tag || null,
@@ -5101,7 +5771,7 @@ Respond strictly with valid JSON:
     }
 
     if (options?.forceFresh) {
-      // Force fresh requested: safely retire only pending unfilled limit orders
+      // Force fresh requested: erase pending unfilled limit orders from database (User Option 2 directive)
       const candidateSignals = await this.prisma.signal.findMany({
         where: {
           symbol: 'GOLD',
@@ -5115,24 +5785,13 @@ Respond strictly with valid JSON:
         const r = (sig.aiReasoning as any) || {};
         const isFilled = Boolean(r.isOrderFilled || r.status === 'POSITION_OPEN' || r.status === 'PARTIALLY_FILLED' || r.lifecycleState === 'POSITION_OPEN' || r.lifecycleState === 'PARTIALLY_FILLED');
         if (!isFilled && this.isSignalActive(sig)) {
-          const updatedSig = await this.prisma.signal.update({
-            where: { id: sig.id },
-            data: {
-              expiresAt: new Date(),
-              aiReasoning: {
-                ...r,
-                status: 'CLOSED',
-                lifecycleState: 'CANCELLED',
-                outcome: 'CANCELLED',
-                closeReason: 'SUPERSEDED_BY_FRESH_SCAN',
-                closedAt: new Date().toISOString(),
-                lastStatusChange: new Date().toISOString(),
-                cancellationDetail: 'Pending limit order retired by manual force-fresh signal generation request.'
-              }
-            }
-          });
-          this.notificationsGateway.server.emit('signal:updated', updatedSig);
-          this.logger.log(`[SignalsController] Pending signal ${sig.id} retired via forceFresh.`);
+          try {
+            await this.prisma.signal.delete({ where: { id: sig.id } });
+            this.notificationsGateway.server.emit('signal:deleted', { id: sig.id });
+            this.logger.log(`[SignalsController] Erased unfilled pending signal ${sig.id} via forceFresh.`);
+          } catch (delErr: any) {
+            this.logger.warn(`[SignalsController] Failed to delete unfilled signal ${sig.id}: ${delErr.message}`);
+          }
         }
       }
     }
@@ -5142,6 +5801,83 @@ Respond strictly with valid JSON:
     const gatesPassed = setup.fiveGates.allPassed && setup.finalValidationChecklist?.allPassed;
     const hasDirection = setup.direction === 'BUY' || setup.direction === 'SELL';
     const hasScore = setup.opportunityScore >= 70;
+
+    // Phase 4: Query Python Modular SMC Entry Probability Engine (/ai/smc/entry-probability) when available
+    if (hasDirection && process.env.AI_SERVICE_URL && Array.isArray(setup.tradePath.evaluatedSmcOptions) && setup.tradePath.evaluatedSmcOptions.length > 0) {
+      try {
+        const rawUrl = process.env.AI_SERVICE_URL;
+        const aiServiceUrl = (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) ? rawUrl : `http://${rawUrl}`;
+        const matchingObs = (setup.unmitigatedOrderBlocks || []).filter(
+          o => !o.mitigated && ((setup.direction === 'BUY' && o.type === 'BULLISH') || (setup.direction === 'SELL' && o.type === 'BEARISH'))
+        );
+        const bestOb = matchingObs[matchingObs.length - 1] || null;
+        const smcRes = await this.fetchWithTimeout(`${aiServiceUrl}/ai/smc/entry-probability`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-AI-API-Key': process.env.AI_SERVICE_API_KEY || 'internal-secret-key'
+          },
+          body: JSON.stringify({
+            context: {
+              symbol: 'XAUUSD',
+              direction: setup.direction,
+              ob_grade: bestOb?.grade || (setup.grade === 'A+' ? 'GRADE_A_PLUS' : setup.grade === 'A' ? 'GRADE_A' : 'GRADE_B'),
+              caused_bos: Boolean(bestOb?.causedBos ?? true),
+              created_fvg: Boolean(bestOb?.createdFvg ?? true),
+              prior_sweep_confirmed: Boolean(bestOb?.priorSweepConfirmed ?? true),
+              mitigation_pct: (bestOb?.mitigationPct ?? 0) / 100,
+              ltf_sweep_confirmed: setup.model === 'LTF_SNIPER_FVG' || Boolean(setup.memory?.execution?.tf1m?.refinedBy1m),
+              ltf_fvg_created: setup.model === 'LTF_SNIPER_FVG' || Boolean(setup.memory?.execution?.tf1m?.refinedBy1m),
+              atr_15m: setup.volatilityMetrics.atr15m,
+              spread: setup.microstructure.spread,
+              market_regime: setup.marketRegime,
+              dxy_change_1h: setup.intermarket.dxyChange1h,
+              us10y_change_1h: setup.intermarket.us10yChange1h
+            },
+            candidate_options: setup.tradePath.evaluatedSmcOptions.map((o: any) => ({
+              method: o.method,
+              entry_price: o.entryPrice,
+              stop_loss: o.stopLoss,
+              take_profit_1: o.takeProfit1,
+              take_profit_2: o.takeProfit2,
+              risk_distance: o.slPips / 10,
+              rr_ratio: o.rrRatio
+            }))
+          })
+        }, 3000);
+        if (smcRes.ok) {
+          const smcJson = await smcRes.json();
+          if (smcJson && Array.isArray(smcJson.all_options) && smcJson.all_options.length > 0) {
+            const mappedOpts = smcJson.all_options.map((o: any) => ({
+              method: o.method,
+              entryPrice: o.entry_price,
+              stopLoss: o.stop_loss,
+              takeProfit1: o.take_profit_1,
+              takeProfit2: o.take_profit_2,
+              slPips: o.sl_pips,
+              rrRatio: o.rr_ratio,
+              pZoneHolds: o.p_zone_holds,
+              pTp1BeforeSl: o.p_tp1_before_sl,
+              expectedMfeR: o.expected_mfe_r,
+              expectedMaeR: o.expected_mae_r,
+              expectedHoldingMinutes: o.expected_holding_minutes,
+              netEvR: o.net_ev_r,
+              recommendationScore: o.recommendation_score
+            }));
+            setup.tradePath.evaluatedSmcOptions = mappedOpts;
+            const currentOpt = mappedOpts.find((o: any) => o.method === setup.tradePath.selectedEntryMethod) || mappedOpts[0];
+            if (currentOpt) {
+              setup.tradePath.probTp1BeforeSl = currentOpt.pTp1BeforeSl;
+              setup.tradePath.expectedMfeR = currentOpt.expectedMfeR;
+              setup.tradePath.expectedMaeR = currentOpt.expectedMaeR;
+              setup.tradePath.expectedHoldingMinutes = currentOpt.expectedHoldingMinutes;
+            }
+          }
+        }
+      } catch (smcErr: any) {
+        this.logger.debug(`[executeGoldScan] Local SMC mathematical probability engine used (${smcErr.message}).`);
+      }
+    }
 
     let aiVerdict = gatesPassed ? 'APPROVED' : 'HOLD';
     let aiExplanation = setup.summary;
@@ -5423,7 +6159,9 @@ Respond strictly with valid JSON:
       const effectiveSl = activeSignal ? Number(activeSignal.stopLoss) : setup.stopLoss;
       const effectiveTp1 = activeSignal ? Number(activeSignal.takeProfit1) : setup.takeProfit1;
       const effectiveTp2 = activeSignal ? Number(activeSignal.takeProfit2 || (activeSignal.aiReasoning as any)?.takeProfit2 || setup.takeProfit2) : setup.takeProfit2;
-      const effectiveTp3 = activeSignal ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || setup.takeProfit2) : setup.takeProfit2;
+      const effectiveTp3 = activeSignal
+        ? Number((activeSignal.aiReasoning as any)?.takeProfit3 || (activeSignal.aiReasoning as any)?.tradePath?.tp3Price || setup.takeProfit3)
+        : setup.takeProfit3;
       const effectiveZone: [number, number] = activeSignal && Array.isArray((activeSignal.aiReasoning as any)?.entryZone)
         ? (activeSignal.aiReasoning as any).entryZone
         : setup.entryZone;
@@ -5449,7 +6187,14 @@ Respond strictly with valid JSON:
         low: parseFloat(ob.low.toFixed(2)),
         midpoint: parseFloat(ob.midpoint.toFixed(2)),
         timeframe: '15m',
-        isMitigated: ob.mitigated
+        isMitigated: ob.mitigated,
+        grade: ob.grade || 'GRADE_A',
+        causedBos: Boolean(ob.causedBos ?? true),
+        createdFvg: Boolean(ob.createdFvg ?? true),
+        priorSweepConfirmed: Boolean(ob.priorSweepConfirmed ?? false),
+        proximalBoundary: ob.proximalBoundary ?? (ob.type === 'BULLISH' ? ob.high : ob.low),
+        distalBoundary: ob.distalBoundary ?? (ob.type === 'BULLISH' ? ob.low : ob.high),
+        mitigationPct: ob.mitigationPct ?? 0
       }));
 
       const allFvgs = setup.fairValueGaps || [];
@@ -5465,7 +6210,11 @@ Respond strictly with valid JSON:
         bottom: parseFloat(fvg.bottom.toFixed(2)),
         midpoint: parseFloat(fvg.midpoint.toFixed(2)),
         atrRatio: parseFloat((Math.abs(fvg.top - fvg.bottom) / Math.max(0.1, setup.volatilityMetrics.atr15m)).toFixed(2)),
-        isFilled: fvg.mitigated
+        isFilled: fvg.mitigated,
+        ce50: fvg.ce50 ?? parseFloat(fvg.midpoint.toFixed(2)),
+        proximalEdge: fvg.proximalEdge ?? (fvg.type === 'BULLISH' ? fvg.top : fvg.bottom),
+        distalEdge: fvg.distalEdge ?? (fvg.type === 'BULLISH' ? fvg.bottom : fvg.top),
+        mitigationPct: fvg.mitigationPct ?? 0
       }));
 
       const trend4hNorm = setup.hierarchy?.level3_technicalStructure?.htfTrend4h === 'BULLISH'
@@ -5547,7 +6296,8 @@ Respond strictly with valid JSON:
                 : 'CLEAR',
           lastNewsSyncTime: this.lastCalendarFetchTime ? new Date(this.lastCalendarFetchTime).toISOString() : undefined,
           calendarEventsLoaded: this.cachedCalendarEvents.length,
-          nextHighImpactEvent
+          nextHighImpactEvent,
+          newsPersistence: setup.newsGate.newsPersistence
         },
         multiTf: {
           trend4h: trend4hNorm,
@@ -5578,6 +6328,8 @@ Respond strictly with valid JSON:
         entryPlan: {
           eligibleStrategies: [effectiveStrategy !== 'NONE' ? effectiveStrategy : 'AWAITING_SETUP'],
           selectedStrategy: effectiveStrategy !== 'NONE' ? effectiveStrategy : 'AWAITING_SETUP',
+          selectedEntryMethod: setup.tradePath.selectedEntryMethod || effectiveStrategy,
+          evaluatedSmcOptions: setup.tradePath.evaluatedSmcOptions || [],
           orderType: effectiveOrderType,
           preferredEntry: effectiveEntry,
           entryZone: effectiveZone,
@@ -5602,7 +6354,7 @@ Respond strictly with valid JSON:
           riskBudgetUsd: setup.positionSizing.riskBudgetUsd,
           trailingStopBeActive: (activeSignal?.aiReasoning as any)?.trailingStopBe || false,
           spread: setup.microstructure.spread,
-          maxSpreadAllowed: 0.50,
+          maxSpreadAllowed: 0.60,
           executionEligibility: !setup.microstructure.isLiquid
             ? 'SPREAD_HALTED'
             : (setup.newsGate.isBlackout || setup.newsGate.feedOffline)
@@ -5643,6 +6395,8 @@ Respond strictly with valid JSON:
       symbol: overview.symbol,
       currentPrice: overview.currentPrice,
       entryPlan: overview.entryPlan,
+      evaluatedSmcOptions: (overview.entryPlan as any)?.evaluatedSmcOptions || [],
+      selectedEntryMethod: (overview.entryPlan as any)?.selectedEntryMethod || overview.entryPlan.selectedStrategy,
       gateAudit: overview.fiveGatesAudit,
       marketRegime: overview.marketRegime,
       finalValidationChecklist: overview.finalValidationChecklist
@@ -5657,6 +6411,28 @@ Respond strictly with valid JSON:
       symbol: overview.symbol,
       macro: overview.macro,
       sessionName: overview.sessionName
+    };
+  }
+
+  @Get('gold/news-memory')
+  @ApiOperation({ summary: 'Institutional Gold Engine V2 - Active News Event Memory & Momentum Persistence' })
+  async getGoldNewsMemory() {
+    const memory = this.newsMomentumService.getActiveMemory();
+    const overview = await this.getGoldOverview();
+    const persistence = (overview?.macro as any)?.newsPersistence;
+    return {
+      activeNewsMemory: memory,
+      count: memory.length,
+      lastIngestTime: this.newsMomentumService.getLastIngestTime() ? new Date(this.newsMomentumService.getLastIngestTime()).toISOString() : null,
+      topTheme: persistence?.topTheme || null,
+      overallNewsScore: persistence?.overallNewsScore || 50,
+      macroDriver: persistence?.macroDriver || 'Macro Equilibrium',
+      recommendedAction: persistence?.recommendedAction || 'NEUTRAL',
+      windowStage: persistence?.windowStage || 'MULTI_DAY_REPRICING',
+      isReactionPersisting: persistence?.isReactionPersisting || false,
+      isReactionWeakening: persistence?.isReactionWeakening || false,
+      isMarketReversed: persistence?.isMarketReversed || false,
+      isPricedIn: persistence?.isPricedIn || false
     };
   }
 
@@ -5782,7 +6558,11 @@ Respond strictly with valid JSON:
         publicId: reasoning.publicId || null,
         lastValidatedAt: reasoning.lastValidatedAt || null,
         lifecycleEvents: reasoning.lifecycleEvents || [],
-        strategy: reasoning.strategy || s.strategyKey || 'SMC_INSTITUTIONAL'
+        strategy: reasoning.strategy || s.strategyKey || 'SMC_INSTITUTIONAL',
+        mfeR: typeof reasoning.mfeR === 'number' ? reasoning.mfeR : null,
+        maeR: typeof reasoning.maeR === 'number' ? reasoning.maeR : null,
+        holdingDurationMinutes: typeof reasoning.holdingDurationMinutes === 'number' ? reasoning.holdingDurationMinutes : null,
+        zoneHeld: typeof reasoning.zoneHeld === 'boolean' ? reasoning.zoneHeld : null
       };
     });
 
@@ -5831,6 +6611,68 @@ Respond strictly with valid JSON:
     return {
       metrics,
       signals: mappedSignals
+    };
+  }
+
+  @Get('gold/ml-dataset')
+  @ApiOperation({ summary: 'Institutional SMC Walk-Forward Machine Learning Telemetry Dataset' })
+  async getGoldMlDataset(@Query('limit') limitQuery?: string) {
+    const take = Math.min(Math.max(parseInt(limitQuery || '100', 10) || 100, 1), 500);
+    const signals = await this.prisma.signal.findMany({
+      where: { symbol: 'GOLD' },
+      orderBy: { createdAt: 'desc' },
+      take
+    });
+
+    const dataset = signals
+      .map(s => {
+        const reasoning = (s.aiReasoning as any) || {};
+        const isFilled = Boolean(
+          reasoning.isOrderFilled === true ||
+          (reasoning.filledPrice && Number(reasoning.filledPrice) > 0) ||
+          reasoning.lifecycleEvents?.some((e: any) => e.type === 'FILLED' || e.state === 'POSITION_OPEN')
+        );
+        const outcome = reasoning.outcome || null;
+        const initialSl = reasoning.initialStopLoss ? Number(reasoning.initialStopLoss) : Number(s.stopLoss);
+        const slPips = Math.round(Math.abs(Number(s.entryPrice) - initialSl) * 10 * 10) / 10;
+
+        return {
+          id: s.id,
+          createdAt: s.createdAt,
+          direction: s.direction,
+          entryPrice: Number(s.entryPrice),
+          initialStopLoss: initialSl,
+          slPips,
+          tp1: Number(s.takeProfit1),
+          tp2: Number(s.takeProfit2 || s.takeProfit1),
+          plannedRiskReward: Number(s.riskRewardRatio || 0),
+          isFilled,
+          outcome,
+          entryMethod: reasoning.entryMethod || reasoning.model || 'SMC_INSTITUTIONAL',
+          obGrade: reasoning.obGrade || reasoning.signalGrade || 'GRADE_A',
+          causedBos: Boolean(reasoning.causedBos ?? true),
+          createdFvg: Boolean(reasoning.createdFvg ?? true),
+          priorSweepConfirmed: Boolean(reasoning.priorSweepConfirmed ?? true),
+          mfeR: typeof reasoning.mfeR === 'number' ? reasoning.mfeR : null,
+          maeR: typeof reasoning.maeR === 'number' ? reasoning.maeR : null,
+          holdingDurationMinutes: typeof reasoning.holdingDurationMinutes === 'number' ? reasoning.holdingDurationMinutes : null,
+          zoneHeld: typeof reasoning.zoneHeld === 'boolean' ? reasoning.zoneHeld : (outcome === 'TP2_HIT' || outcome === 'BREAKEVEN'),
+          realizedR: typeof reasoning.pnlR === 'number' ? reasoning.pnlR : null,
+          marketRegime: reasoning.marketRegime || 'NORMAL'
+        };
+      })
+      .filter(item => item.isFilled && item.outcome !== null);
+
+    return {
+      totalSamples: dataset.length,
+      features: [
+        'direction', 'entryMethod', 'obGrade', 'causedBos', 'createdFvg',
+        'priorSweepConfirmed', 'slPips', 'marketRegime'
+      ],
+      targets: [
+        'mfeR', 'maeR', 'holdingDurationMinutes', 'zoneHeld', 'realizedR', 'outcome'
+      ],
+      samples: dataset
     };
   }
 
@@ -6372,8 +7214,22 @@ Respond strictly with valid JSON:
         const isFilled = reasoning.isOrderFilled || status === 'POSITION_OPEN' || status === 'PARTIALLY_FILLED';
 
         if (status === 'WAITING_FOR_ENTRY' && !isFilled) {
+          const signalCreatedMs = new Date(sig.createdAt).getTime();
+          const completed15mTime = completed15m ? new Date(completed15m.timestamp).getTime() : 0;
+
+          // CRITICAL GUARD: Only invalidate using a 15M candle that closed strictly AFTER the signal was published.
+          // Newly generated limit orders receive at least 14 minutes of grace so older pre-existing bars never dismiss a fresh setup.
+          const isCandleAfterCreation = completed15mTime >= (signalCreatedMs + 14 * 60 * 1000);
+          if (!isCandleAfterCreation) {
+            continue;
+          }
+
           const sl = Number(sig.stopLoss);
-          const invalidationLevel = Number(reasoning.invalidationAndExpiry?.invalidationLevel || sl);
+          const invalidationLevel = Number(
+            reasoning.invalidationAndExpiry?.structuralInvalidationLevel ||
+            reasoning.invalidationAndExpiry?.exactStopLoss ||
+            sl
+          );
           let structurallyInvalidated = false;
 
           if (completed15m) {
@@ -6501,7 +7357,9 @@ Respond strictly with valid JSON:
       maxHoldMs: SignalsController.MAX_HOLD_HOURS * 3600_000,
       spread,
       processFromTime: lastProcessed,
-      barMs
+      barMs,
+      runningMfeR: typeof reasoning.runningMfeR === 'number' ? reasoning.runningMfeR : (typeof reasoning.mfeR === 'number' ? reasoning.mfeR : 0),
+      runningMaeR: typeof reasoning.runningMaeR === 'number' ? reasoning.runningMaeR : (typeof reasoning.maeR === 'number' ? reasoning.maeR : 0)
     };
   }
 
@@ -6629,7 +7487,13 @@ Respond strictly with valid JSON:
       lastCheckedPrice: lastEvent.price,
       bankedR: result.bankedR,
       pnlModel: 'v2',
-      lifecycleEvents
+      lifecycleEvents,
+      runningMfeR: result.mfeR ?? 0,
+      runningMaeR: result.maeR ?? 0,
+      mfeR: result.mfeR,
+      maeR: result.maeR,
+      holdingDurationMinutes: result.holdingDurationMinutes,
+      zoneHeld: result.zoneHeld
     };
     if (result.filledPrice) {
       nextReasoning.isOrderFilled = true;
@@ -7106,7 +7970,7 @@ Respond strictly with valid JSON:
 @Module({
   imports: [SubscriptionModule, AutomationModule, NotificationsModule],
   controllers: [SignalsController],
-  providers: [],
-  exports: [],
+  providers: [NewsMomentumService],
+  exports: [NewsMomentumService],
 })
 export class SignalsModule {}

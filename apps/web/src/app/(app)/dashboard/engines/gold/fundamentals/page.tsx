@@ -230,6 +230,93 @@ export default function GoldFundamentalsPage() {
           </div>
         </div>
       </div>
+
+      {/* News Momentum & Persistence Engine (Multi-Day Catalyst Memory) */}
+      <div className="p-6 rounded-2xl bg-[#0B0F17] border border-amber-500/25 shadow-2xl space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-4">
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
+              <Activity size={18} className="text-amber-400" />
+              <span>News Momentum & Persistence Engine (NewsEventMemory)</span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Dynamic 6-dimension persistence scoring, category half-life decay, and failed-headline reversal detection.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[11px] font-mono text-slate-300">
+              Stage: {(macro as any)?.newsPersistence?.windowStage || 'MULTI_DAY_REPRICING'}
+            </span>
+            <span className={cn(
+              "px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold border",
+              (macro as any)?.newsPersistence?.isMarketReversed
+                ? "bg-rose-500/20 text-rose-300 border-rose-500/30"
+                : (macro as any)?.newsPersistence?.isReactionPersisting
+                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+            )}>
+              Score: {(macro as any)?.newsPersistence?.overallNewsScore ?? 50}/100 • {(macro as any)?.newsPersistence?.recommendedAction || 'NEUTRAL'}
+            </span>
+          </div>
+        </div>
+
+        {(macro as any)?.newsPersistence?.topTheme ? (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-black/40 border border-white/10 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold">
+                    {(macro as any).newsPersistence.topTheme.category}
+                  </span>
+                  <span className={cn(
+                    "px-2 py-0.5 rounded text-[10px] font-mono font-bold",
+                    (macro as any).newsPersistence.topTheme.expectedGoldBias === 'BULLISH'
+                      ? "bg-emerald-500/20 text-emerald-400"
+                      : "bg-rose-500/20 text-rose-400"
+                  )}>
+                    EXPECTED: {(macro as any).newsPersistence.topTheme.expectedGoldBias}
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-white/10 text-slate-200 text-[10px] font-mono font-bold">
+                    STATUS: {(macro as any).newsPersistence.topTheme.status}
+                  </span>
+                </div>
+                <span className="text-[11px] font-mono text-slate-400">
+                  Elapsed: {(macro as any).newsPersistence.topTheme.decayHoursElapsed}h (Half-Life: {(macro as any).newsPersistence.topTheme.halfLifeHours || 48}h)
+                </span>
+              </div>
+              <div className="text-sm font-bold text-white">
+                {(macro as any).newsPersistence.topTheme.title}
+              </div>
+              {(macro as any).newsPersistence.topTheme.reversalReason && (
+                <div className="p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 font-medium">
+                  ⚠️ {(macro as any).newsPersistence.topTheme.reversalReason}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {[
+                { label: 'News Importance', val: (macro as any).newsPersistence.topTheme.importanceScore },
+                { label: 'Gold Relevance', val: (macro as any).newsPersistence.topTheme.goldRelevance },
+                { label: 'Price Confirm', val: (macro as any).newsPersistence.topTheme.priceConfirmation },
+                { label: 'DXY Confirm', val: (macro as any).newsPersistence.topTheme.dxyConfirmation },
+                { label: 'Yield Confirm', val: (macro as any).newsPersistence.topTheme.yieldConfirmation },
+                { label: 'Momentum Persist', val: (macro as any).newsPersistence.topTheme.momentumPersistence }
+              ].map((dim, idx) => (
+                <div key={idx} className="p-3 rounded-xl bg-black/40 border border-white/5 text-center">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">{dim.label}</div>
+                  <div className="text-lg font-black font-mono text-amber-300 mt-1">{dim.val}/10</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 rounded-xl bg-black/40 border border-white/5 text-xs text-slate-400 flex items-center justify-between">
+            <span>No active geopolitical/tariff/macro shock dominating order flow. Technical SMC structure governs entries.</span>
+            <span className="font-mono text-emerald-400 font-bold">MACRO EQUILIBRIUM</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

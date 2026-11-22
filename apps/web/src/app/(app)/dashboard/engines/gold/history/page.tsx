@@ -43,7 +43,7 @@ export default function GoldHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [directionFilter, setDirectionFilter] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
-  const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'WINS' | 'LOSSES' | 'BREAKEVEN' | 'UNFILLED'>('ALL');
+  const [outcomeFilter, setOutcomeFilter] = useState<'ALL' | 'WINS' | 'LOSSES' | 'BREAKEVEN'>('ALL');
   const [timeframeFilter, setTimeframeFilter] = useState<'ALL' | '24H' | '7D' | '30D'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 50;
@@ -84,7 +84,6 @@ export default function GoldHistoryPage() {
       if (outcomeFilter === 'WINS' && !isTp) return false;
       if (outcomeFilter === 'LOSSES' && !isSl) return false;
       if (outcomeFilter === 'BREAKEVEN' && !isBe) return false;
-      if (outcomeFilter === 'UNFILLED' && !isUnfilled) return false;
 
       if (timeframeFilter !== 'ALL') {
         const ageMs = Date.now() - new Date(sig.createdAt).getTime();
@@ -198,7 +197,7 @@ export default function GoldHistoryPage() {
 
           {/* Outcome Filter */}
           <div className="flex items-center rounded-xl bg-black/40 border border-white/5 p-1 gap-1">
-            {(['ALL', 'WINS', 'LOSSES', 'BREAKEVEN', 'UNFILLED'] as const).map((out) => (
+            {(['ALL', 'WINS', 'LOSSES', 'BREAKEVEN'] as const).map((out) => (
               <button
                 key={out}
                 onClick={() => { setOutcomeFilter(out); setCurrentPage(1); }}
@@ -259,6 +258,7 @@ export default function GoldHistoryPage() {
                 <th className="py-3 px-4">Entry</th>
                 <th className="py-3 px-4">Stop Loss</th>
                 <th className="py-3 px-4">Take Profit</th>
+                <th className="py-3 px-4">MFE / MAE & Hold</th>
                 <th className="py-3 px-4">Lifecycle State</th>
                 <th className="py-3 px-4 text-right">Realized R</th>
               </tr>
@@ -273,6 +273,11 @@ export default function GoldHistoryPage() {
                   const isSl = outcome === 'SL_HIT' || state === 'SL_HIT';
                   const isBe = outcome === 'BREAKEVEN';
                   const isUnfilled = !sig.isFilled && ['EXPIRED', 'CANCELLED', 'INVALIDATED'].includes(state);
+                  const initialSl = Number((sig.aiReasoning as any)?.initialStopLoss || sig.stopLoss || 0);
+                  const slPips = Math.round(Math.abs(Number(sig.entryPrice || 0) - initialSl) * 10);
+                  const mfeR = typeof sig.mfeR === 'number' ? sig.mfeR : (sig.aiReasoning as any)?.mfeR;
+                  const maeR = typeof sig.maeR === 'number' ? sig.maeR : (sig.aiReasoning as any)?.maeR;
+                  const holdMins = typeof sig.holdingDurationMinutes === 'number' ? sig.holdingDurationMinutes : (sig.aiReasoning as any)?.holdingDurationMinutes;
 
                   return (
                     <tr key={sig.id} className="hover:bg-white/5 transition-colors">
@@ -300,9 +305,26 @@ export default function GoldHistoryPage() {
                       </td>
                       <td className="py-3.5 px-4 font-mono text-rose-400">
                         ${Number(sig.stopLoss || 0).toFixed(2)}
+                        {slPips > 0 && (
+                          <span className="text-[10px] text-slate-500 block">{slPips} pips</span>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-emerald-400">
                         ${Number(sig.takeProfit1 || sig.takeProfit || 0).toFixed(2)}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-[11px]">
+                        {typeof mfeR === 'number' || typeof maeR === 'number' ? (
+                          <div>
+                            <span className="text-emerald-400">+{Number(mfeR || 0).toFixed(2)}R</span>
+                            <span className="text-slate-500"> / </span>
+                            <span className="text-rose-400">{Number(maeR || 0).toFixed(2)}R</span>
+                            {typeof holdMins === 'number' && holdMins > 0 && (
+                              <span className="text-[10px] text-slate-500 block">{holdMins}m hold</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
                       </td>
                       <td className="py-3.5 px-4">
                         <span className={cn(
@@ -337,7 +359,7 @@ export default function GoldHistoryPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500 font-mono">
+                  <td colSpan={8} className="py-8 text-center text-slate-500 font-mono">
                     No signals found matching the selected filter criteria.
                   </td>
                 </tr>

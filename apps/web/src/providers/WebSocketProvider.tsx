@@ -234,6 +234,16 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {}
     });
 
+    socket.on('signal:deleted', (data: { id?: string }) => {
+      try {
+        if (data && data.id) {
+          useAIStore.getState().removeSignal(data.id);
+        }
+      } catch (e) {
+        console.error('[WebSocket] Failed to handle signal:deleted:', e);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log('[WebSocket] Disconnected from gateway.');
     });
