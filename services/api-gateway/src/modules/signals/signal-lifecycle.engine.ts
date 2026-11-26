@@ -36,6 +36,11 @@ export type LifecycleEventType =
   | 'TP2_HIT'
   | 'SL_HIT'
   | 'BREAKEVEN_EXIT'
+  | 'BREAKEVEN_SET'
+  | 'TRAILED_STOP_1R'
+  | 'TRAILED_STOP_2R'
+  | 'TRAILED_STOP_EXIT'
+  | 'EARLY_INVALIDATION_EXIT'
   | 'PENDING_SL_INVALIDATED'
   | 'ENTRY_MISSED'
   | 'ORDER_EXPIRED'
@@ -164,6 +169,7 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
     const askHigh = bar.high + spread;
     const askLow = bar.low + spread;
     const askOpen = bar.open + spread;
+    const askClose = bar.close + spread;
     let filledThisBar = false;
 
     // ---------------- Pending order ----------------
@@ -241,6 +247,10 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
           const gapped = dir * (exitOpen - currentStop) < 0 && !filledThisBar;
           const exit = gapped ? exitOpen : currentStop;
           const isProtectiveBe = filledPrice !== null && Math.abs(currentStop - filledPrice) < 0.02;
+          const isTrailedProfit = filledPrice !== null && dir * (currentStop - filledPrice) > 0.05;
+          if (isTrailedProfit) {
+            return finish('TRAILED_STOP_EXIT', bar.time, exit, 'BREAKEVEN', 'TRAILED_PROFIT_PROTECTION', round2(rOf(exit)));
+          }
           if (isProtectiveBe) {
             return finish('BREAKEVEN_EXIT', bar.time, exit, 'BREAKEVEN', 'PROTECTIVE_BREAKEVEN_AFTER_1R', round2(rOf(exit)));
           }
@@ -261,11 +271,52 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
           // Breakeven stop is evaluated from the next bar (intrabar order after TP1 unknown)
           continue;
         }
-        // Institutional +1.25R Defensive Breakeven Shield:
-        // Once an open position expands >= +1.25R in favor, protect capital by locking currentStopLoss at filledPrice (breakeven)
-        if (filledPrice && runningMfeR >= 1.25 && dir * (currentStop - filledPrice) < 0) {
+
+        // Phase 4 Defensive Rule 1: +1.2R MFE Breakeven Protection
+        if (filledPrice && plannedRisk > 0 && runningMfeR >= 1.20 && dir * (currentStop - filledPrice) < 0) {
           currentStop = filledPrice;
+          if (!events.some(e => e.type === 'BREAKEVEN_SET')) {
+            events.push({ type: 'BREAKEVEN_SET', time: bar.time, price: currentStop });
+          }
         }
+
+        // Phase 4 Defensive Rule 2: +2.0R MFE Trailing Stop (Locks >= +1.0R Profit)
+        if (filledPrice && plannedRisk > 0 && runningMfeR >= 2.0) {
+          const trailLock1R = round2(filledPrice + dir * 1.0 * plannedRisk);
+          if (dir * (trailLock1R - currentStop) > 0) {
+            currentStop = trailLock1R;
+            if (!events.some(e => e.type === 'TRAILED_STOP_1R')) {
+              events.push({ type: 'TRAILED_STOP_1R', time: bar.time, price: currentStop });
+            }
+          }
+        }
+
+        // Phase 4 Defensive Rule 3: +3.0R MFE Trailing Stop (Locks >= +2.0R Profit)
+        if (filledPrice && plannedRisk > 0 && runningMfeR >= 3.0) {
+          const trailLock2R = round2(filledPrice + dir * 2.0 * plannedRisk);
+          if (dir * (trailLock2R - currentStop) > 0) {
+            currentStop = trailLock2R;
+            if (!events.some(e => e.type === 'TRAILED_STOP_2R')) {
+              events.push({ type: 'TRAILED_STOP_2R', time: bar.time, price: currentStop });
+            }
+          }
+        }
+
+        // Phase 4 Defensive Rule 4: Early Structural Invalidation Cut (~ -0.40R to -0.50R)
+        // Strictly applies during initial trade validation before +1.2R breakeven shield is reached:
+        if (filledPrice && plannedRisk > 0 && !filledThisBar && runningMfeR < 1.20 && dir * (currentStop - filledPrice) < 0) {
+          const adverseCloseDist = dir === 1 ? (filledPrice - bar.close) : (bar.close - filledPrice);
+          const adverseCloseR = adverseCloseDist / plannedRisk;
+          const isAdverseBody = dir === 1
+            ? (bar.close < bar.open && (bar.open - bar.close) >= 0.20 * plannedRisk)
+            : (bar.close > bar.open && (bar.close - bar.open) >= 0.20 * plannedRisk);
+          
+          if (adverseCloseR >= 0.45 && isAdverseBody) {
+            const exitPx = dir === 1 ? bar.close : askClose;
+            return finish('EARLY_INVALIDATION_EXIT', bar.time, exitPx, 'SL_HIT', 'EARLY_STRUCTURAL_INVALIDATION_CUT', round2(rOf(exitPx)));
+          }
+        }
+
         continue;
       }
 
@@ -274,10 +325,34 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
       if (stopHit && !openedBeyondTp2) {
         const gapped = dir * (exitOpen - currentStop) < 0;
         const exit = gapped ? exitOpen : currentStop;
+        const isTrailedProfit = filledPrice !== null && dir * (currentStop - filledPrice) > 0.05;
+        if (isTrailedProfit) {
+          return finish('TRAILED_STOP_EXIT', bar.time, exit, 'BREAKEVEN', 'TRAILED_PROFIT_PROTECTION', round2(bankedR + remaining * rOf(exit)));
+        }
         return finish('BREAKEVEN_EXIT', bar.time, exit, 'BREAKEVEN', 'RUNNER_BREAKEVEN', bankedR + remaining * rOf(exit));
       }
       if (tp2Hit) {
         return finish('TP2_HIT', bar.time, input.tp2, 'TP2_HIT', 'FULL_TARGET_2_REACHED', bankedR + remaining * rOf(input.tp2));
+      }
+
+      // Runner Trailing Stop Upgrades (+2.0R -> locks +1.0R, +3.0R -> locks +2.0R on remaining runner)
+      if (filledPrice && plannedRisk > 0 && runningMfeR >= 2.0) {
+        const trailLock1R = round2(filledPrice + dir * 1.0 * plannedRisk);
+        if (dir * (trailLock1R - currentStop) > 0) {
+          currentStop = trailLock1R;
+          if (!events.some(e => e.type === 'TRAILED_STOP_1R')) {
+            events.push({ type: 'TRAILED_STOP_1R', time: bar.time, price: currentStop });
+          }
+        }
+      }
+      if (filledPrice && plannedRisk > 0 && runningMfeR >= 3.0) {
+        const trailLock2R = round2(filledPrice + dir * 2.0 * plannedRisk);
+        if (dir * (trailLock2R - currentStop) > 0) {
+          currentStop = trailLock2R;
+          if (!events.some(e => e.type === 'TRAILED_STOP_2R')) {
+            events.push({ type: 'TRAILED_STOP_2R', time: bar.time, price: currentStop });
+          }
+        }
       }
     }
   }
@@ -348,8 +423,10 @@ export function computeLegacyRealizedR(params: {
 
   let value: number | null = null;
   if (outcome === 'TP2_HIT' && tp2) value = 0.5 * r(tp1) + 0.5 * r(tp2);
-  else if (outcome === 'BREAKEVEN') value = 0.5 * r(tp1);
-  else if (outcome === 'SL_HIT') value = r(params.initialStopLoss || Number(params.stopLoss));
+  else if (outcome === 'TP1_HIT' && params.exitPrice) value = r(params.exitPrice);
+  else if (outcome === 'BREAKEVEN') value = params.exitPrice ? r(params.exitPrice) : 0.5 * r(tp1);
+  else if (outcome === 'SL_HIT') value = params.exitPrice ? r(params.exitPrice) : r(params.initialStopLoss || Number(params.stopLoss));
   else if (outcome === 'TIME_EXIT' && params.exitPrice) value = r(params.exitPrice);
+  else if (params.exitPrice) value = r(params.exitPrice);
   return value === null ? null : round2(value);
 }

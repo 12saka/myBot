@@ -224,7 +224,9 @@ export default function GoldEntriesPage() {
                       <td className="py-3 px-3 text-amber-300">1:{opt.rrRatio}</td>
                       <td className="py-3 px-3 text-slate-300">{Math.round((opt.pZoneHolds || 0) * 100)}%</td>
                       <td className="py-3 px-3 text-emerald-400 font-bold">{Math.round((opt.pTp1BeforeSl || 0) * 100)}%</td>
-                      <td className="py-3 px-3 text-slate-300">+{opt.expectedMfeR}R / {opt.expectedMaeR}R</td>
+                      <td className="py-3 px-3 text-slate-300">
+                        {opt.expectedMfeR != null ? `+${opt.expectedMfeR}R` : '—'} / {opt.expectedMaeR != null ? `${opt.expectedMaeR}R` : '—'}
+                      </td>
                       <td className="py-3 px-3 text-right font-black text-emerald-400">
                         {opt.netEvR >= 0 ? `+${opt.netEvR}R` : `${opt.netEvR}R`}
                       </td>
@@ -252,7 +254,7 @@ export default function GoldEntriesPage() {
                 {plan?.orderType.replace(/_/g, ' ') || 'WAIT'}
               </span>
               <span className="font-mono text-xl text-slate-300">
-                @ ${(plan?.preferredEntry && plan.preferredEntry > 0 ? plan.preferredEntry : p).toFixed(2)}
+                {plan?.preferredEntry && plan.preferredEntry > 0 ? `@ $${plan.preferredEntry.toFixed(2)}` : 'Awaiting Confirmed Zone'}
               </span>
             </div>
           </div>

@@ -180,14 +180,14 @@ class SmcFeatureContext(BaseModel):
     symbol: str = "XAUUSD"
     direction: str = "WAIT"
     ob_grade: str = "GRADE_B"
-    caused_bos: bool = True
-    created_fvg: bool = True
-    prior_sweep_confirmed: bool = True
+    caused_bos: bool = False
+    created_fvg: bool = False
+    prior_sweep_confirmed: bool = False
     mitigation_pct: float = 0.0
     ltf_sweep_confirmed: bool = False
     ltf_fvg_created: bool = False
-    atr_15m: float = 3.5
-    spread: float = 0.20
+    atr_15m: float = 0.0
+    spread: float = 0.0
     market_regime: Optional[str] = "NORMAL"
     dxy_change_1h: Optional[float] = 0.0
     us10y_change_1h: Optional[float] = 0.0
@@ -207,8 +207,8 @@ class EvaluatedEntryOption(BaseModel):
     p_zone_holds: float
     p_tp1_before_sl: float
     expected_mfe_r: float
-    expected_mae_r: float
-    expected_holding_minutes: int
+    expected_mae_r: Optional[float] = None
+    expected_holding_minutes: Optional[int] = None
     net_ev_r: float
     recommendation_score: float
 
@@ -255,7 +255,7 @@ async def predict_institutional(
     news_gate = req.news_gate or {}
 
     # If the quantitative setup is WAIT or score is low, return transparent WAIT response
-    if setup.direction == "WAIT" or setup.score < 70 or setup.entry <= 0:
+    if setup.direction == "WAIT" or setup.score < 75 or setup.entry <= 0:
         raw_reasons = [r for r in setup.confluence_reasons if r and r != "Market Current Price"] if setup.confluence_reasons else []
         if not raw_reasons:
             reasons = [
@@ -361,7 +361,7 @@ Setup Overview:
 - TP2: ${setup.take_profit_2:.2f} (R:R: {setup.risk_reward_ratio_tp2:.1f})
 - Entry Model: {setup.model}
 - Grade: {setup.grade} (Composite Opportunity Score: {setup.score:.0f}/100)
-- Calibrated Expectancy: EV = +{exp.get('expectedValueR', 0):.2f}R (P(TP1) = {(exp.get('calibratedWinRateTp1') or exp.get('probTp1BeforeSl') or 0.65)*100:.0f}%)
+- Calibrated Expectancy: EV = +{exp.get('expectedValueR', 0):.2f}R (P(TP1) = {(exp.get('calibratedWinRateTp1') or exp.get('probTp1BeforeSl') or 0)*100:.0f}%)
 - Confluences: {', '.join(setup.confluence_reasons)}
 
 Market Regime & Auction Value:
@@ -557,41 +557,41 @@ async def evaluate_smc_entry_probabilities(
             timestamp=datetime.utcnow().isoformat()
         )
 
-    # 1. Base probability of zone holding based on institutional causal structure
-    base_prob = 0.58
+    # 1. Base probability of zone holding based on institutional causal structure (capped [0.45, 0.72])
+    base_prob = 0.56
     if ctx.ob_grade == "GRADE_A_PLUS":
-        base_prob = 0.74
+        base_prob = 0.66
     elif ctx.ob_grade == "GRADE_A":
-        base_prob = 0.67
+        base_prob = 0.62
     elif ctx.ob_grade == "GRADE_B":
-        base_prob = 0.58
+        base_prob = 0.56
 
     if ctx.prior_sweep_confirmed:
-        base_prob += 0.04
+        base_prob += 0.03
     if ctx.caused_bos:
-        base_prob += 0.03
+        base_prob += 0.02
     if ctx.created_fvg:
-        base_prob += 0.03
+        base_prob += 0.02
     if ctx.mitigation_pct <= 0.10:
-        base_prob += 0.03
+        base_prob += 0.02
     elif ctx.mitigation_pct > 0.50:
-        base_prob -= 0.06
+        base_prob -= 0.05
 
     # Macro & Yields alignment impact
     dxy_chg = ctx.dxy_change_1h or 0.0
     us10y_chg = ctx.us10y_change_1h or 0.0
     if direction == "BUY":
         if dxy_chg < -0.05 and us10y_chg < -0.05:
-            base_prob += 0.04
+            base_prob += 0.03
         elif dxy_chg > 0.10 or us10y_chg > 0.10:
-            base_prob -= 0.06
+            base_prob -= 0.05
     elif direction == "SELL":
         if dxy_chg > 0.05 and us10y_chg > 0.05:
-            base_prob += 0.04
+            base_prob += 0.03
         elif dxy_chg < -0.10 or us10y_chg < -0.10:
-            base_prob -= 0.06
+            base_prob -= 0.05
 
-    p_zone_holds = round(max(0.42, min(0.82, base_prob)), 3)
+    p_zone_holds = round(max(0.45, min(0.72, base_prob)), 3)
 
     evaluated_options: List[EvaluatedEntryOption] = []
 
@@ -612,32 +612,20 @@ async def evaluate_smc_entry_probabilities(
             continue
 
         method = opt.method.upper()
+        rr_penalty = max(0.0, rr_ratio - 1.50) * 0.04
         if method == "LTF_SNIPER_FVG":
-            if ctx.ltf_sweep_confirmed and ctx.ltf_fvg_created:
-                p_win = round(min(0.79, p_zone_holds * 1.07), 3)
-                expected_mae_r = -0.32
-                expected_mfe_r = round(max(2.4, rr_ratio * 0.95), 2)
-                expected_holding = 65
-            else:
-                p_win = round(p_zone_holds * 0.88, 3)
-                expected_mae_r = -0.52
-                expected_mfe_r = round(max(2.0, rr_ratio * 0.88), 2)
-                expected_holding = 90
+            raw_p = p_zone_holds + 0.04 if (ctx.ltf_sweep_confirmed and ctx.ltf_fvg_created) else p_zone_holds - 0.04
         elif method == "FVG_CE_50":
-            p_win = round(p_zone_holds * 0.96, 3)
-            expected_mae_r = -0.48
-            expected_mfe_r = round(max(2.0, rr_ratio * 0.90), 2)
-            expected_holding = 135
+            raw_p = p_zone_holds
         elif method == "OB_PROXIMAL":
-            p_win = round(p_zone_holds * 0.90, 3)
-            expected_mae_r = -0.72
-            expected_mfe_r = round(max(1.8, rr_ratio * 0.85), 2)
-            expected_holding = 180
+            raw_p = p_zone_holds - 0.03
         else:
-            p_win = round(p_zone_holds * 0.85, 3)
-            expected_mae_r = -0.65
-            expected_mfe_r = round(max(1.5, rr_ratio * 0.80), 2)
-            expected_holding = 120
+            raw_p = p_zone_holds - 0.05
+
+        p_win = round(max(0.50, min(0.72, raw_p - rr_penalty)), 3) if rr_ratio > 0 else 0.0
+        expected_mae_r = None
+        expected_mfe_r = round(rr_ratio, 2)
+        expected_holding = None
 
         # Mathematical Net Expected Value: EV = P(win) * R - (1 - P(win)) * 1.0
         net_ev = (p_win * rr_ratio) - ((1.0 - p_win) * 1.0)
@@ -686,8 +674,7 @@ async def evaluate_smc_entry_probabilities(
     rationale = (
         f"Selected {best_opt.method} ({direction} @ ${best_opt.entry_price:.2f}) with net EV of +{best_opt.net_ev_r:.2f}R. "
         f"Zone hold probability: {int(best_opt.p_zone_holds*100)}%, P(TP1): {int(best_opt.p_tp1_before_sl*100)}%, "
-        f"tight small-account SL of {best_opt.sl_pips:.1f} pips (${best_opt.stop_loss:.2f}) vs TP1 ${best_opt.take_profit_1:.2f} (R:R 1:{best_opt.rr_ratio:.1f}). "
-        f"Expected MAE: {best_opt.expected_mae_r:.2f}R, Expected MFE: +{best_opt.expected_mfe_r:.2f}R."
+        f"tight small-account SL of {best_opt.sl_pips:.1f} pips (${best_opt.stop_loss:.2f}) vs TP1 ${best_opt.take_profit_1:.2f} (R:R 1:{best_opt.rr_ratio:.1f})."
     )
 
     return SmcProbabilityResponse(

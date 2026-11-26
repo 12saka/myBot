@@ -145,7 +145,9 @@ export default function GoldFundamentalsPage() {
                 <span className="text-[10px] text-slate-500 block">
                   {macro?.isRealYieldLive
                     ? "Live St. Louis Fed 10Y TIPS (DFII10)"
-                    : `US10Y − ${macro?.breakevenInflationBenchmark ? macro.breakevenInflationBenchmark.toFixed(2) : '2.30'}% Breakeven Inflation`}
+                    : (macro?.breakevenInflationBenchmark
+                        ? `US10Y − ${macro.breakevenInflationBenchmark.toFixed(2)}% Breakeven Inflation`
+                        : "Awaiting FRED Breakeven Inflation Feed")}
                 </span>
               </div>
               <span className="font-mono text-white text-sm">
