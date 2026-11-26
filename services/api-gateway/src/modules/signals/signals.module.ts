@@ -745,9 +745,20 @@ export class SignalsController implements OnModuleInit {
         const raw = fs.readFileSync(this.calendarDiskCachePath, 'utf8');
         const parsed = JSON.parse(raw);
         if (parsed && Array.isArray(parsed.events) && parsed.events.length > 0) {
-          this.cachedCalendarEvents = parsed.events;
-          this.lastCalendarFetchTime = parsed.timestamp || Date.now();
-          this.logger.log(`[NewsGate] Loaded ${parsed.events.length} ForexFactory calendar events from disk cache (age: ${Math.round((Date.now() - this.lastCalendarFetchTime) / 60000)}m).`);
+          const nowMs = Date.now();
+          const hasCurrentOrFuture = parsed.events.some((e: any) => {
+            const t = new Date(e?.date).getTime();
+            return isFinite(t) && t >= (nowMs - 24 * 60 * 60 * 1000);
+          });
+          if (hasCurrentOrFuture) {
+            this.cachedCalendarEvents = parsed.events;
+            this.lastCalendarFetchTime = parsed.timestamp || nowMs;
+            this.logger.log(`[NewsGate] Loaded ${parsed.events.length} active ForexFactory calendar events from disk cache (age: ${Math.round((nowMs - this.lastCalendarFetchTime) / 60000)}m).`);
+          } else {
+            this.logger.log('[NewsGate] Disk calendar cache contains only expired historical weeks. Discarding stale cache to trigger fresh calendar sync.');
+            this.cachedCalendarEvents = [];
+            this.lastCalendarFetchTime = 0;
+          }
         }
       }
     } catch (e: any) {
@@ -1470,13 +1481,22 @@ export class SignalsController implements OnModuleInit {
   private async getOrFetchCalendarEvents(): Promise<any[]> {
     const now = Date.now();
 
+    const hasValidEvents = this.cachedCalendarEvents.some(e => {
+      const t = new Date(e?.date).getTime();
+      return isFinite(t) && t >= (now - 24 * 60 * 60 * 1000);
+    });
+    if (!hasValidEvents && this.cachedCalendarEvents.length > 0) {
+      this.cachedCalendarEvents = [];
+      this.lastCalendarFetchTime = 0;
+    }
+
     // 1. In-memory cache is valid (within 4 hours) -> zero network requests!
     if (this.cachedCalendarEvents.length > 0 && (now - this.lastCalendarFetchTime) < this.CALENDAR_CACHE_TTL_MS) {
       return this.cachedCalendarEvents;
     }
 
     // 2. Exponential backoff active after previous network failure -> return cached data without hammering FF!
-    if (now < this.nextAllowedCalendarFetchTime) {
+    if (now < this.nextAllowedCalendarFetchTime && this.cachedCalendarEvents.length > 0) {
       return this.cachedCalendarEvents;
     }
 
@@ -1527,8 +1547,12 @@ export class SignalsController implements OnModuleInit {
 
         throw new Error(`ForexFactory HTTP status ${res.status}`);
       } catch (err: any) {
-        // If FF threw (e.g. 429), try live TradingView calendar before backing off
-        if (this.cachedCalendarEvents.length === 0) {
+        // If FF threw (e.g. 429), always try live TradingView calendar if cache is empty or stale
+        const cacheHasCurrent = this.cachedCalendarEvents.some(e => {
+          const t = new Date(e?.date).getTime();
+          return isFinite(t) && t >= (Date.now() - 24 * 60 * 60 * 1000);
+        });
+        if (!cacheHasCurrent) {
           const tvEvents = await this.fetchTradingViewEconomicCalendar();
           if (tvEvents && tvEvents.length > 0) {
             this.cachedCalendarEvents = tvEvents;
@@ -1592,32 +1616,42 @@ export class SignalsController implements OnModuleInit {
     return null;
   }
 
-  // Classifies a USD calendar event into an impact tier (keyword escalation on top of the feed's own impact label)
+  // Classifies a USD calendar event into an impact tier while strictly respecting the feed's own Low/Medium/High severity
   private classifyUsdEvent(title: string, feedImpact: string): 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' {
+    const impact = String(feedImpact || '').toLowerCase();
+    if (impact === 'holiday' || impact === 'non-economic' || impact === 'low') {
+      return 'LOW';
+    }
+    const t = String(title || '').toUpperCase();
+    // Routine regional Fed / FOMC Member speeches are not binary rate decisions: keep them at LOW/MEDIUM unless Fed Chair Powell speaks
+    const isRoutineMemberSpeech = (t.includes('FOMC MEMBER') || t.includes('SPEAKS')) && !t.includes('POWELL') && !t.includes('PRESS CONFERENCE') && !t.includes('PRESIDENT TRUMP');
+    if (isRoutineMemberSpeech) {
+      return impact === 'high' ? 'MEDIUM' : 'LOW';
+    }
+
     const extremeKeywords = [
-      'FOMC', 'POWELL', 'CPI', 'CONSUMER PRICE', 'NON-FARM', 'NONFARM', 'NFP',
-      'PCE PRICE', 'CORE PCE', 'FEDERAL FUNDS', 'FED FUNDS', 'INTEREST RATE DECISION', 'FOMC PRESS CONFERENCE',
-      'PRESIDENT TRUMP SPEAKS', 'PRESIDENT SPEAKS'
+      'FOMC STATEMENT', 'FOMC PRESS CONFERENCE', 'FEDERAL FUNDS RATE', 'FED FUNDS RATE', 'INTEREST RATE DECISION',
+      'FED CHAIR POWELL', 'POWELL SPEAKS', 'CPI M/M', 'CPI Y/Y', 'CORE CPI', 'CONSUMER PRICE INDEX',
+      'NON-FARM EMPLOYMENT', 'NONFARM PAYROLLS', 'NFP', 'CORE PCE PRICE INDEX', 'PRESIDENT TRUMP SPEAKS'
     ];
     const highKeywords = [
-      'GDP', 'PPI', 'PRODUCER PRICE', 'RETAIL SALES', 'UNEMPLOYMENT RATE', 'UNEMPLOYMENT CLAIMS', 'JOBLESS CLAIMS',
-      'ISM MANUFACTURING PMI', 'ISM SERVICES PMI', 'JOLTS', 'ADP NON', 'AVERAGE HOURLY EARNINGS', 'FED CHAIR',
-      'TREASURY SECRETARY', 'ELECTION'
+      'ADVANCE GDP', 'PRELIM GDP', 'FINAL GDP', 'PPI M/M', 'CORE PPI', 'RETAIL SALES M/M', 'CORE RETAIL SALES',
+      'UNEMPLOYMENT RATE', 'UNEMPLOYMENT CLAIMS', 'INITIAL JOBLESS CLAIMS', 'ISM MANUFACTURING PMI',
+      'ISM SERVICES PMI', 'JOLTS JOB OPENINGS', 'ADP NON-FARM', 'AVERAGE HOURLY EARNINGS', 'FOMC MEETING MINUTES'
     ];
-    const impact = String(feedImpact || '').toLowerCase();
-    if (impact === 'holiday' || impact === 'non-economic') return 'LOW';
-    const t = String(title || '').toUpperCase();
-    if (extremeKeywords.some(kw => t.includes(kw))) return 'EXTREME';
-    if (impact === 'high' || highKeywords.some(kw => t.includes(kw))) return 'HIGH';
+
+    if (impact === 'high' && extremeKeywords.some(kw => t.includes(kw))) return 'EXTREME';
+    if (impact === 'high') return 'HIGH';
+    if (impact === 'medium' && (extremeKeywords.some(kw => t.includes(kw)) || highKeywords.some(kw => t.includes(kw)))) return 'HIGH';
     if (impact === 'medium') return 'MEDIUM';
     return 'LOW';
   }
 
   // Blackout windows in minutes: [before release, after release]
   private newsWindowFor(tier: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME'): { pre: number; post: number } {
-    if (tier === 'EXTREME') return { pre: 45, post: 30 };
-    if (tier === 'HIGH') return { pre: 25, post: 15 };
-    if (tier === 'MEDIUM') return { pre: 10, post: 5 };
+    if (tier === 'EXTREME') return { pre: 30, post: 20 };
+    if (tier === 'HIGH') return { pre: 15, post: 15 };
+    if (tier === 'MEDIUM') return { pre: 5, post: 5 };
     return { pre: 0, post: 0 };
   }
 
@@ -1767,9 +1801,9 @@ export class SignalsController implements OnModuleInit {
       }
     };
 
-    // Fallback: Finnhub Economic Calendar used ONLY if there is no cached calendar at all
+    // Fallback: Finnhub Economic Calendar used if primary calendar feed has no current/future events
     const finnhubKey = process.env.FINNHUB_API_KEY;
-    if (this.cachedCalendarEvents.length === 0 && finnhubKey) {
+    if (!calendarFeedResponded && finnhubKey) {
       try {
         const fromDate = new Date().toISOString().split('T')[0];
         const toDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -2664,17 +2698,36 @@ export class SignalsController implements OnModuleInit {
       const activeBullishFvgs1m = fvgs1m.filter(f => f.type === 'BULLISH' && !f.mitigated).slice(-3);
       const best1mFvg = activeBullishFvgs1m.length > 0 ? activeBullishFvgs1m[activeBullishFvgs1m.length - 1] : null;
 
-      const isConfirmed = (m5RejectionWick || m5Sweep) && (m1Choch || m1Displacement || best1mFvg !== null);
+      const isConfirmed = (m5RejectionWick || m5Sweep) && (m1Choch || m1Displacement) && (m1Displacement || best1mFvg !== null);
 
       if (isConfirmed) {
         const last1m = recent1m[recent1m.length - 1];
         const dispMidpoint = last1m ? parseFloat(((last1m.open + last1m.close) / 2).toFixed(2)) : currentPrice;
-        const sniperEntryPrice = best1mFvg
+        let rawSniperEntry = best1mFvg
           ? parseFloat((best1mFvg.consequentEncroachment ?? best1mFvg.midpoint).toFixed(2))
           : dispMidpoint;
+        // Clamp sniper entry strictly inside the M15 Institutional Confluence Zone so we never chase above the zone
+        const sniperEntryPrice = parseFloat(Math.max(zoneLow, Math.min(zoneHigh + 0.08 * atr15m, rawSniperEntry)).toFixed(2));
         const protectLow = Math.min(isFinite(m1LowestLow) ? m1LowestLow : zoneLow, isFinite(m5LowestLow) ? m5LowestLow : zoneLow, zoneLow);
-        const sniperStopLoss = parseFloat((protectLow - Math.max(0.35, 0.10 * atr15m)).toFixed(2));
+        const sniperStopLoss = parseFloat((protectLow - Math.max(0.45, 0.12 * atr15m)).toFixed(2));
         const distPips = Math.max(25, Math.round((sniperEntryPrice - sniperStopLoss) * 10));
+
+        // If true invalidation below the zone/wick requires > 55 pips, wait for price to retrace deeper into the zone
+        if (distPips > 55) {
+          return {
+            isConfirmed: false,
+            m5Sweep,
+            m5RejectionWick,
+            m1Choch,
+            m1Displacement,
+            m1Fvg: best1mFvg,
+            sniperEntryPrice,
+            sniperStopLoss,
+            entryMethod: 'NONE',
+            invalidationDistancePips: distPips,
+            confirmationReason: `LTF reaction detected but true invalidation distance (${distPips} pips below $${protectLow.toFixed(2)}) exceeds 55-pip sniper cap. Awaiting deeper pullback into M15 FVG/OB.`
+          };
+        }
 
         return {
           isConfirmed: true,
@@ -2761,17 +2814,35 @@ export class SignalsController implements OnModuleInit {
       const activeBearishFvgs1m = fvgs1m.filter(f => f.type === 'BEARISH' && !f.mitigated).slice(-3);
       const best1mFvg = activeBearishFvgs1m.length > 0 ? activeBearishFvgs1m[activeBearishFvgs1m.length - 1] : null;
 
-      const isConfirmed = (m5RejectionWick || m5Sweep) && (m1Choch || m1Displacement || best1mFvg !== null);
+      const isConfirmed = (m5RejectionWick || m5Sweep) && (m1Choch || m1Displacement) && (m1Displacement || best1mFvg !== null);
 
       if (isConfirmed) {
         const last1m = recent1m[recent1m.length - 1];
         const dispMidpoint = last1m ? parseFloat(((last1m.open + last1m.close) / 2).toFixed(2)) : currentPrice;
-        const sniperEntryPrice = best1mFvg
+        let rawSniperEntry = best1mFvg
           ? parseFloat((best1mFvg.consequentEncroachment ?? best1mFvg.midpoint).toFixed(2))
           : dispMidpoint;
+        // Clamp sniper entry strictly inside the M15 Institutional Confluence Zone so we never chase below the zone
+        const sniperEntryPrice = parseFloat(Math.min(zoneHigh, Math.max(zoneLow - 0.08 * atr15m, rawSniperEntry)).toFixed(2));
         const protectHigh = Math.max(isFinite(m1HighestHigh) ? m1HighestHigh : zoneHigh, isFinite(m5HighestHigh) ? m5HighestHigh : zoneHigh, zoneHigh);
-        const sniperStopLoss = parseFloat((protectHigh + Math.max(0.35, 0.10 * atr15m)).toFixed(2));
+        const sniperStopLoss = parseFloat((protectHigh + Math.max(0.45, 0.12 * atr15m)).toFixed(2));
         const distPips = Math.max(25, Math.round((sniperStopLoss - sniperEntryPrice) * 10));
+
+        if (distPips > 55) {
+          return {
+            isConfirmed: false,
+            m5Sweep,
+            m5RejectionWick,
+            m1Choch,
+            m1Displacement,
+            m1Fvg: best1mFvg,
+            sniperEntryPrice,
+            sniperStopLoss,
+            entryMethod: 'NONE',
+            invalidationDistancePips: distPips,
+            confirmationReason: `LTF reaction detected but true invalidation distance (${distPips} pips above $${protectHigh.toFixed(2)}) exceeds 55-pip sniper cap. Awaiting deeper pullback into M15 FVG/OB.`
+          };
+        }
 
         return {
           isConfirmed: true,
@@ -4012,18 +4083,21 @@ export class SignalsController implements OnModuleInit {
       volMetrics.atr15m
     );
 
-    // Identify active causal Order Block and Fair Value Gap near the Institutional Confluence Zone
+    // Identify active causal Order Block and Fair Value Gap strictly inside/adjacent to the Institutional Confluence Zone
     const dirObs = structuralDirection === 'BUY' ? activeBullishObs : activeBearishObs;
-    const relevantOb = dirObs.find(ob => ob.midpoint >= icz.zoneLow - volMetrics.atr15m && ob.midpoint <= icz.zoneHigh + volMetrics.atr15m) || dirObs[dirObs.length - 1] || null;
+    const relevantOb = dirObs.find(ob => ob.midpoint >= icz.zoneLow - 0.50 * volMetrics.atr15m && ob.midpoint <= icz.zoneHigh + 0.50 * volMetrics.atr15m) || null;
     const dirFvgs = structuralDirection === 'BUY' ? activeBullishFvgs : activeBearishFvgs;
-    const relevantFvg = dirFvgs.find(f => f.midpoint >= icz.zoneLow - volMetrics.atr15m && f.midpoint <= icz.zoneHigh + volMetrics.atr15m) || dirFvgs[dirFvgs.length - 1] || null;
+    const relevantFvg = dirFvgs.find(f => f.midpoint >= icz.zoneLow - 0.50 * volMetrics.atr15m && f.midpoint <= icz.zoneHigh + 0.50 * volMetrics.atr15m) || null;
 
-    const fvgCeEntry = relevantFvg
+    const rawFvgCe = relevantFvg
       ? parseFloat((relevantFvg.ce50 ?? relevantFvg.midpoint).toFixed(2))
       : parseFloat(icz.preferredEntry.toFixed(2));
-    const obProximalEntry = relevantOb
+    const fvgCeEntry = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, rawFvgCe)).toFixed(2));
+
+    const rawObProximal = relevantOb
       ? parseFloat((relevantOb.proximalBoundary ?? (structuralDirection === 'BUY' ? relevantOb.high : relevantOb.low)).toFixed(2))
       : parseFloat((structuralDirection === 'BUY' ? icz.zoneHigh : icz.zoneLow).toFixed(2));
+    const obProximalEntry = parseFloat(Math.max(icz.zoneLow, Math.min(icz.zoneHigh, rawObProximal)).toFixed(2));
 
     // Dynamically select between FVG_CE_50 and OB_PROXIMAL for pending limit orders based on causal structure & risk distance
     const obRiskEst = relevantOb
@@ -4049,7 +4123,9 @@ export class SignalsController implements OnModuleInit {
           refinedBy1m = true;
           refinementReason = ltf.confirmationReason;
           selectedModel = 'LTF_SNIPER_FVG';
-          orderType = Math.abs(currentPrice - entryPrice) <= 0.20 * volMetrics.atr15m ? 'MARKET_BUY' : 'BUY_LIMIT';
+          // Only fire MARKET_BUY if live Ask price is within $0.80 of sniperEntryPrice (prevents chasing after rapid spike)
+          const liveBuyFill = microstructure.isLiquid && microstructure.ask > 0 ? microstructure.ask : currentPrice;
+          orderType = (liveBuyFill <= entryPrice + 0.80 && Math.abs(currentPrice - entryPrice) <= 1.00) ? 'MARKET_BUY' : 'BUY_LIMIT';
         } else {
           // Professional Rule: Inside zone but waiting for LTF confirmation (no blind market chases)
           orderType = 'WAIT';
@@ -4081,7 +4157,9 @@ export class SignalsController implements OnModuleInit {
           refinedBy1m = true;
           refinementReason = ltf.confirmationReason;
           selectedModel = 'LTF_SNIPER_FVG';
-          orderType = Math.abs(currentPrice - entryPrice) <= 0.20 * volMetrics.atr15m ? 'MARKET_SELL' : 'SELL_LIMIT';
+          // Only fire MARKET_SELL if live Bid price is within $0.80 of sniperEntryPrice (prevents selling at bottom of drop)
+          const liveSellFill = microstructure.isLiquid && microstructure.bid > 0 ? microstructure.bid : currentPrice;
+          orderType = (liveSellFill >= entryPrice - 0.80 && Math.abs(currentPrice - entryPrice) <= 1.00) ? 'MARKET_SELL' : 'SELL_LIMIT';
         } else {
           // Professional Rule: Inside zone but waiting for LTF confirmation
           orderType = 'WAIT';
@@ -4107,8 +4185,8 @@ export class SignalsController implements OnModuleInit {
     }
 
     // Precision Structural Invalidation (SL) Calculation (Small-Account Friendly & Order-Block Anchored):
-    // Anchors Stop Loss tightly behind the immediate Order Block / ICZ edge (25 to 65 pips / $2.50 to $6.50)
-    // Incorporates spread cushion for SELL orders to prevent Ask-side stop runs
+    // NEVER places Stop Loss inside the Institutional Confluence Zone or inside the Order Block!
+    // Incorporates spread cushion for SELL orders to prevent Ask-side stop runs.
     const spreadCushion = parseFloat(Math.max(0.25, microstructure.spread).toFixed(2));
     const baseBuffer = parseFloat(Math.min(1.10, Math.max(0.55, volMetrics.atr15m * 0.18)).toFixed(2));
     const adaptiveBuffer = structuralDirection === 'SELL'
@@ -4124,27 +4202,26 @@ export class SignalsController implements OnModuleInit {
       const sniperRisk = structuralDirection === 'BUY'
         ? parseFloat((entryPrice - exactStopLoss).toFixed(2))
         : parseFloat((exactStopLoss - entryPrice).toFixed(2));
-      // Calibrate tight sniper Stop Loss (25 to 50 pips max)
+      // Enforce minimum 25-pip stop buffer; if true structural stop > 55 pips, do not clamp inside zone — let Gate 4 reject
       if (sniperRisk < 2.50) {
         exactStopLoss = structuralDirection === 'BUY'
           ? parseFloat((entryPrice - 2.50).toFixed(2))
           : parseFloat((entryPrice + 2.50).toFixed(2));
-      } else if (sniperRisk > 5.00) {
-        exactStopLoss = structuralDirection === 'BUY'
-          ? parseFloat((entryPrice - 5.00).toFixed(2))
-          : parseFloat((entryPrice + 5.00).toFixed(2));
       }
       structuralInvalidationLevel = exactStopLoss;
     } else if (structuralDirection === 'BUY') {
       const nearestSwingLowBelow = swings15
-        .filter(s => s.type === 'LOW' && s.price < entryPrice && s.price >= entryPrice - 0.75 * volMetrics.atr15m)
+        .filter(s => s.type === 'LOW' && s.price < entryPrice && s.price >= entryPrice - 0.85 * volMetrics.atr15m)
         .map(s => s.price)
         .slice(-1)[0];
 
       const structuralLowsBelow: number[] = [];
       if (nearestSwingLowBelow !== undefined) structuralLowsBelow.push(nearestSwingLowBelow);
-      if (latestBullishSweep && latestBullishSweep.wickExtreme < entryPrice && latestBullishSweep.wickExtreme >= entryPrice - 0.75 * volMetrics.atr15m) {
+      if (latestBullishSweep && latestBullishSweep.wickExtreme < entryPrice && latestBullishSweep.wickExtreme >= entryPrice - 0.85 * volMetrics.atr15m) {
         structuralLowsBelow.push(latestBullishSweep.wickExtreme);
+      }
+      if (relevantOb && relevantOb.low <= entryPrice) {
+        structuralLowsBelow.push(relevantOb.distalBoundary ?? relevantOb.low);
       }
       if (icz.zoneLow <= entryPrice) {
         structuralLowsBelow.push(icz.zoneLow);
@@ -4154,19 +4231,31 @@ export class SignalsController implements OnModuleInit {
         ? Math.min(...structuralLowsBelow)
         : parseFloat((Math.min(entryPrice, icz.zoneLow) - 0.45 * volMetrics.atr15m).toFixed(2));
 
-      const rawSl = Math.min(structuralInvalidationLevel, icz.zoneLow) - adaptiveBuffer;
-      const clampedDist = Math.min(maxStructuralRisk, Math.max(minStopDist, entryPrice - rawSl));
-      exactStopLoss = parseFloat((entryPrice - clampedDist).toFixed(2));
+      const rawSl = parseFloat((Math.min(structuralInvalidationLevel, icz.zoneLow) - adaptiveBuffer).toFixed(2));
+      const trueDist = entryPrice - rawSl;
+      // If true structural stop distance exceeds maxStructuralRisk ($6.50), deepen limit entry toward distal edge (if outside zone)
+      // rather than placing the stop loss inside the zone where it will get swept!
+      if (trueDist > maxStructuralRisk && orderType === 'BUY_LIMIT') {
+        const deepenedEntry = parseFloat(Math.max(icz.zoneLow, rawSl + maxStructuralRisk).toFixed(2));
+        if (deepenedEntry < entryPrice) {
+          entryPrice = deepenedEntry;
+        }
+      }
+      const finalDist = Math.max(minStopDist, entryPrice - rawSl);
+      exactStopLoss = parseFloat((entryPrice - finalDist).toFixed(2));
     } else {
       const nearestSwingHighAbove = swings15
-        .filter(s => s.type === 'HIGH' && s.price > entryPrice && s.price <= entryPrice + 0.75 * volMetrics.atr15m)
+        .filter(s => s.type === 'HIGH' && s.price > entryPrice && s.price <= entryPrice + 0.85 * volMetrics.atr15m)
         .map(s => s.price)
         .slice(-1)[0];
 
       const structuralHighsAbove: number[] = [];
       if (nearestSwingHighAbove !== undefined) structuralHighsAbove.push(nearestSwingHighAbove);
-      if (latestBearishSweep && latestBearishSweep.wickExtreme > entryPrice && latestBearishSweep.wickExtreme <= entryPrice + 0.75 * volMetrics.atr15m) {
+      if (latestBearishSweep && latestBearishSweep.wickExtreme > entryPrice && latestBearishSweep.wickExtreme <= entryPrice + 0.85 * volMetrics.atr15m) {
         structuralHighsAbove.push(latestBearishSweep.wickExtreme);
+      }
+      if (relevantOb && relevantOb.high >= entryPrice) {
+        structuralHighsAbove.push(relevantOb.distalBoundary ?? relevantOb.high);
       }
       if (icz.zoneHigh >= entryPrice) {
         structuralHighsAbove.push(icz.zoneHigh);
@@ -4176,9 +4265,16 @@ export class SignalsController implements OnModuleInit {
         ? Math.max(...structuralHighsAbove)
         : parseFloat((Math.max(entryPrice, icz.zoneHigh) + 0.45 * volMetrics.atr15m).toFixed(2));
 
-      const rawSl = Math.max(structuralInvalidationLevel, icz.zoneHigh) + adaptiveBuffer;
-      const clampedDist = Math.min(maxStructuralRisk, Math.max(minStopDist, rawSl - entryPrice));
-      exactStopLoss = parseFloat((entryPrice + clampedDist).toFixed(2));
+      const rawSl = parseFloat((Math.max(structuralInvalidationLevel, icz.zoneHigh) + adaptiveBuffer).toFixed(2));
+      const trueDist = rawSl - entryPrice;
+      if (trueDist > maxStructuralRisk && orderType === 'SELL_LIMIT') {
+        const deepenedEntry = parseFloat(Math.min(icz.zoneHigh, rawSl - maxStructuralRisk).toFixed(2));
+        if (deepenedEntry > entryPrice) {
+          entryPrice = deepenedEntry;
+        }
+      }
+      const finalDist = Math.max(minStopDist, rawSl - entryPrice);
+      exactStopLoss = parseFloat((entryPrice + finalDist).toFixed(2));
     }
 
     const directionalRisk = structuralDirection === 'BUY'
@@ -4225,26 +4321,21 @@ export class SignalsController implements OnModuleInit {
       const minTp3R = isLongMacroContinuation ? 5.00 : isContinuation ? 4.50 : 4.00;
 
       const tp1Candidates = allHighPools
-        .filter(p => p.price >= entryPrice + minTp1R * risk && p.price <= entryPrice + 3.20 * risk)
+        .filter(p => p.price >= entryPrice + minTp1R * risk && p.price <= entryPrice + 3.00 * risk)
         .sort((a, b) => a.price - b.price);
       if (tp1Candidates.length > 0) {
         tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, tp1Candidates[0].price - 0.20).toFixed(2));
         tp1LiquiditySource = tp1Candidates[0].source;
       } else {
-        const extendedPools = allHighPools.filter(p => p.price > entryPrice + minTp1R * risk).sort((a, b) => a.price - b.price);
-        if (extendedPools.length > 0) {
-          tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, extendedPools[0].price - 0.20).toFixed(2));
-          tp1LiquiditySource = extendedPools[0].source;
+        // Anchor TP1 to a realistic 2.0R-2.5R structural projection when no intermediate liquidity pool sits inside [minTp1R, 3.0R]
+        // Never jump TP1 to a distant 11R+ swing high (which prevented TP1 partial banking & breakeven protection on G-20261124-002!)
+        const nearPools = allHighPools.filter(p => p.price > entryPrice + minTp1R * risk && p.price <= entryPrice + 3.50 * risk).sort((a, b) => a.price - b.price);
+        if (nearPools.length > 0) {
+          tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, nearPools[0].price - 0.20).toFixed(2));
+          tp1LiquiditySource = nearPools[0].source;
         } else {
-          const precedingHigh = swings15.filter(s => s.type === 'HIGH').slice(-1)[0]?.price || (entryPrice + 2.5 * risk);
-          const precedingLow = swings15.filter(s => s.type === 'LOW' && s.price < precedingHigh).slice(-1)[0]?.price || (entryPrice - 1.2 * risk);
-          const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
-          const fibMultiplier = isLongMacroContinuation ? 1.272 : 1.0;
-          const fib1272 = parseFloat((entryPrice + impulseSpan * fibMultiplier).toFixed(2));
-          tp1Price = parseFloat(Math.max(entryPrice + minTp1R * risk, fib1272 - 0.20).toFixed(2));
-          tp1LiquiditySource = isLongMacroContinuation
-            ? 'Macro Long Continuation 1.272 Fib Extension (Institutional Expansion)'
-            : 'Preceding Impulse 1.272 Fib Extension (Structural Continuation)';
+          tp1Price = parseFloat((entryPrice + minTp1R * risk).toFixed(2));
+          tp1LiquiditySource = `${minTp1R.toFixed(1)}R Institutional Expansion Target`;
         }
       }
 
@@ -4325,26 +4416,21 @@ export class SignalsController implements OnModuleInit {
       const minTp3R = isShortMacroContinuation ? 5.00 : isContinuation ? 4.50 : 4.00;
 
       const tp1Candidates = allLowPools
-        .filter(p => p.price <= entryPrice - minTp1R * risk && p.price >= entryPrice - 3.20 * risk)
+        .filter(p => p.price <= entryPrice - minTp1R * risk && p.price >= entryPrice - 3.00 * risk)
         .sort((a, b) => b.price - a.price);
       if (tp1Candidates.length > 0) {
         tp1Price = parseFloat(Math.min(entryPrice - minTp1R * risk, tp1Candidates[0].price + 0.20).toFixed(2));
         tp1LiquiditySource = tp1Candidates[0].source;
       } else {
-        const extendedPools = allLowPools.filter(p => p.price < entryPrice - minTp1R * risk).sort((a, b) => b.price - a.price);
-        if (extendedPools.length > 0) {
-          tp1Price = parseFloat(Math.min(entryPrice - minTp1R * risk, extendedPools[0].price + 0.20).toFixed(2));
-          tp1LiquiditySource = extendedPools[0].source;
+        // Anchor TP1 to a realistic 2.0R-2.5R structural projection when no intermediate liquidity pool sits inside [minTp1R, 3.0R]
+        // Never jump TP1 to a distant 11R+ swing low!
+        const nearPools = allLowPools.filter(p => p.price < entryPrice - minTp1R * risk && p.price >= entryPrice - 3.50 * risk).sort((a, b) => b.price - a.price);
+        if (nearPools.length > 0) {
+          tp1Price = parseFloat(Math.min(entryPrice - minTp1R * risk, nearPools[0].price + 0.20).toFixed(2));
+          tp1LiquiditySource = nearPools[0].source;
         } else {
-          const precedingLow = swings15.filter(s => s.type === 'LOW').slice(-1)[0]?.price || (entryPrice - 2.5 * risk);
-          const precedingHigh = swings15.filter(s => s.type === 'HIGH' && s.price > precedingLow).slice(-1)[0]?.price || (entryPrice + 1.2 * risk);
-          const impulseSpan = Math.max(risk * 2.5, precedingHigh - precedingLow);
-          const fibMultiplier = isShortMacroContinuation ? 1.272 : 1.0;
-          const fib1272 = parseFloat((entryPrice - impulseSpan * fibMultiplier).toFixed(2));
-          tp1Price = parseFloat(Math.min(entryPrice - minTp1R * risk, fib1272 + 0.20).toFixed(2));
-          tp1LiquiditySource = isShortMacroContinuation
-            ? 'Macro Short Continuation 1.272 Fib Extension (Institutional Expansion)'
-            : 'Preceding Impulse 1.272 Fib Extension (Structural Continuation)';
+          tp1Price = parseFloat((entryPrice - minTp1R * risk).toFixed(2));
+          tp1LiquiditySource = `${minTp1R.toFixed(1)}R Institutional Expansion Target`;
         }
       }
 
@@ -5587,18 +5673,19 @@ Respond strictly with valid JSON:
     const initialLifecycleState = isImmediateMarket ? 'POSITION_OPEN' : 'WAITING_FOR_ENTRY';
 
     // 6a. Forward-looking news window: never leave a pending order (or open a market position)
-    // that would be live into a HIGH/EXTREME USD release.
+    // that would be live right into an imminent HIGH/EXTREME USD release blackout.
     let orderValidityMs = now.getTime() + setup.invalidationAndExpiry.orderExpiryHours * 60 * 60 * 1000;
-    const nextEvent = this.getNextHighImpactUsdEvent(now.getTime(), 6 * 60);
+    const nextEvent = this.getNextHighImpactUsdEvent(now.getTime(), 3 * 60);
     if (nextEvent) {
       const blackoutStartMs = nextEvent.timeMs - nextEvent.preBlackoutMin * 60_000;
       const minutesUntilBlackout = (blackoutStartMs - now.getTime()) / 60_000;
-      if (isImmediateMarket && minutesUntilBlackout < 90) {
+      const minMarketLeadMin = nextEvent.impactTier === 'EXTREME' ? 30 : 15;
+      if (isImmediateMarket && minutesUntilBlackout < minMarketLeadMin) {
         this.logger.log(`[PUBLISHER] Market ${setup.direction} withheld: ${nextEvent.title} (${nextEvent.impactTier}) in ${Math.round(minutesUntilBlackout + nextEvent.preBlackoutMin)}m would hit the open position.`);
         return activeSignals[0] || null;
       }
       if (!isImmediateMarket) {
-        if (minutesUntilBlackout < 30) {
+        if (minutesUntilBlackout < 15) {
           this.logger.log(`[PUBLISHER] Limit ${setup.direction} withheld: only ${Math.round(minutesUntilBlackout)}m until ${nextEvent.title} blackout.`);
           return activeSignals[0] || null;
         }
@@ -6357,7 +6444,7 @@ Respond strictly with valid JSON:
           maxSpreadAllowed: 0.60,
           executionEligibility: !setup.microstructure.isLiquid
             ? 'SPREAD_HALTED'
-            : (setup.newsGate.isBlackout || setup.newsGate.feedOffline)
+            : setup.newsGate.isBlackout
               ? 'EVENT_BLOCKED'
               : setup.fiveGates.allPassed
                 ? 'APPROVED'

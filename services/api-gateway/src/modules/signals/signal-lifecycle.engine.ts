@@ -240,6 +240,10 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
         if (stopHit && !openedBeyondTp1) {
           const gapped = dir * (exitOpen - currentStop) < 0 && !filledThisBar;
           const exit = gapped ? exitOpen : currentStop;
+          const isProtectiveBe = filledPrice !== null && Math.abs(currentStop - filledPrice) < 0.02;
+          if (isProtectiveBe) {
+            return finish('BREAKEVEN_EXIT', bar.time, exit, 'BREAKEVEN', 'PROTECTIVE_BREAKEVEN_AFTER_1R', round2(rOf(exit)));
+          }
           return finish('SL_HIT', bar.time, exit, 'SL_HIT', 'STOP_LOSS_REACHED', rOf(exit));
         }
         // On the bar a LIMIT/STOP order fills, the favourable extreme may have printed BEFORE the fill.
@@ -256,6 +260,11 @@ export function replaySignalLifecycle(input: LifecycleInput, bars: LifecycleBar[
           }
           // Breakeven stop is evaluated from the next bar (intrabar order after TP1 unknown)
           continue;
+        }
+        // Institutional +1.25R Defensive Breakeven Shield:
+        // Once an open position expands >= +1.25R in favor, protect capital by locking currentStopLoss at filledPrice (breakeven)
+        if (filledPrice && runningMfeR >= 1.25 && dir * (currentStop - filledPrice) < 0) {
+          currentStop = filledPrice;
         }
         continue;
       }
